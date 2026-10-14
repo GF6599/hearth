@@ -50,7 +50,9 @@ hearth typing --speed 80   # type 80 keystrokes per second
 
 `--seed <n>` fixes the random source, so two runs with the same seed draw the same frames and the same chain of restarts. Without it, the clock seeds each run.
 
-`--speed <cps>` sets how fast the typing scene types, in keystrokes per second, from 1 to 1000. The default is 50. `+` and `-` change it while the scene runs, and the new value shows in the corner for a second.
+`--speed <cps>` sets how fast the typing scene types, in keystrokes per second, from 1 to 1000. The default is 50.
+
+Every scene keeps its own speed. `+` and `-` change the speed of the scene on screen, and the new value shows in the corner for a second. Typing steps in keystrokes per second. The other scenes step through ¼×, ½×, ¾×, 1×, 1.5×, 2×, 3× and 4×. A restart, Tab and the picker keep each scene's speed.
 
 The typing scene types hearth's own source unless `--repo` names another repository:
 
@@ -76,7 +78,7 @@ A GitHub repository or a clone address is cloned once, shallow, into `~/.cache/h
 |---|---|
 | `Tab` | Next scene |
 | `r` | Restart the scene with a new seed |
-| `+` / `-` | Type faster or slower, in the typing scene |
+| `+` / `-` | Run the scene on screen faster or slower |
 | `Esc` | Back to the picker |
 | `q` / `Ctrl-c` | Quit |
 
