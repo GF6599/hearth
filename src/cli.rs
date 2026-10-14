@@ -62,7 +62,8 @@ impl Cli {
             return Corpus::from_checkout(Path::new(repo));
         }
         let address = clone_address(repo);
-        let cache = config::xdg_dir("XDG_CACHE_HOME", ".cache");
+        let cache = config::xdg_dir("XDG_CACHE_HOME", ".cache")
+            .unwrap_or_else(|| std::env::temp_dir().join("hearth"));
         if !corpus::cache_path(&address, &cache).join(".git").exists() {
             eprintln!("hearth: fetching {address} into {}", cache.display());
         }

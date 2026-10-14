@@ -11,10 +11,14 @@ use hearth::scenes::typing;
 
 fn main() {
     let cli = Cli::parse();
-    let config = Config::load(&config::default_path()).unwrap_or_else(|e| {
-        eprintln!("hearth: {e}");
-        std::process::exit(1);
-    });
+    let config_path = config::default_path();
+    let config = match &config_path {
+        Some(path) => Config::load(path).unwrap_or_else(|e| {
+            eprintln!("hearth: {e}");
+            std::process::exit(1);
+        }),
+        None => Config::default(),
+    };
     let corpus = match cli.corpus(&config) {
         Ok(corpus) if corpus.is_empty() => {
             eprintln!("hearth: that repository has no text file to type");
@@ -30,7 +34,10 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let app = cli.app(&config, corpus).saving_to(config::default_path());
+    let mut app = cli.app(&config, corpus);
+    if let Some(path) = config_path {
+        app = app.saving_to(path);
+    }
     if let Err(e) = run_tui(app) {
         eprintln!("hearth: {e}");
         std::process::exit(1);

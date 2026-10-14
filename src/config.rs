@@ -19,20 +19,22 @@ pub struct Config {
     pub rates: [Option<Rate>; ALL.len()],
 }
 
-pub fn default_path() -> PathBuf {
-    xdg_dir("XDG_CONFIG_HOME", ".config").join("config.toml")
+/// `None` with no home folder, because any user can put a file in the
+/// shared temp folder, and a config read from there would let them choose
+/// the repository and the target of a save.
+pub fn default_path() -> Option<PathBuf> {
+    xdg_dir("XDG_CONFIG_HOME", ".config").map(|folder| folder.join("config.toml"))
 }
 
 /// The `hearth` folder under the base folder that `variable` names, or
 /// under `fallback` in the home folder. The XDG spec reads an empty
 /// variable as an unset one.
-pub fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
+pub fn xdg_dir(variable: &str, fallback: &str) -> Option<PathBuf> {
     std::env::var_os(variable)
         .filter(|base| !base.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(fallback)))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("hearth")
+        .map(|base| base.join("hearth"))
 }
 
 impl Config {
