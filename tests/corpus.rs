@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use hearth::corpus::Corpus;
+use hearth::corpus::{Corpus, SIZE_CAP};
 
 /// A fresh directory under the system temp dir, emptied first.
 fn scratch(name: &str) -> PathBuf {
@@ -25,26 +25,33 @@ fn git(repo: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?} failed in {repo:?}");
 }
 
-/// A repository with one tracked text file, one tracked binary file and
-/// one untracked file.
+/// A repository with one tracked text file, one tracked binary file, one
+/// tracked file over the size cap, one tracked symlink to a file outside
+/// the repository, and one untracked file.
 fn repository(name: &str) -> PathBuf {
     let repo = scratch(name);
     git(&repo, &["init", "-q"]);
     fs::write(repo.join("main.rs"), "fn main() {}\n").unwrap();
     fs::write(repo.join("blob.bin"), b"PK\x03\x04\x00\x00\x00\x08").unwrap();
-    git(&repo, &["add", "main.rs", "blob.bin"]);
+    fs::write(repo.join("big.txt"), "x".repeat(SIZE_CAP + 1)).unwrap();
+    let outside = scratch(&format!("{name}-outside")).join("secret.txt");
+    fs::write(&outside, "a local secret\n").unwrap();
+    std::os::unix::fs::symlink(&outside, repo.join("link.rs")).unwrap();
+    git(&repo, &["add", "main.rs", "blob.bin", "big.txt", "link.rs"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     fs::write(repo.join("notes.txt"), "not tracked\n").unwrap();
     repo
 }
 
-/// Given: a checkout with a tracked text file, a tracked binary file and
+/// Given: a checkout with a tracked text file, a tracked binary file, a
+/// tracked file over the cap, a tracked symlink out of the repository, and
 /// an untracked file.
 /// When: the corpus is read from it.
 /// Then: only the text file is in the corpus.
 ///
-/// Why it matters: a binary file types as garbage, and an untracked file
-/// is where a secret lives.
+/// Why it matters: a binary file types as garbage, an untracked file is
+/// where a secret lives, and a symlink in a cloned repository can point
+/// at any file on this machine.
 #[test]
 fn a_checkout_yields_its_tracked_text_files_only() {
     // Given:
