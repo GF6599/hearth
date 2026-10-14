@@ -6,6 +6,7 @@ use clap::Parser;
 
 use crate::corpus::{self, Corpus};
 use crate::scene::SceneKind;
+use crate::scenes::typing::Speed;
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -22,6 +23,11 @@ pub struct Cli {
     /// clone address. Without it, hearth types its own source
     #[arg(long, value_name = "REPO")]
     pub repo: Option<String>,
+
+    /// How fast the typing scene types, in keystrokes per second. `+` and
+    /// `-` change it while the scene runs
+    #[arg(long, value_name = "CPS", default_value_t = Speed::DEFAULT)]
+    pub speed: Speed,
 }
 
 impl Cli {

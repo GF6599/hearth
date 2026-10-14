@@ -8,6 +8,7 @@ use ratatui::widgets::Widget;
 use crate::corpus::Corpus;
 use crate::picker::Picker;
 use crate::scene::{ALL, Scene, SceneKind};
+use crate::scenes::typing::Speed;
 use crate::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +21,7 @@ pub struct App {
     kind: SceneKind,
     seed: u64,
     corpus: Arc<Corpus>,
+    speed: Speed,
     scene: Box<dyn Scene>,
     mode: Mode,
     selected: usize,
@@ -31,6 +33,7 @@ impl std::fmt::Debug for App {
         f.debug_struct("App")
             .field("kind", &self.kind)
             .field("seed", &self.seed)
+            .field("speed", &self.speed)
             .field("mode", &self.mode)
             .field("selected", &self.selected)
             .field("should_quit", &self.should_quit)
@@ -43,8 +46,9 @@ impl App {
         Self {
             kind,
             seed,
-            scene: kind.build(seed, &corpus),
+            scene: kind.build(seed, &corpus, Speed::DEFAULT),
             corpus,
+            speed: Speed::DEFAULT,
             mode: Mode::Running,
             selected: ALL.iter().position(|k| *k == kind).unwrap_or(0),
             should_quit: false,
@@ -55,6 +59,12 @@ impl App {
         let mut app = Self::new(ALL[0], seed, corpus);
         app.mode = Mode::Picking;
         app
+    }
+
+    pub fn with_speed(mut self, speed: Speed) -> Self {
+        self.speed = speed;
+        self.scene = self.kind.build(self.seed, &self.corpus, speed);
+        self
     }
 
     pub fn is_picking(&self) -> bool {
@@ -88,11 +98,28 @@ impl App {
     /// `--seed` replays the same sequence of restarts.
     pub fn restart(&mut self) {
         self.seed = self.seed.wrapping_add(1);
-        self.scene = self.kind.build(self.seed, &self.corpus);
+        self.scene = self.kind.build(self.seed, &self.corpus, self.speed);
     }
 
     pub fn next_scene(&mut self) {
         self.switch_to(self.kind.next());
+    }
+
+    pub fn type_faster(&mut self) {
+        self.change_speed(self.speed.faster());
+    }
+
+    pub fn type_slower(&mut self) {
+        self.change_speed(self.speed.slower());
+    }
+
+    /// The speed belongs to the typing scene, so another scene keeps it
+    /// as it is.
+    fn change_speed(&mut self, speed: Speed) {
+        if self.kind == SceneKind::Typing {
+            self.speed = speed;
+            self.scene.set_speed(speed);
+        }
     }
 
     pub fn open_picker(&mut self) {

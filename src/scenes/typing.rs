@@ -1,3 +1,5 @@
+use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use rand::RngExt;
@@ -6,24 +8,83 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::corpus::Corpus;
-use crate::scene::{Rng, Scene};
+use crate::scene::{Rng, Scene, TICK_RATE};
 use crate::theme;
 
-const MOST_GLYPHS_PER_TICK: u32 = 3;
-const LONGEST_LINE_PAUSE: u32 = 4;
+/// Pauses count in keystrokes, so a faster speed shortens them too.
+const LINE_PAUSE: std::ops::RangeInclusive<u32> = 2..=8;
+const FILE_PAUSE: u32 = 150;
 
-/// Ticks a finished file stays on screen before the next one starts.
-const FILE_PAUSE: u32 = 48;
+/// A tick types between half and one and a half times its share, so the
+/// rhythm is uneven the way a person's is.
+const JITTER: std::ops::Range<f64> = 0.5..1.5;
+
+/// Ticks a changed speed stays on screen, about one second.
+const NOTICE_TICKS: u32 = 16;
 
 const PATH_COLOUR: Color = theme::FOAM;
 const CODE_COLOUR: Color = theme::TEXT;
 const COMMENT_COLOUR: Color = theme::MUTED;
 const CURSOR_COLOUR: Color = theme::TEXT;
+const NOTICE_COLOUR: Color = theme::SUBTLE;
+
+/// Keystrokes per second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Speed(u16);
+
+impl Speed {
+    pub const DEFAULT: Speed = Speed(50);
+    const SLOWEST: u16 = 1;
+    const FASTEST: u16 = 1000;
+
+    /// One step up, about a quarter faster, and never past the ceiling.
+    pub fn faster(self) -> Speed {
+        let step = (self.0 + self.0 / 4).max(self.0 + 1);
+        Speed(step.min(Self::FASTEST))
+    }
+
+    /// One step down, about a fifth slower, and never under the floor.
+    pub fn slower(self) -> Speed {
+        let step = (self.0 - self.0 / 5).min(self.0 - 1);
+        Speed(step.max(Self::SLOWEST))
+    }
+
+    fn per_tick(self) -> f64 {
+        f64::from(self.0) * TICK_RATE.as_secs_f64()
+    }
+}
+
+impl fmt::Display for Speed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for Speed {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let range = Self::SLOWEST..=Self::FASTEST;
+        match text.parse::<u16>() {
+            Ok(cps) if range.contains(&cps) => Ok(Speed(cps)),
+            _ => Err(format!(
+                "a speed is a whole number of keystrokes per second, from {} to {}",
+                Self::SLOWEST,
+                Self::FASTEST
+            )),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Typing {
     rng: Rng,
     corpus: Arc<Corpus>,
+    speed: Speed,
+    /// Keystrokes owed and not yet typed. The fraction carries from one
+    /// tick to the next, so a speed under one keystroke per tick still types.
+    credit: f64,
+    notice: u32,
     file: usize,
     glyphs: Vec<char>,
     offset: usize,
@@ -33,10 +94,13 @@ pub struct Typing {
 }
 
 impl Typing {
-    pub fn new(rng: Rng, corpus: Arc<Corpus>) -> Self {
+    pub fn new(rng: Rng, corpus: Arc<Corpus>, speed: Speed) -> Self {
         let mut scene = Self {
             rng,
             corpus,
+            speed,
+            credit: 0.0,
+            notice: 0,
             file: 0,
             glyphs: Vec::new(),
             offset: 0,
@@ -67,15 +131,10 @@ impl Typing {
             .get(self.file)
             .map_or("", |source| source.path.as_str())
     }
-}
 
-fn is_comment(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("//") || line.starts_with('#')
-}
-
-impl Scene for Typing {
-    fn tick(&mut self, _area: Rect) {
+    /// Spends one keystroke: on a pause, on opening the next file, or on
+    /// one glyph.
+    fn press(&mut self) {
         if self.pause > 0 {
             self.pause -= 1;
             return;
@@ -85,23 +144,39 @@ impl Scene for Typing {
             self.open(next);
             return;
         }
-        let budget = self.rng.random_range(1..=MOST_GLYPHS_PER_TICK);
-        for _ in 0..budget {
-            let Some(&glyph) = self.glyphs.get(self.offset) else {
-                self.finished = true;
-                self.pause = FILE_PAUSE;
-                return;
-            };
-            self.offset += 1;
-            if glyph == '\n' {
-                self.lines.push(String::new());
-                self.pause = self.rng.random_range(1..=LONGEST_LINE_PAUSE);
-                return;
-            }
-            if let Some(line) = self.lines.last_mut() {
-                line.push(glyph);
-            }
+        let Some(&glyph) = self.glyphs.get(self.offset) else {
+            self.finished = true;
+            self.pause = FILE_PAUSE;
+            return;
+        };
+        self.offset += 1;
+        if glyph == '\n' {
+            self.lines.push(String::new());
+            self.pause = self.rng.random_range(LINE_PAUSE);
+        } else if let Some(line) = self.lines.last_mut() {
+            line.push(glyph);
         }
+    }
+}
+
+fn is_comment(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("//") || line.starts_with('#')
+}
+
+impl Scene for Typing {
+    fn tick(&mut self, _area: Rect) {
+        self.notice = self.notice.saturating_sub(1);
+        self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
+        while self.credit >= 1.0 {
+            self.credit -= 1.0;
+            self.press();
+        }
+    }
+
+    fn set_speed(&mut self, speed: Speed) {
+        self.speed = speed;
+        self.notice = NOTICE_TICKS;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -109,8 +184,8 @@ impl Scene for Typing {
             return;
         }
         let width = usize::from(area.width);
-        let mut put = |row: u16, text: &str, colour: Color| {
-            for (column, glyph) in text.chars().take(width).enumerate() {
+        let mut put = |row: u16, start: usize, text: &str, colour: Color| {
+            for (column, glyph) in (start..width).zip(text.chars()) {
                 let Ok(column) = u16::try_from(column) else {
                     break;
                 };
@@ -119,7 +194,16 @@ impl Scene for Typing {
                     .set_fg(colour);
             }
         };
-        put(0, self.path(), PATH_COLOUR);
+        put(0, 0, self.path(), PATH_COLOUR);
+        if self.notice > 0 {
+            let notice = format!("{} cps", self.speed);
+            put(
+                0,
+                width.saturating_sub(notice.len()),
+                &notice,
+                NOTICE_COLOUR,
+            );
+        }
 
         let visible = usize::from(area.height) - 1;
         if visible == 0 {
@@ -136,7 +220,7 @@ impl Scene for Typing {
             } else {
                 CODE_COLOUR
             };
-            put(row, line, colour);
+            put(row, 0, line, colour);
         }
 
         if let Some(last) = shown.last() {

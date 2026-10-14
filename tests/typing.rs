@@ -111,7 +111,8 @@ fn the_cursor_never_leaves_the_area() {
 }
 
 /// Given: a file whose one line holds two-cell glyphs.
-/// When: the scene types the whole line.
+/// When: the scene types for one second, which types the whole line and
+/// ends inside the hold before the file starts again.
 /// Then: the row reads the line without those glyphs, every cell is one
 /// column wide, and the cursor sits right after the last glyph.
 ///
@@ -122,7 +123,8 @@ fn the_cursor_never_leaves_the_area() {
 fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
     // Given, when:
     let area = Rect::new(0, 0, 30, 4);
-    let scene = ticked(scene(7, "let s = \"日本\"; // ok\n"), area, 60);
+    let one_second = (1.0 / TICK_RATE.as_secs_f64()).round() as usize;
+    let scene = ticked(scene(7, "let s = \"日本\"; // ok\n"), area, one_second);
     let buffer = render(&scene, area, area);
 
     // Then:

@@ -1,14 +1,11 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use clap::Parser;
 use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::events::{self, TerminalEvents};
-
-/// About 16 frames per second. Fast enough for rain and fire, slow enough
-/// that an idle terminal stays cheap.
-const TICK_RATE: Duration = Duration::from_millis(60);
+use hearth::scene::TICK_RATE;
 
 fn main() {
     let cli = Cli::parse();
@@ -26,7 +23,8 @@ fn main() {
     let app = match cli.scene {
         Some(kind) => App::new(kind, cli.seed(), corpus),
         None => App::picker(cli.seed(), corpus),
-    };
+    }
+    .with_speed(cli.speed);
     if let Err(e) = run_tui(app) {
         eprintln!("hearth: {e}");
         std::process::exit(1);

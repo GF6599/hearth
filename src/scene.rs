@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::ValueEnum;
 use rand::SeedableRng;
@@ -14,10 +15,14 @@ use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
 use crate::scenes::pipes::Pipes;
-use crate::scenes::typing::Typing;
+use crate::scenes::typing::{Speed, Typing};
 
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
+
+/// About 16 frames per second. Fast enough for rain and fire, slow enough
+/// that an idle terminal stays cheap.
+pub const TICK_RATE: Duration = Duration::from_millis(60);
 
 pub trait Scene {
     /// Advances the scene by one frame. The area is the whole terminal, so a
@@ -25,6 +30,9 @@ pub trait Scene {
     fn tick(&mut self, area: Rect);
 
     fn render(&self, area: Rect, buf: &mut Buffer);
+
+    /// Only a scene that types has a speed, so the others ignore it.
+    fn set_speed(&mut self, _speed: Speed) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -65,7 +73,7 @@ impl SceneKind {
         }
     }
 
-    pub fn build(self, seed: u64, corpus: &Arc<Corpus>) -> Box<dyn Scene> {
+    pub fn build(self, seed: u64, corpus: &Arc<Corpus>, speed: Speed) -> Box<dyn Scene> {
         let rng = Rng::seed_from_u64(seed);
         match self {
             SceneKind::Noise => Box::new(Noise::new(rng)),
@@ -75,7 +83,7 @@ impl SceneKind {
             SceneKind::Pipes => Box::new(Pipes::new(rng)),
             SceneKind::Bonsai => Box::new(Bonsai::new(rng)),
             SceneKind::Aquarium => Box::new(Aquarium::new(rng)),
-            SceneKind::Typing => Box::new(Typing::new(rng, Arc::clone(corpus))),
+            SceneKind::Typing => Box::new(Typing::new(rng, Arc::clone(corpus), speed)),
         }
     }
 
