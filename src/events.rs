@@ -58,10 +58,25 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
     if key.kind != KeyEventKind::Press {
         return;
     }
-    match key.code {
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => app.quit(),
-        KeyCode::Char('q') => app.quit(),
-        KeyCode::Char('r') => app.restart(),
-        _ => {}
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.quit();
+        return;
+    }
+    if app.is_picking() {
+        match key.code {
+            KeyCode::Char('q') => app.quit(),
+            KeyCode::Char('j') | KeyCode::Down => app.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
+            KeyCode::Enter => app.start_selected(),
+            _ => {}
+        }
+    } else {
+        match key.code {
+            KeyCode::Char('q') => app.quit(),
+            KeyCode::Char('r') => app.restart(),
+            KeyCode::Tab => app.next_scene(),
+            KeyCode::Esc => app.open_picker(),
+            _ => {}
+        }
     }
 }

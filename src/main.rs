@@ -11,7 +11,10 @@ const TICK_RATE: Duration = Duration::from_millis(60);
 
 fn main() {
     let cli = Cli::parse();
-    let app = App::new(cli.scene, cli.seed());
+    let app = match cli.scene {
+        Some(kind) => App::new(kind, cli.seed()),
+        None => App::picker(cli.seed()),
+    };
     if let Err(e) = run_tui(app) {
         eprintln!("hearth: {e}");
         std::process::exit(1);

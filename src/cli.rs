@@ -7,9 +7,9 @@ use crate::scene::SceneKind;
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Cli {
-    /// The scene to run
-    #[arg(value_enum, default_value_t = SceneKind::Noise)]
-    pub scene: SceneKind,
+    /// The scene to run. With none, the picker opens
+    #[arg(value_enum)]
+    pub scene: Option<SceneKind>,
 
     /// Seed for the random source, so a run can be replayed
     #[arg(long)]
