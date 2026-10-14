@@ -16,6 +16,8 @@ rand_chacha = { version = "0.10", default-features = false }
 # The same crate ratatui measures cells with, so the corpus and the
 # renderer agree on every width.
 unicode-width = "0.2"
+# fancy-regex instead of oniguruma, so the build needs no C toolchain.
+syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
 
 [profile.release]
 lto = true
