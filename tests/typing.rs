@@ -67,15 +67,28 @@ fn frame(buffer: &Buffer) -> Rect {
     )
 }
 
-/// The text cut into the top rule of the frame.
-fn title(buffer: &Buffer) -> String {
+fn frame_row(buffer: &Buffer, y: u16) -> String {
     let frame = frame(buffer);
-    (frame.x + 1..frame.right() - 1)
-        .map(|x| buffer[(x, frame.y)].symbol().to_string())
-        .collect::<String>()
-        .trim_matches('─')
-        .trim()
-        .to_string()
+    (frame.x..frame.right())
+        .map(|x| buffer[(x, y)].symbol().to_string())
+        .collect()
+}
+
+fn breadcrumb(buffer: &Buffer) -> String {
+    let frame = frame(buffer);
+    if frame.y == buffer.area.y {
+        return String::new();
+    }
+    frame_row(buffer, frame.y - 1).trim_end().to_string()
+}
+
+/// Trailing blanks stay, so a test can tell where the text ends.
+fn status(buffer: &Buffer) -> String {
+    let frame = frame(buffer);
+    if frame.bottom() == buffer.area.bottom() {
+        return String::new();
+    }
+    frame_row(buffer, frame.bottom())
 }
 
 /// One typed line inside the frame: its number in the gutter, the column
@@ -135,9 +148,9 @@ fn first_number(buffer: &Buffer) -> usize {
     code_rows(buffer).first().expect("no typed line").number
 }
 
-/// The title and the first line number, which together name a snippet.
+/// The breadcrumb and the first line number, which together name a snippet.
 fn snippet_name(buffer: &Buffer) -> String {
-    format!("{}:{}", title(buffer), first_number(buffer))
+    format!("{}:{}", breadcrumb(buffer), first_number(buffer))
 }
 
 /// Ticks until the frame holds still for twelve ticks, which only the hold
@@ -180,7 +193,7 @@ fn cursors(buffer: &Buffer) -> Vec<Position> {
 
 /// Given: two scenes on one seed over one file.
 /// When: each ticks eight times.
-/// Then: the frames are equal, the title names the file, and the rows
+/// Then: the frames are equal, the breadcrumb names the file, and the rows
 /// inside the frame hold a non-empty prefix of the file.
 ///
 /// Why it matters: a replay with `--seed` has to type the same text, and
@@ -195,7 +208,7 @@ fn a_seed_types_the_same_prefix_of_the_file() {
 
     // Then:
     assert_eq!(first, second);
-    assert_eq!(snippet_name(&first), "a.rs:1");
+    assert_eq!(snippet_name(&first), "a.rs › fn main:1");
     let text = typed(&first);
     assert!(!text.is_empty());
     assert!(PROGRAM.starts_with(&text), "{text:?} is not a prefix");
@@ -366,7 +379,7 @@ fn a_file_with_no_function_is_skipped() {
             Speed::DEFAULT,
         );
         let buffer = settled(&mut scene, area);
-        assert_eq!(snippet_name(&buffer), "a.rs:1", "seed {seed}");
+        assert_eq!(snippet_name(&buffer), "a.rs › fn y:1", "seed {seed}");
     }
 }
 
@@ -397,10 +410,10 @@ fn a_snippet_is_one_function_with_its_doc_comment() {
     }
     let expected = HashSet::from([
         (
-            "a.rs:4".to_string(),
+            "a.rs › fn add:4".to_string(),
             "/// Adds one.\nfn add(a: u32) -> u32 {\n    a + 1\n}".to_string(),
         ),
-        ("a.rs:9".to_string(), "fn other() {}".to_string()),
+        ("a.rs › fn other:9".to_string(), "fn other() {}".to_string()),
     ]);
     assert_eq!(seen, expected);
 }
@@ -531,34 +544,123 @@ fn the_frame_is_centred_and_does_not_grow() {
     assert!(top.abs_diff(bottom) <= 1, "top {top}, bottom {bottom}");
 }
 
-/// Given: a one line function in a file with a long path.
-/// When: the scene has typed it.
-/// Then: the top rule reads the corner, a dash, the path, a gap, at least
-/// one more dash, and the other corner, so the frame is wide enough for
-/// its title.
-#[test]
-fn the_path_is_cut_into_the_top_rule() {
-    let area = Rect::new(0, 0, 80, 8);
-    let path = "src/scenes/a_long_module_name.rs";
+fn settled_file(path: &str, text: &str, area: Rect) -> Buffer {
     let mut scene = Typing::new(
         Rng::seed_from_u64(7),
-        Arc::new(Corpus::from_files([(
-            path.to_string(),
-            "fn f() {}\n".to_string(),
-        )])),
+        Arc::new(Corpus::from_files([(path.to_string(), text.to_string())])),
         Speed::DEFAULT,
     );
-    let buffer = settled(&mut scene, area);
+    settled(&mut scene, area)
+}
+
+/// Whether the rule on row `y` runs unbroken from one corner to the other.
+fn rule_is_bare(buffer: &Buffer, y: u16) -> bool {
+    let row = frame_row(buffer, y);
+    let inside: Vec<char> = row.chars().collect();
+    inside[1..inside.len() - 1].iter().all(|&c| c == '─')
+}
+
+/// Given: a typed function in a Rust file and in a Python file, on a 120 by
+/// 40 area.
+/// When: each snippet is typed whole.
+/// Then: the row above the frame starts at its left edge and reads the
+/// path, then `fn` and the function's name, the top rule carries no text,
+/// and the row below the frame holds the language at its left edge and
+/// the cursor's line and column and the speed at its right edge.
+///
+/// Why it matters: a name read from a keyword list knows `fn` and not
+/// `def`, and a status line that is not flush with the frame's edges reads
+/// as a stray line of text.
+#[test]
+fn the_breadcrumb_and_the_status_line_frame_the_snippet() {
+    let area = Rect::new(0, 0, 120, 40);
+    let cases = [
+        (
+            "src/scenes/typing.rs",
+            "fn tick() {\n    go();\n}\n",
+            "src › scenes › typing.rs › fn tick",
+            "Rust",
+            "Ln 3, Col 2  50 cps",
+        ),
+        (
+            "a.py",
+            "def greet():\n    pass\n",
+            "a.py › fn greet",
+            "Python",
+            "Ln 2, Col 9  50 cps",
+        ),
+    ];
+    for (path, text, trail, language, cursor) in cases {
+        // Given, when:
+        let buffer = settled_file(path, text, area);
+
+        // Then:
+        let frame = frame(&buffer);
+        assert_eq!(breadcrumb(&buffer), trail);
+        assert!(rule_is_bare(&buffer, frame.y), "{path}");
+        let status = status(&buffer);
+        assert!(status.starts_with(&format!("{language} ")), "{status:?}");
+        assert!(status.ends_with(cursor), "{status:?}");
+    }
+}
+
+/// Given: a typed snippet on a 120 by 40 area.
+/// When: the scene ticks through the snippet, with a render after each.
+/// Then: the status line gives the gutter number of the cursor's row as
+/// `Ln` and the cursor's column after the gutter, counted from 1, as `Col`.
+#[test]
+fn the_status_line_follows_the_cursor() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut scene = scene(7, &block_of_ten());
+    for tick in 0..60 {
+        // When:
+        scene.tick(area);
+        let buffer = render(&scene, area, area);
+
+        // Then:
+        let cursor = cursors(&buffer)[0];
+        let rows = code_rows(&buffer);
+        let row = rows.iter().find(|row| row.y == cursor.y).unwrap();
+        let place = format!("Ln {}, Col {}", row.number, cursor.x - row.x + 1);
+        assert!(status(&buffer).contains(&place), "tick {tick}: {place}");
+    }
+}
+
+/// Given: a function in a file whose path is wider than the frame.
+/// When: the snippet is typed whole.
+/// Then: the breadcrumb drops the leading folders, keeps the file and the
+/// function, and starts at the frame's left edge.
+///
+/// Why it matters: a breadcrumb cut at its right end loses the function
+/// name, which is the part the reader cannot get from anywhere else.
+#[test]
+fn a_narrow_frame_drops_the_leading_folders() {
+    let area = Rect::new(0, 0, 80, 10);
+    let buffer = settled_file("src/scenes/typing.rs", "fn tick() { go(); }\n", area);
     let frame = frame(&buffer);
-    let row = row_text(&buffer, frame.y);
-    let rule = row.trim_start();
-    let lead = format!("┌─ {path} ─");
-    assert!(rule.starts_with(&lead), "{rule:?}");
-    assert!(rule.ends_with('┐'), "{rule:?}");
-    assert!(
-        rule[lead.len()..].chars().all(|c| c == '─' || c == '┐'),
-        "{rule:?}"
+    assert_eq!(breadcrumb(&buffer), "typing.rs › fn tick");
+    assert_eq!(
+        row_text(&buffer, frame.y - 1).trim_start(),
+        "typing.rs › fn tick"
     );
+}
+
+/// Given: a one line function on an area one row too short for padding.
+/// When: the snippet is typed whole.
+/// Then: the frame fills the area's height and both rules run unbroken, so
+/// neither the breadcrumb nor the status line is drawn over the frame.
+///
+/// Why it matters: a breadcrumb moved inside the frame for want of a row
+/// writes over the rule, and one that moves the frame down to make room
+/// breaks its centring.
+#[test]
+fn an_area_with_no_padding_has_no_breadcrumb_or_status_line() {
+    let area = Rect::new(0, 0, 40, 4);
+    let buffer = settled_file("a.rs", "fn f() {}\n", area);
+    let frame = frame(&buffer);
+    assert_eq!((frame.y, frame.height), (area.y, area.height));
+    assert!(rule_is_bare(&buffer, frame.y));
+    assert!(rule_is_bare(&buffer, frame.bottom() - 1));
 }
 
 /// Given: a file whose documented function runs from line 3 to line 6.
@@ -587,7 +689,8 @@ fn the_gutter_shows_the_line_numbers_of_the_file() {
 /// When: the area sweeps every width from 10 to 200, at heights 5 and 30,
 /// with the snippet half typed.
 /// Then: nothing is drawn outside the area, the frame keeps its right
-/// rule, and the one cursor sits inside the frame.
+/// rule, the one cursor sits inside the frame, and the rows above and below
+/// the frame draw nothing outside its columns.
 ///
 /// Why it matters: a line wider than the frame that is not cut at the
 /// frame edge writes over the rule, and past the area into the padding a
@@ -621,6 +724,15 @@ fn every_width_keeps_the_frame_inside_the_area() {
             let cursors = cursors(&buffer);
             assert_eq!(cursors.len(), 1, "{width}x{height}: {cursors:?}");
             assert!(inner.contains(cursors[0]), "{width}x{height}: {cursors:?}");
+            for y in [frame.y.checked_sub(1), Some(frame.bottom())]
+                .into_iter()
+                .flatten()
+                .filter(|&y| y >= area.y && y < area.bottom())
+            {
+                for x in (area.x..frame.x).chain(frame.right()..area.right()) {
+                    assert_eq!(buffer[(x, y)].symbol(), " ", "{width}x{height} at {x},{y}");
+                }
+            }
         }
     }
 }
