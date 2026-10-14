@@ -46,18 +46,80 @@ fn repository(name: &str, file: &str, text: &str) -> PathBuf {
     repo
 }
 
-fn run_typing(repo: &Path) -> (i32, String) {
+/// A folder for `XDG_CONFIG_HOME` that holds `config` as hearth's file, or
+/// no file at all, so a run never reads the config of the machine it runs on.
+fn config_home(name: &str, config: Option<&str>) -> PathBuf {
+    let home =
+        std::env::temp_dir().join(format!("hearth-cli-{}-{name}-config", std::process::id()));
+    let _ = fs::remove_dir_all(&home);
+    fs::create_dir_all(home.join("hearth")).unwrap();
+    if let Some(config) = config {
+        fs::write(home.join("hearth").join("config.toml"), config).unwrap();
+    }
+    home
+}
+
+fn run(args: &[&str], home: &Path) -> (i32, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_hearth"))
-        .arg("typing")
-        .arg("--repo")
-        .arg(repo)
+        .args(args)
+        .env("XDG_CONFIG_HOME", home)
         .output()
         .unwrap();
-    let _ = fs::remove_dir_all(repo);
+    let _ = fs::remove_dir_all(home);
     (
         output.status.code().unwrap(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
+}
+
+fn run_typing(repo: &Path) -> (i32, String) {
+    let name = repo.file_name().unwrap().to_string_lossy().into_owned();
+    let result = run(
+        &["typing", "--repo", &repo.to_string_lossy()],
+        &config_home(&name, None),
+    );
+    let _ = fs::remove_dir_all(repo);
+    result
+}
+
+/// Given: a config file whose fire speed is a word, and one whose scene is
+/// no scene.
+/// When: hearth starts with each, with no terminal.
+/// Then: each exits 1 with a message that names the file and the key.
+///
+/// Why it matters: a bad value read as the default leaves the user
+/// wondering why the file does nothing.
+#[test]
+fn a_bad_config_file_stops_startup_and_names_the_key() {
+    for (name, config, key) in [
+        ("word", "[speed]\nfire = \"fast\"\n", "speed.fire"),
+        ("scene", "scene = \"nope\"\n", "scene"),
+    ] {
+        // Given:
+        let home = config_home(name, Some(config));
+        let file = home.join("hearth").join("config.toml");
+
+        // When:
+        let (code, stderr) = run(&["fire"], &home);
+
+        // Then:
+        assert_eq!(code, 1, "{name}");
+        assert!(stderr.contains(&file.display().to_string()), "{stderr}");
+        assert!(stderr.contains(key), "{stderr}");
+    }
+}
+
+/// Given: a config file whose repo is a repository with no function.
+/// When: hearth starts the typing scene with no `--repo`.
+/// Then: it refuses that repository, so the file chose it.
+#[test]
+fn the_config_file_chooses_the_repository() {
+    let repo = repository("configured", "README.md", "# Title\n");
+    let config = format!("repo = {:?}\n", repo.display().to_string());
+    let (code, stderr) = run(&["typing"], &config_home("configured", Some(&config)));
+    let _ = fs::remove_dir_all(&repo);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("no function"), "{stderr}");
 }
 
 /// Given: a repository whose only file is Markdown, and one with a Rust
