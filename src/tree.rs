@@ -8,7 +8,7 @@ pub struct Tree {
     files: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Row {
     pub depth: usize,
     pub name: String,
@@ -25,12 +25,9 @@ impl Tree {
     pub fn new<'a>(paths: impl IntoIterator<Item = &'a str>) -> Self {
         let mut root = Tree::default();
         for path in paths {
-            let mut parts: Vec<&str> = path.split('/').collect();
-            let Some(file) = parts.pop() else {
-                continue;
-            };
+            let (folders, file) = path.rsplit_once('/').unwrap_or(("", path));
             let mut folder = &mut root;
-            for part in parts {
+            for part in folders.split('/').filter(|part| !part.is_empty()) {
                 folder = folder.folders.entry(part.to_string()).or_default();
             }
             folder.files.insert(file.to_string());
