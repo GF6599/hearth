@@ -97,7 +97,7 @@ impl Corpus {
         if !checkout.join(".git").exists() {
             fs::create_dir_all(cache)?;
             let status = Command::new("git")
-                .args(["clone", "--quiet", "--depth", "1", address])
+                .args(["clone", "--quiet", "--depth", "1", "--", address])
                 .arg(&checkout)
                 .status()
                 .map_err(|e| io::Error::new(e.kind(), format!("cannot run git: {e}")))?;
