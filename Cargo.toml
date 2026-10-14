@@ -18,6 +18,9 @@ rand_chacha = { version = "0.10", default-features = false }
 unicode-width = "0.2"
 # fancy-regex instead of oniguruma, so the build needs no C toolchain.
 syntect = { version = "5.3", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+# One parser reads and writes the config file, and a write keeps the
+# user's comments and key order.
+toml_edit = "0.25"
 
 [profile.release]
 lto = true
