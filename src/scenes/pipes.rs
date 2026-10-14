@@ -161,9 +161,9 @@ impl Pipes {
             *cell = Some((rune(pipe.heading, next), pipe.colour));
         }
         match next {
-            Direction::Up => pipe.y = (pipe.y + height - 1) % height,
+            Direction::Up => pipe.y = pipe.y.checked_sub(1).unwrap_or(height - 1),
             Direction::Down => pipe.y = (pipe.y + 1) % height,
-            Direction::Left => pipe.x = (pipe.x + width - 1) % width,
+            Direction::Left => pipe.x = pipe.x.checked_sub(1).unwrap_or(width - 1),
             Direction::Right => pipe.x = (pipe.x + 1) % width,
         }
         pipe.heading = next;
