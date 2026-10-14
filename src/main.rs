@@ -30,7 +30,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let app = cli.app(&config, corpus);
+    let app = cli.app(&config, corpus).saving_to(config::default_path());
     if let Err(e) = run_tui(app) {
         eprintln!("hearth: {e}");
         std::process::exit(1);

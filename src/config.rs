@@ -1,10 +1,11 @@
 //! The preferences a user keeps between runs: the scene to start, the
 //! repository to type, and the speed of each scene.
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use toml_edit::{DocumentMut, Item};
+use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::typing::Speed;
@@ -104,6 +105,53 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// Sets one speed in the file and keeps everything else in it, comments
+/// and key order included. A missing file or folder is created.
+pub fn save_speed(path: &Path, scene: SceneKind, speed: impl Into<Value>) -> io::Result<()> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let table = document
+        .entry("speed")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "speed is not a table"))?;
+    let mut speed = speed.into();
+    // Replaced in place, because a new key would drop the comment above
+    // it and the one after the old value.
+    match table.get_mut(scene.name()) {
+        Some(item) => {
+            if let Some(old) = item.as_value() {
+                *speed.decor_mut() = old.decor().clone();
+            }
+            *item = Item::Value(speed);
+        }
+        None => {
+            table.insert(scene.name(), Item::Value(speed));
+        }
+    }
+    replace(path, &document.to_string())
+}
+
+/// The new text goes to a file beside the old one and is renamed over it.
+/// A rename within one folder is atomic, so a crash leaves the old file or
+/// the new one and never half of either.
+fn replace(path: &Path, text: &str) -> io::Result<()> {
+    let folder = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(folder)?;
+    let temp = folder.join(format!(".config.toml.{}.tmp", std::process::id()));
+    let written = fs::write(&temp, text).and_then(|()| fs::rename(&temp, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written
 }
 
 fn scene_names() -> String {

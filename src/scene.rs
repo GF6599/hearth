@@ -59,6 +59,10 @@ impl Rate {
         RATES[self.0].0
     }
 
+    pub fn times(self) -> f64 {
+        f64::from(self.quarters()) / f64::from(QUARTERS_PER_TICK)
+    }
+
     /// The step that runs `times` as fast as normal. Every step is a whole
     /// number of quarters, so each compares exactly as a float.
     pub fn from_times(times: f64) -> Option<Rate> {

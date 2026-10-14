@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
@@ -5,12 +6,13 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::corpus::Corpus;
 use crate::picker::Picker;
 use crate::scene::{ALL, QUARTERS_PER_TICK, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
 use crate::theme;
+use toml_edit::Value;
 
 /// Frames a changed speed stays on screen, about one second.
 const NOTICE_TICKS: u32 = 16;
@@ -33,6 +35,11 @@ pub struct App {
     /// Quarter ticks owed and not yet run, carried from frame to frame.
     credit: u32,
     notice: u32,
+    /// Where a changed speed is saved. `None` saves nothing, which is what
+    /// a test that presses `+` needs.
+    saving: Option<PathBuf>,
+    /// Why the last change was not saved, shown with it in the notice.
+    unsaved: Option<String>,
     scene: Box<dyn Scene>,
     mode: Mode,
     selected: usize,
@@ -64,6 +71,8 @@ impl App {
             rates: [Rate::NORMAL; ALL.len()],
             credit: 0,
             notice: 0,
+            saving: None,
+            unsaved: None,
             mode: Mode::Running,
             selected: ALL.iter().position(|k| *k == kind).unwrap_or(0),
             should_quit: false,
@@ -92,6 +101,11 @@ impl App {
             Some(speed) => self.with_speed(speed),
             None => self,
         }
+    }
+
+    pub fn saving_to(mut self, path: PathBuf) -> Self {
+        self.saving = Some(path);
+        self
     }
 
     pub fn is_picking(&self) -> bool {
@@ -137,18 +151,21 @@ impl App {
         }
     }
 
+    /// A notice wider than the area is cut at its left edge, so the reason
+    /// a save failed is never hidden by the speed in front of it.
     fn render_notice(&self, area: Rect, buf: &mut Buffer) {
-        let notice = if self.kind == SceneKind::Typing {
+        let mut notice = if self.kind == SceneKind::Typing {
             format!("{} cps", self.speed)
         } else {
             self.rates[self.slot()].to_string()
         };
-        if let Ok(width) = u16::try_from(notice.chars().count())
-            && width <= area.width
-        {
-            let style = Style::default().fg(NOTICE_COLOUR);
-            buf.set_string(area.right() - width, area.y, notice, style);
+        if let Some(reason) = &self.unsaved {
+            notice = format!("{notice}, not saved: {reason}");
         }
+        let width = u16::try_from(notice.chars().count()).unwrap_or(u16::MAX);
+        let x = area.right() - width.min(area.width);
+        let style = Style::default().fg(NOTICE_COLOUR);
+        buf.set_stringn(x, area.y, notice, usize::from(area.width), style);
     }
 
     fn slot(&self) -> usize {
@@ -176,14 +193,24 @@ impl App {
     }
 
     fn change_speed(&mut self, speed: fn(Speed) -> Speed, rate: fn(Rate) -> Rate) {
-        if self.kind == SceneKind::Typing {
+        let saved = if self.kind == SceneKind::Typing {
             self.speed = speed(self.speed);
             self.scene.set_speed(self.speed);
+            self.save(Value::from(i64::from(self.speed.cps())))
         } else {
             let slot = self.slot();
             self.rates[slot] = rate(self.rates[slot]);
-        }
+            self.save(Value::from(self.rates[slot].times()))
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
         self.notice = NOTICE_TICKS;
+    }
+
+    fn save(&self, speed: Value) -> std::io::Result<()> {
+        match &self.saving {
+            Some(path) => config::save_speed(path, self.kind, speed),
+            None => Ok(()),
+        }
     }
 
     pub fn open_picker(&mut self) {

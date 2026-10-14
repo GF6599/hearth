@@ -90,6 +90,10 @@ impl Speed {
             .ok_or_else(Self::range_message)
     }
 
+    pub fn cps(self) -> u16 {
+        self.0
+    }
+
     pub fn range_message() -> String {
         format!(
             "a speed is a whole number of keystrokes per second, from {} to {}",
