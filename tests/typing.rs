@@ -101,7 +101,11 @@ fn the_cursor_never_leaves_the_area() {
         assert_eq!(cursors.len(), 1, "tick {tick}: {cursors:?}");
         assert!(area.contains(cursors[0]), "tick {tick}: {cursors:?}");
         for position in canvas.positions().filter(|p| !area.contains(*p)) {
-            assert_eq!(buffer[position].symbol(), " ", "tick {tick} at {position:?}");
+            assert_eq!(
+                buffer[position].symbol(),
+                " ",
+                "tick {tick} at {position:?}"
+            );
         }
     }
 }
