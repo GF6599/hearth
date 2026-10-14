@@ -28,10 +28,16 @@ const JITTER: std::ops::Range<f64> = 0.5..1.5;
 /// Ticks a changed speed stays on screen, about one second.
 const NOTICE_TICKS: u32 = 16;
 
-/// Cells kept clear on each side of the frame when the area has room for
-/// them. Without that room the frame fills the area on that axis.
-const MARGIN_X: u16 = 2;
-const MARGIN_Y: u16 = 1;
+/// Each side of the frame keeps this share of the area clear, so every
+/// snippet sits in the same frame and the padding does not move.
+const PADDING_SHARE: u16 = 8;
+
+/// One row holds the breadcrumb above the frame and the status line below.
+const LEAST_PADDING_X: u16 = 2;
+const LEAST_PADDING_Y: u16 = 1;
+
+/// Two rules and one cell between them.
+const SMALLEST_FRAME: u16 = 3;
 
 /// A blank cell before the line numbers and another after them.
 const GUTTER_GAP: usize = 1;
@@ -114,9 +120,8 @@ pub struct Typing {
     language: &'static str,
     /// The snippet on screen, each glyph with its colour from the grammar.
     glyphs: Vec<(char, Color)>,
-    /// The size of the whole snippet, in glyphs and lines, so the frame
-    /// does not grow while it types.
-    widest: usize,
+    /// The lines in the whole snippet, so the gutter does not widen while
+    /// it types.
     line_count: usize,
     offset: usize,
     lines: Vec<Vec<(char, Color)>>,
@@ -137,7 +142,6 @@ impl Typing {
             function: String::new(),
             language: "",
             glyphs: Vec::new(),
-            widest: 0,
             line_count: 0,
             offset: 0,
             lines: vec![Vec::new()],
@@ -185,12 +189,6 @@ impl Typing {
             self.language = highlighted.language;
             self.line_count = span.len();
             self.glyphs = glyphs(&source.text, &highlighted.colours, span);
-            self.widest = self
-                .glyphs
-                .split(|&(glyph, _)| glyph == '\n')
-                .map(<[_]>::len)
-                .max()
-                .unwrap_or(0);
             return;
         }
     }
@@ -240,16 +238,12 @@ impl Typing {
         last.to_string().len()
     }
 
-    /// The frame sized for the whole snippet and centred in the area.
     fn frame(&self, area: Rect) -> Rect {
-        let gutter = GUTTER_GAP + self.digits() + GUTTER_GAP;
-        // One cell after the widest line holds the cursor. A breadcrumb with
-        // no room for folders still holds the file and the function, so the
-        // frame is never narrower than those two.
-        let content = gutter + self.widest + 1;
-        let tail = self.breadcrumb(0).width();
-        let width = fit((content + 2).max(tail), area.width, MARGIN_X);
-        let height = fit(self.line_count + 2, area.height, MARGIN_Y);
+        // A breadcrumb with no room for folders still holds the file and the
+        // function, so the frame is never narrower than those two.
+        let tail = u16::try_from(self.breadcrumb(0).width()).unwrap_or(u16::MAX);
+        let width = padded(area.width, LEAST_PADDING_X).max(tail.min(area.width));
+        let height = padded(area.height, LEAST_PADDING_Y);
         Rect::new(
             area.x + (area.width - width) / 2,
             area.y + (area.height - height) / 2,
@@ -323,11 +317,10 @@ fn snippets(source: &SourceFile) -> (highlight::Highlighted, Vec<std::ops::Range
     (highlighted, spans)
 }
 
-/// The wanted size when it fits in the room with its margin on both sides,
-/// and the whole room when it does not.
-fn fit(want: usize, room: u16, margin: u16) -> u16 {
-    match u16::try_from(want) {
-        Ok(want) if want.saturating_add(2 * margin) <= room => want,
+fn padded(room: u16, least: u16) -> u16 {
+    let padding = (room / PADDING_SHARE).max(least);
+    match room.checked_sub(2 * padding) {
+        Some(left) if left >= SMALLEST_FRAME => left,
         _ => room,
     }
 }
