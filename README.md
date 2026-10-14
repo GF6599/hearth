@@ -15,7 +15,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `pipes` | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
 | `bonsai` | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
 | `aquarium` | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
-| `typing` | Types one function at a time from a random file of a git repository, the way a person would, with a cursor and a pause at each line, at a speed you set, coloured by the grammar of each file's language |
+| `typing` | Types one function at a time from a random file of a git repository, the way a person would, with a cursor and a pause at each line, at a speed you set, coloured by the grammar of each file's language, in a centred frame that shows the file's path and line numbers |
 
 `hearth --help` lists every scene the build carries.
 
