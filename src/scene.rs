@@ -8,6 +8,7 @@ use crate::scenes::fire::Fire;
 use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
+use crate::scenes::pipes::Pipes;
 
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
@@ -26,6 +27,7 @@ pub enum SceneKind {
     Matrix,
     Fire,
     Life,
+    Pipes,
 }
 
 /// The order the picker lists and Tab cycles.
@@ -34,6 +36,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Matrix,
     SceneKind::Fire,
     SceneKind::Life,
+    SceneKind::Pipes,
 ];
 
 impl SceneKind {
@@ -43,6 +46,7 @@ impl SceneKind {
             SceneKind::Matrix => "matrix",
             SceneKind::Fire => "fire",
             SceneKind::Life => "life",
+            SceneKind::Pipes => "pipes",
         }
     }
 
@@ -53,6 +57,7 @@ impl SceneKind {
             SceneKind::Matrix => Box::new(Matrix::new(rng)),
             SceneKind::Fire => Box::new(Fire::new(rng)),
             SceneKind::Life => Box::new(Life::new(rng)),
+            SceneKind::Pipes => Box::new(Pipes::new(rng)),
         }
     }
 
