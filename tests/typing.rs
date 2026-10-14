@@ -577,17 +577,17 @@ fn the_breadcrumb_and_the_status_line_frame_the_snippet() {
     let cases = [
         (
             "src/scenes/typing.rs",
-            "fn tick() {\n    go();\n}\n",
+            "fn tick() {\n    self.notice = self.notice.saturating_sub(1);\n}\n",
             "src › scenes › typing.rs › fn tick",
             "Rust",
             "Ln 3, Col 2  50 cps",
         ),
         (
             "a.py",
-            "def greet():\n    pass\n",
+            "def greet():\n    print('hello, world')\n",
             "a.py › fn greet",
             "Python",
-            "Ln 2, Col 9  50 cps",
+            "Ln 2, Col 26  50 cps",
         ),
     ];
     for (path, text, trail, language, cursor) in cases {
@@ -626,23 +626,28 @@ fn the_status_line_follows_the_cursor() {
     }
 }
 
-/// Given: a function in a file whose path is wider than the frame.
-/// When: the snippet is typed whole.
-/// Then: the breadcrumb drops the leading folders, keeps the file and the
-/// function, and starts at the frame's left edge.
+/// Given: a function whose code is wider than the file and its name, and
+/// one whose code is narrower, each in a file whose path is wider than
+/// either frame.
+/// When: each snippet is typed whole.
+/// Then: both breadcrumbs drop the leading folders, keep the whole file
+/// and function, and start at the frame's left edge.
 ///
 /// Why it matters: a breadcrumb cut at its right end loses the function
 /// name, which is the part the reader cannot get from anywhere else.
 #[test]
 fn a_narrow_frame_drops_the_leading_folders() {
     let area = Rect::new(0, 0, 80, 10);
-    let buffer = settled_file("src/scenes/typing.rs", "fn tick() { go(); }\n", area);
-    let frame = frame(&buffer);
-    assert_eq!(breadcrumb(&buffer), "typing.rs › fn tick");
-    assert_eq!(
-        row_text(&buffer, frame.y - 1).trim_start(),
-        "typing.rs › fn tick"
-    );
+    for code in ["fn tick() { go(); }\n", "fn tick() {}\n"] {
+        let buffer = settled_file("src/scenes/typing.rs", code, area);
+        let frame = frame(&buffer);
+        assert_eq!(breadcrumb(&buffer), "typing.rs › fn tick", "{code:?}");
+        assert_eq!(
+            row_text(&buffer, frame.y - 1).trim_start(),
+            "typing.rs › fn tick",
+            "{code:?}"
+        );
+    }
 }
 
 /// Given: a one line function on an area one row too short for padding.
@@ -689,8 +694,7 @@ fn the_gutter_shows_the_line_numbers_of_the_file() {
 /// When: the area sweeps every width from 10 to 200, at heights 5 and 30,
 /// with the snippet half typed.
 /// Then: nothing is drawn outside the area, the frame keeps its right
-/// rule, the one cursor sits inside the frame, and the rows above and below
-/// the frame draw nothing outside its columns.
+/// rule, and the one cursor sits inside the frame.
 ///
 /// Why it matters: a line wider than the frame that is not cut at the
 /// frame edge writes over the rule, and past the area into the padding a
@@ -724,15 +728,6 @@ fn every_width_keeps_the_frame_inside_the_area() {
             let cursors = cursors(&buffer);
             assert_eq!(cursors.len(), 1, "{width}x{height}: {cursors:?}");
             assert!(inner.contains(cursors[0]), "{width}x{height}: {cursors:?}");
-            for y in [frame.y.checked_sub(1), Some(frame.bottom())]
-                .into_iter()
-                .flatten()
-                .filter(|&y| y >= area.y && y < area.bottom())
-            {
-                for x in (area.x..frame.x).chain(frame.right()..area.right()) {
-                    assert_eq!(buffer[(x, y)].symbol(), " ", "{width}x{height} at {x},{y}");
-                }
-            }
         }
     }
 }

@@ -36,7 +36,12 @@ const MARGIN_Y: u16 = 1;
 /// A blank cell before the line numbers and another after them.
 const GUTTER_GAP: usize = 1;
 
-const PATH_COLOUR: Color = theme::FOAM;
+const FOLDER_COLOUR: Color = theme::SUBTLE;
+const SEPARATOR_COLOUR: Color = theme::MUTED;
+const FILE_COLOUR: Color = theme::FOAM;
+const FUNCTION_MARK_COLOUR: Color = theme::PINE;
+const FUNCTION_COLOUR: Color = theme::ROSE;
+const STATUS_COLOUR: Color = theme::SUBTLE;
 const CURSOR_COLOUR: Color = theme::TEXT;
 const NOTICE_COLOUR: Color = theme::SUBTLE;
 const FRAME_COLOUR: Color = theme::MUTED;
@@ -105,6 +110,8 @@ pub struct Typing {
     candidates: Vec<usize>,
     /// The file and the first line of the snippet on screen.
     current: Option<(usize, usize)>,
+    function: String,
+    language: &'static str,
     /// The snippet on screen, each glyph with its colour from the grammar.
     glyphs: Vec<(char, Color)>,
     /// The size of the whole snippet, in glyphs and lines, so the frame
@@ -127,6 +134,8 @@ impl Typing {
             notice: 0,
             candidates: Vec::new(),
             current: None,
+            function: String::new(),
+            language: "",
             glyphs: Vec::new(),
             widest: 0,
             line_count: 0,
@@ -167,6 +176,13 @@ impl Typing {
             }
             let span = spans[pick].clone();
             self.current = Some((file, span.start));
+            // The lines above the definition are comments and attributes,
+            // which name no function, so the first name is the snippet's own.
+            self.function = highlighted.functions[span.clone()]
+                .iter()
+                .find_map(Clone::clone)
+                .unwrap_or_default();
+            self.language = highlighted.language;
             self.line_count = span.len();
             self.glyphs = glyphs(&source.text, &highlighted.colours, span);
             self.widest = self
@@ -179,18 +195,43 @@ impl Typing {
         }
     }
 
-    /// The path of the file on screen, cut into the top rule.
-    fn title(&self) -> Line<'_> {
+    /// The folders, the file and the function, with as many leading folders
+    /// dropped as `width` needs. The file and the function always stay,
+    /// because the reader cannot get them from anywhere else on screen.
+    fn breadcrumb(&self, width: u16) -> Line<'_> {
         let path = self
             .current
             .and_then(|(file, _)| self.corpus.files().get(file))
             .map_or("", |source| source.path.as_str());
-        let rule = Style::default().fg(FRAME_COLOUR);
-        Line::from(vec![
-            Span::styled("─ ", rule),
-            Span::styled(path, Style::default().fg(PATH_COLOUR)),
-            Span::styled(" ", rule),
-        ])
+        let mut folders: Vec<&str> = path.split('/').collect();
+        let file = folders.pop().unwrap_or_default();
+        let separator = Span::styled(" › ", Style::default().fg(SEPARATOR_COLOUR));
+        let tail = [
+            Span::styled(file, Style::default().fg(FILE_COLOUR)),
+            separator.clone(),
+            Span::styled("fn ", Style::default().fg(FUNCTION_MARK_COLOUR)),
+            Span::styled(self.function.as_str(), Style::default().fg(FUNCTION_COLOUR)),
+        ];
+        let from = |start: usize| {
+            let lead = folders[start..].iter().flat_map(|&folder| {
+                [
+                    Span::styled(folder, Style::default().fg(FOLDER_COLOUR)),
+                    separator.clone(),
+                ]
+            });
+            Line::from(lead.chain(tail.iter().cloned()).collect::<Vec<_>>())
+        };
+        let start = (0..folders.len())
+            .find(|&start| from(start).width() <= usize::from(width))
+            .unwrap_or(folders.len());
+        from(start)
+    }
+
+    /// The cursor's line and column in the file, both from 1, and the speed.
+    fn place(&self, first: usize) -> String {
+        let column = self.lines.last().map_or(0, Vec::len) + 1;
+        let line = first + self.lines.len();
+        format!("Ln {line}, Col {column}  {} cps", self.speed)
     }
 
     /// The digits of the last line number, which every number is padded to.
@@ -202,10 +243,12 @@ impl Typing {
     /// The frame sized for the whole snippet and centred in the area.
     fn frame(&self, area: Rect) -> Rect {
         let gutter = GUTTER_GAP + self.digits() + GUTTER_GAP;
-        // One cell after the widest line holds the cursor, and one rule cell
-        // after the title keeps it off the corner.
-        let content = (gutter + self.widest + 1).max(self.title().width() + 1);
-        let width = fit(content + 2, area.width, MARGIN_X);
+        // One cell after the widest line holds the cursor. A breadcrumb with
+        // no room for folders still holds the file and the function, so the
+        // frame is never narrower than those two.
+        let content = gutter + self.widest + 1;
+        let tail = self.breadcrumb(0).width();
+        let width = fit((content + 2).max(tail), area.width, MARGIN_X);
         let height = fit(self.line_count + 2, area.height, MARGIN_Y);
         Rect::new(
             area.x + (area.width - width) / 2,
@@ -213,6 +256,21 @@ impl Typing {
             width,
             height,
         )
+    }
+
+    /// When the language and the place do not both fit, the language goes,
+    /// and a place wider than the frame is cut at its right edge.
+    fn render_status(&self, frame: Rect, first: usize, buf: &mut Buffer) {
+        let style = Style::default().fg(STATUS_COLOUR);
+        let y = frame.bottom();
+        let place = self.place(first);
+        let place_width = place.chars().count();
+        let room = usize::from(frame.width);
+        let place_x = frame.right() - u16::try_from(place_width.min(room)).unwrap_or(0);
+        buf.set_stringn(place_x, y, &place, room, style);
+        if self.language.chars().count() + 1 + place_width <= room {
+            buf.set_string(frame.x, y, self.language, style);
+        }
     }
 
     /// Spends one keystroke: on a pause, on opening the next file, or on
@@ -254,7 +312,7 @@ pub fn has_snippet(corpus: &Corpus) -> bool {
 fn snippets(source: &SourceFile) -> (highlight::Highlighted, Vec<std::ops::Range<usize>>) {
     let highlighted = highlight::highlight(&source.path, &source.text);
     let lines: Vec<&str> = source.text.lines().collect();
-    let spans = snippet::snippets(&lines, &highlighted.defines, &highlighted.comment);
+    let spans = snippet::snippets(&lines, &highlighted.functions, &highlighted.comment);
     (highlighted, spans)
 }
 
@@ -313,10 +371,16 @@ impl Scene for Typing {
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
             .border_style(Style::default().fg(FRAME_COLOUR))
-            .style(Style::default().bg(FILL))
-            .title(self.title());
+            .style(Style::default().bg(FILL));
         let inner = block.inner(frame);
         block.render(frame, buf);
+        if frame.y > area.y {
+            let line = self.breadcrumb(frame.width);
+            buf.set_line(frame.x, frame.y - 1, &line, frame.width);
+        }
+        if frame.bottom() < area.bottom() {
+            self.render_status(frame, first, buf);
+        }
         if self.notice > 0 {
             let notice = format!("{} cps", self.speed);
             if let Ok(width) = u16::try_from(notice.len())

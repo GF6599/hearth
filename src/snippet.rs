@@ -6,13 +6,17 @@ use std::ops::Range;
 pub const MOST_SNIPPET_LINES: usize = 40;
 
 /// The line range of each function in `lines`, in the order the
-/// functions start. `defines` and `comment` hold one flag for each line,
-/// from the grammar.
-pub fn snippets(lines: &[&str], defines: &[bool], comment: &[bool]) -> Vec<Range<usize>> {
-    defines
+/// functions start. `functions` holds the name each line defines and
+/// `comment` one flag for each line, both from the grammar.
+pub fn snippets(
+    lines: &[&str],
+    functions: &[Option<String>],
+    comment: &[bool],
+) -> Vec<Range<usize>> {
+    functions
         .iter()
         .enumerate()
-        .filter(|&(_, &defines)| defines)
+        .filter(|(_, function)| function.is_some())
         .map(|(start, _)| {
             let first = lead(lines, comment, start);
             first..end(lines, start).min(first + MOST_SNIPPET_LINES)

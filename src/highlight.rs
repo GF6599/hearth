@@ -43,13 +43,14 @@ pub struct Highlighted {
     /// One colour for each `char` of the text, in order, so a caller indexes
     /// it by glyph.
     pub colours: Vec<Color>,
-    /// For each line, whether it names a function where the function is
-    /// defined. Grammars scope a definition `entity.name.function` and a
-    /// call `variable.function`, so a call does not count.
-    pub defines: Vec<bool>,
+    /// For each line, the name of the function it defines, if it defines
+    /// one. Grammars scope a definition `entity.name.function` and a call
+    /// `variable.function`, so a call does not count.
+    pub functions: Vec<Option<String>>,
     /// For each line, whether every glyph on it that is not a space is in
     /// a comment.
     pub comment: Vec<bool>,
+    pub language: &'static str,
 }
 
 /// Loaded on the first file the typing scene opens, so the other scenes
@@ -69,9 +70,13 @@ fn grammars() -> &'static Grammars {
 
 pub fn highlight(path: &str, text: &str) -> Highlighted {
     let grammars = grammars();
-    let mut state = ParseState::new(syntax_for(&grammars.syntaxes, path, text));
+    let syntax = syntax_for(&grammars.syntaxes, path, text);
+    let mut state = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
-    let mut out = Highlighted::default();
+    let mut out = Highlighted {
+        language: &syntax.name,
+        ..Highlighted::default()
+    };
     let mut consumed = 0;
     for line in LinesWithEndings::from(text) {
         // A grammar that fails on a line leaves the rest of the file plain,
@@ -79,22 +84,25 @@ pub fn highlight(path: &str, text: &str) -> Highlighted {
         let Ok(ops) = state.parse_line(line, &grammars.syntaxes) else {
             out.colours.extend(text[consumed..].chars().map(|_| PLAIN));
             let rest = text[consumed..].lines().count();
-            out.defines.extend(std::iter::repeat_n(false, rest));
+            out.functions.extend(std::iter::repeat_n(None, rest));
             out.comment.extend(std::iter::repeat_n(false, rest));
             return out;
         };
-        let mut defines = false;
+        let mut function: Option<String> = None;
         let mut words = 0;
         let mut commented = 0;
         let mut segment = |text: &str, stack: &ScopeStack, out: &mut Highlighted| {
             let colour = grammars.colour(stack);
             let in_definition = grammars.within(stack, grammars.definition);
             let in_comment = grammars.within(stack, grammars.comment);
+            let word = text.trim();
+            if in_definition && function.is_none() && !word.is_empty() {
+                function = Some(word.to_string());
+            }
             for glyph in text.chars() {
                 out.colours.push(colour);
                 if !glyph.is_whitespace() {
                     words += 1;
-                    defines |= in_definition;
                     commented += usize::from(in_comment);
                 }
             }
@@ -106,7 +114,7 @@ pub fn highlight(path: &str, text: &str) -> Highlighted {
             start = offset;
         }
         segment(&line[start..], &stack, &mut out);
-        out.defines.push(defines);
+        out.functions.push(function);
         out.comment.push(words > 0 && commented == words);
         consumed += line.len();
     }
