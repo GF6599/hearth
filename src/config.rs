@@ -2,7 +2,7 @@
 //! repository to type, and the speed of each scene.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Table, Value};
@@ -140,14 +140,26 @@ pub fn save_speed(path: &Path, scene: SceneKind, speed: impl Into<Value>) -> io:
     replace(path, &document.to_string())
 }
 
-/// The new text goes to a file beside the old one and is renamed over it.
-/// A rename within one folder is atomic, so a crash leaves the old file or
-/// the new one and never half of either.
+/// The new text goes to a file beside the old one, reaches the disk, and is
+/// renamed over it. A rename within one folder is atomic, so a crash leaves
+/// the old file or the new one and never half of either.
 fn replace(path: &Path, text: &str) -> io::Result<()> {
+    // A symlinked file is saved through its link, because a rename over the
+    // link would put a plain file in its place.
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let folder = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(folder)?;
     let temp = folder.join(format!(".config.toml.{}.tmp", std::process::id()));
-    let written = fs::write(&temp, text).and_then(|()| fs::rename(&temp, path));
+    // `create_new` refuses any file already at that name, a symlink
+    // included, so a link planted there cannot send the write elsewhere.
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let written = file
+        .write_all(text.as_bytes())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| fs::rename(&temp, &path));
     if written.is_err() {
         let _ = fs::remove_file(&temp);
     }
