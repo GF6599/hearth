@@ -1,3 +1,4 @@
+pub mod aquarium;
 pub mod bonsai;
 pub mod fire;
 pub mod life;

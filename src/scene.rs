@@ -4,6 +4,7 @@ use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::scenes::aquarium::Aquarium;
 use crate::scenes::bonsai::Bonsai;
 use crate::scenes::fire::Fire;
 use crate::scenes::life::Life;
@@ -30,6 +31,7 @@ pub enum SceneKind {
     Life,
     Pipes,
     Bonsai,
+    Aquarium,
 }
 
 /// The order the picker lists and Tab cycles.
@@ -40,6 +42,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Life,
     SceneKind::Pipes,
     SceneKind::Bonsai,
+    SceneKind::Aquarium,
 ];
 
 impl SceneKind {
@@ -51,6 +54,7 @@ impl SceneKind {
             SceneKind::Life => "life",
             SceneKind::Pipes => "pipes",
             SceneKind::Bonsai => "bonsai",
+            SceneKind::Aquarium => "aquarium",
         }
     }
 
@@ -63,6 +67,7 @@ impl SceneKind {
             SceneKind::Life => Box::new(Life::new(rng)),
             SceneKind::Pipes => Box::new(Pipes::new(rng)),
             SceneKind::Bonsai => Box::new(Bonsai::new(rng)),
+            SceneKind::Aquarium => Box::new(Aquarium::new(rng)),
         }
     }
 
