@@ -257,7 +257,8 @@ fn the_grammar_follows_the_extension() {
     assert_eq!(colour_at(&buffer, line, "greet", 1), theme::ROSE);
 }
 
-/// Given: a file no grammar claims, beside a Rust file.
+/// Given: a file no grammar claims and a Markdown file, beside a Rust
+/// file.
 /// When: the scene types its first snippet, on several seeds.
 /// Then: every snippet comes from the Rust file.
 ///
@@ -268,6 +269,7 @@ fn a_file_with_no_function_is_skipped() {
     let area = Rect::new(0, 0, 40, 6);
     let files = [
         ("notes.zzz".to_string(), "fn x() {}\n".to_string()),
+        ("README.md".to_string(), "# fn z() {}\n".to_string()),
         ("a.rs".to_string(), "fn y() {}\n".to_string()),
     ];
     for seed in 0..8 {
@@ -370,5 +372,39 @@ fn a_snippet_does_not_come_twice_in_a_row() {
         let first = row_text(&settled(&mut scene, area), 0);
         let second = row_text(&next_snippet(&mut scene, area), 0);
         assert_ne!(first, second, "seed {seed}");
+    }
+}
+
+/// Given: a Rust function whose parameters wrap onto their own lines, the
+/// way rustfmt writes a long signature, and a Ruby method.
+/// When: the scene types each snippet.
+/// Then: each is the whole function, the body after `) -> u32 {` and the
+/// `end` that closes the method included.
+///
+/// Why it matters: the line that closes a parameter list sits at the
+/// definition's indentation, and reading it as the end of the function
+/// cuts every long signature off before its body.
+#[test]
+fn a_snippet_runs_to_the_line_that_closes_the_function() {
+    let area = Rect::new(0, 0, 40, 10);
+    let cases = [
+        (
+            "a.rs",
+            "fn add(\n    a: u32,\n) -> u32 {\n    a + 1\n}\n",
+            "fn add(\n    a: u32,\n) -> u32 {\n    a + 1\n}",
+        ),
+        (
+            "a.rb",
+            "def greet\n  puts 'hi'\nend\n\nputs 1\n",
+            "def greet\n  puts 'hi'\nend",
+        ),
+    ];
+    for (path, file, snippet) in cases {
+        let mut scene = Typing::new(
+            Rng::seed_from_u64(7),
+            Arc::new(Corpus::from_files([(path.to_string(), file.to_string())])),
+            Speed::DEFAULT,
+        );
+        assert_eq!(typed(&settled(&mut scene, area), area), snippet, "{path}");
     }
 }
