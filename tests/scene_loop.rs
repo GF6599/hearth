@@ -245,21 +245,20 @@ fn a_key_release_is_ignored() {
     assert!(!app.should_quit);
 }
 
-/// Given: a scene ticked at one size.
-/// When: it renders at one cell, and at no cells.
-/// Then: it draws without a panic and stays inside the area.
+/// Given: a scene ticked at one size, and the picker.
+/// When: each renders at one cell, and at no cells.
+/// Then: each draws without a panic and stays inside the area.
 #[test]
-fn a_scene_renders_inside_any_area() {
+fn a_scene_and_the_picker_render_inside_any_area() {
     // Given:
-    let app = ticked(7, 1);
+    let scene = ticked(7, 1);
+    let picker = App::picker(7);
 
-    // When:
-    let one_cell = frame(&app, 1, 1);
-    let no_cells = frame(&app, 0, 0);
-
-    // Then:
-    assert_eq!(one_cell.area, Rect::new(0, 0, 1, 1));
-    assert_eq!(no_cells.area, Rect::new(0, 0, 0, 0));
+    // When, then:
+    for app in [&scene, &picker] {
+        assert_eq!(frame(app, 1, 1).area, Rect::new(0, 0, 1, 1));
+        assert_eq!(frame(app, 0, 0).area, Rect::new(0, 0, 0, 0));
+    }
 }
 
 /// Held keys queue one event per auto-repeat. The loop has to hand control
