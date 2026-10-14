@@ -9,6 +9,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | Scene | What it draws |
 |---|---|
 | `noise` | Random glyphs over the whole terminal, a placeholder that proves the loop |
+| `matrix` | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
 
 `hearth --help` lists every scene the build carries.
 
