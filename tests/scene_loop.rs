@@ -379,3 +379,43 @@ fn plus_outside_the_typing_scene_does_nothing() {
         header(&app)
     );
 }
+
+/// Given: the typing scene, one step faster than the default.
+/// When: `r` restarts it and it ticks for a second.
+/// Then: its frame is that of a fresh scene on the next seed at the faster
+/// speed, and not the one at the default speed.
+///
+/// Why it matters: a restart that drops the speed puts the scene back to
+/// the default while the user thinks it is still the speed they chose.
+#[test]
+fn a_restart_keeps_the_typing_speed() {
+    // Given:
+    let area = Rect::new(0, 0, 60, HEIGHT);
+    let faster = Speed::DEFAULT.faster();
+    let mut app = App::new(SceneKind::Typing, 7, corpus());
+    send(&mut app, vec![key('+')]);
+
+    // When:
+    send(&mut app, vec![key('r')]);
+    let mut kept = App::new(SceneKind::Typing, 8, corpus()).with_speed(faster);
+    let mut dropped = App::new(SceneKind::Typing, 8, corpus());
+    for _ in 0..17 {
+        for each in [&mut app, &mut kept, &mut dropped] {
+            each.tick(area);
+        }
+    }
+
+    // Then:
+    let after = frame(&app, 60, HEIGHT);
+    assert_ne!(frame(&kept, 60, HEIGHT), frame(&dropped, 60, HEIGHT));
+    assert_eq!(after, frame(&kept, 60, HEIGHT));
+}
+
+/// Given: the typing scene started with a speed, as `--speed` starts it.
+/// When: it renders.
+/// Then: the header shows no speed, because no key changed it.
+#[test]
+fn a_speed_from_the_command_line_shows_no_notice() {
+    let app = App::new(SceneKind::Typing, 7, corpus()).with_speed(Speed::DEFAULT.faster());
+    assert!(!header(&app).contains("cps"), "{}", header(&app));
+}
