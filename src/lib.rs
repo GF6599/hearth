@@ -11,6 +11,7 @@
 //!              ├── scenes    One module per scene
 //!              ├── corpus    The source files the typing scene types
 //!              ├── highlight Colours a source file by its grammar
+//!              ├── snippet   Cuts a source file into one snippet per function
 //!              └── theme     The palette
 //! ```
 
@@ -22,4 +23,5 @@ pub mod highlight;
 pub mod picker;
 pub mod scene;
 pub mod scenes;
+pub mod snippet;
 pub mod theme;

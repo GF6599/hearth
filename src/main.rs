@@ -6,12 +6,17 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::events::{self, TerminalEvents};
 use hearth::scene::TICK_RATE;
+use hearth::scenes::typing;
 
 fn main() {
     let cli = Cli::parse();
     let corpus = match cli.corpus() {
         Ok(corpus) if corpus.is_empty() => {
             eprintln!("hearth: that repository has no text file to type");
+            std::process::exit(1);
+        }
+        Ok(corpus) if cli.repo.is_some() && !typing::has_snippet(&corpus) => {
+            eprintln!("hearth: that repository has no function to type");
             std::process::exit(1);
         }
         Ok(corpus) => Arc::new(corpus),

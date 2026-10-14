@@ -33,6 +33,23 @@ const PLAIN: Color = theme::TEXT;
 struct Grammars {
     syntaxes: SyntaxSet,
     roles: Vec<(Scope, Color)>,
+    definition: Option<Scope>,
+    comment: Option<Scope>,
+}
+
+/// A file as its grammar reads it.
+#[derive(Debug, Default)]
+pub struct Highlighted {
+    /// One colour for each `char` of the text, in order, so a caller indexes
+    /// it by glyph.
+    pub colours: Vec<Color>,
+    /// For each line, whether it names a function where the function is
+    /// defined. Grammars scope a definition `entity.name.function` and a
+    /// call `variable.function`, so a call does not count.
+    pub defines: Vec<bool>,
+    /// For each line, whether every glyph on it that is not a space is in
+    /// a comment.
+    pub comment: Vec<bool>,
 }
 
 /// Loaded on the first file the typing scene opens, so the other scenes
@@ -45,39 +62,62 @@ fn grammars() -> &'static Grammars {
             .iter()
             .filter_map(|&(name, colour)| Scope::new(name).ok().map(|scope| (scope, colour)))
             .collect(),
+        definition: Scope::new("entity.name.function").ok(),
+        comment: Scope::new("comment").ok(),
     })
 }
 
-/// One colour for each `char` of `text`, in order, so a caller indexes
-/// it by glyph.
-pub fn colours(path: &str, text: &str) -> Vec<Color> {
+pub fn highlight(path: &str, text: &str) -> Highlighted {
     let grammars = grammars();
     let mut state = ParseState::new(syntax_for(&grammars.syntaxes, path, text));
     let mut stack = ScopeStack::new();
-    let mut out = Vec::with_capacity(text.len());
+    let mut out = Highlighted::default();
     let mut consumed = 0;
     for line in LinesWithEndings::from(text) {
         // A grammar that fails on a line leaves the rest of the file plain,
         // because its state after the failure is unknown.
         let Ok(ops) = state.parse_line(line, &grammars.syntaxes) else {
-            out.extend(text[consumed..].chars().map(|_| PLAIN));
+            out.colours.extend(text[consumed..].chars().map(|_| PLAIN));
+            let rest = text[consumed..].lines().count();
+            out.defines.extend(std::iter::repeat_n(false, rest));
+            out.comment.extend(std::iter::repeat_n(false, rest));
             return out;
+        };
+        let mut defines = false;
+        let mut words = 0;
+        let mut commented = 0;
+        let mut segment = |text: &str, stack: &ScopeStack, out: &mut Highlighted| {
+            let colour = grammars.colour(stack);
+            let in_definition = grammars.within(stack, grammars.definition);
+            let in_comment = grammars.within(stack, grammars.comment);
+            for glyph in text.chars() {
+                out.colours.push(colour);
+                if !glyph.is_whitespace() {
+                    words += 1;
+                    defines |= in_definition;
+                    commented += usize::from(in_comment);
+                }
+            }
         };
         let mut start = 0;
         for (offset, op) in ops {
-            let colour = grammars.colour(&stack);
-            out.extend(line[start..offset].chars().map(|_| colour));
+            segment(&line[start..offset], &stack, &mut out);
             let _ = stack.apply(&op);
             start = offset;
         }
-        let colour = grammars.colour(&stack);
-        out.extend(line[start..].chars().map(|_| colour));
+        segment(&line[start..], &stack, &mut out);
+        out.defines.push(defines);
+        out.comment.push(words > 0 && commented == words);
         consumed += line.len();
     }
     out
 }
 
 impl Grammars {
+    fn within(&self, stack: &ScopeStack, scope: Option<Scope>) -> bool {
+        scope.is_some_and(|scope| stack.as_slice().iter().any(|s| scope.is_prefix_of(*s)))
+    }
+
     fn colour(&self, stack: &ScopeStack) -> Color {
         stack
             .as_slice()

@@ -7,10 +7,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::corpus::Corpus;
+use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
 use crate::scene::{Rng, Scene, TICK_RATE};
+use crate::snippet;
 use crate::theme;
+
+pub use crate::snippet::MOST_SNIPPET_LINES;
 
 /// Pauses count in keystrokes, so a faster speed shortens them too.
 const LINE_PAUSE: std::ops::RangeInclusive<u32> = 2..=8;
@@ -84,8 +87,12 @@ pub struct Typing {
     /// tick to the next, so a speed under one keystroke per tick still types.
     credit: f64,
     notice: u32,
-    file: usize,
-    /// The open file, each glyph with its colour from the grammar.
+    /// The files that may hold a function. A file found to hold none
+    /// leaves the list, so it is parsed once at most.
+    candidates: Vec<usize>,
+    /// The file and the first line of the snippet on screen.
+    current: Option<(usize, usize)>,
+    /// The snippet on screen, each glyph with its colour from the grammar.
     glyphs: Vec<(char, Color)>,
     offset: usize,
     lines: Vec<Vec<(char, Color)>>,
@@ -101,38 +108,59 @@ impl Typing {
             speed,
             credit: 0.0,
             notice: 0,
-            file: 0,
+            candidates: Vec::new(),
+            current: None,
             glyphs: Vec::new(),
             offset: 0,
             lines: vec![Vec::new()],
             pause: 0,
             finished: false,
         };
-        scene.open(0);
+        scene.candidates = (0..scene.corpus.files().len()).collect();
+        scene.open_next();
         scene
     }
 
-    fn open(&mut self, file: usize) {
-        self.file = file;
-        self.glyphs = self
-            .corpus
-            .files()
-            .get(file)
-            .map(|source| {
-                let colours = highlight::colours(&source.path, &source.text);
-                source.text.chars().zip(colours).collect()
-            })
-            .unwrap_or_default();
+    /// Picks a snippet at random from a random file, never the one on
+    /// screen again while another exists.
+    fn open_next(&mut self) {
+        let previous = self.current.take();
+        self.glyphs.clear();
         self.offset = 0;
         self.lines = vec![Vec::new()];
         self.finished = false;
+        let corpus = Arc::clone(&self.corpus);
+        while !self.candidates.is_empty() {
+            let slot = self.rng.random_range(0..self.candidates.len());
+            let file = self.candidates[slot];
+            let source = &corpus.files()[file];
+            let (highlighted, spans) = snippets(source);
+            if spans.is_empty() {
+                self.candidates.swap_remove(slot);
+                continue;
+            }
+            let mut pick = self.rng.random_range(0..spans.len());
+            if previous == Some((file, spans[pick].start)) {
+                if spans.len() == 1 && self.candidates.len() > 1 {
+                    continue;
+                }
+                pick = (pick + 1) % spans.len();
+            }
+            let span = spans[pick].clone();
+            self.current = Some((file, span.start));
+            self.glyphs = glyphs(&source.text, &highlighted.colours, span);
+            return;
+        }
     }
 
-    fn path(&self) -> &str {
-        self.corpus
-            .files()
-            .get(self.file)
-            .map_or("", |source| source.path.as_str())
+    /// The header: the file and the line the snippet starts on.
+    fn header(&self) -> String {
+        self.current
+            .and_then(|(file, first)| {
+                let source = self.corpus.files().get(file)?;
+                Some(format!("{}:{}", source.path, first + 1))
+            })
+            .unwrap_or_default()
     }
 
     /// Spends one keystroke: on a pause, on opening the next file, or on
@@ -143,8 +171,7 @@ impl Typing {
             return;
         }
         if self.finished {
-            let next = (self.file + 1) % self.corpus.files().len().max(1);
-            self.open(next);
+            self.open_next();
             return;
         }
         let Some(&(glyph, colour)) = self.glyphs.get(self.offset) else {
@@ -160,6 +187,42 @@ impl Typing {
             line.push((glyph, colour));
         }
     }
+}
+
+/// Whether any file holds a function to type. The search stops at the
+/// first file with a function, so a repository of code answers in a few
+/// parses and only one with no function parses every file.
+pub fn has_snippet(corpus: &Corpus) -> bool {
+    corpus
+        .files()
+        .iter()
+        .any(|source| !snippets(source).1.is_empty())
+}
+
+fn snippets(source: &SourceFile) -> (highlight::Highlighted, Vec<std::ops::Range<usize>>) {
+    let highlighted = highlight::highlight(&source.path, &source.text);
+    let lines: Vec<&str> = source.text.lines().collect();
+    let spans = snippet::snippets(&lines, &highlighted.defines, &highlighted.comment);
+    (highlighted, spans)
+}
+
+/// The glyphs of the lines in `span`, each with its colour, and a newline
+/// between two lines.
+fn glyphs(text: &str, colours: &[Color], span: std::ops::Range<usize>) -> Vec<(char, Color)> {
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        let glyphs = line.trim_end_matches('\n').chars().count();
+        if span.contains(&index) {
+            if !out.is_empty() {
+                out.push(('\n', theme::TEXT));
+            }
+            let chars = line.chars().take(glyphs);
+            out.extend(chars.zip(colours[offset..].iter().copied()));
+        }
+        offset += line.chars().count();
+    }
+    out
 }
 
 impl Scene for Typing {
@@ -195,7 +258,7 @@ impl Scene for Typing {
         put(
             0,
             0,
-            &mut self.path().chars().map(|glyph| (glyph, PATH_COLOUR)),
+            &mut self.header().chars().map(|glyph| (glyph, PATH_COLOUR)),
         );
         if self.notice > 0 {
             let notice = format!("{} cps", self.speed);
