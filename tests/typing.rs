@@ -946,3 +946,156 @@ fn a_long_name_is_cut_inside_the_tree() {
         assert_eq!(buffer[(frame.x - 1, y)].symbol(), " ", "row {y}");
     }
 }
+
+/// `None` is a half with no glyph in it.
+fn minimap(buffer: &Buffer) -> Vec<Vec<(Option<Color>, Option<Color>)>> {
+    let frame = frame(buffer);
+    (frame.y..frame.bottom())
+        .map(|y| {
+            (frame.right() + 1..buffer.area.right() - 1)
+                .map(|x| {
+                    let cell = &buffer[(x, y)];
+                    let lower_bg = (cell.bg != Color::Reset).then_some(cell.bg);
+                    match cell.symbol() {
+                        "▀" => (Some(cell.fg), lower_bg),
+                        "▄" => (None, Some(cell.fg)),
+                        _ => (None, None),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A hundred lines whose only function runs from line 41 to line 51.
+fn function_in_the_middle() -> String {
+    let filler = "const A: u8 = 1;\n";
+    format!(
+        "{}fn f() {{\n{}}}\n{}",
+        filler.repeat(40),
+        "    x();\n".repeat(9),
+        filler.repeat(49)
+    )
+}
+
+/// Given: a hundred line file whose function runs from line 41 to 51, on an
+/// area whose frame is 20 rows tall.
+/// When: the scene types the function.
+/// Then: the minimap rows that hold anything but the outline colour all
+/// sit in the middle third, and the first row holds the outline colour.
+///
+/// Why it matters: a minimap that does not scale a tall file down shows
+/// the first forty lines, and the snippet's place in the file is lost.
+#[test]
+fn the_minimap_shows_the_snippet_in_its_place_in_the_file() {
+    // Given, when:
+    let buffer = settled_files(
+        &[("a.rs", &function_in_the_middle())],
+        Rect::new(0, 0, 120, 26),
+    );
+
+    // Then:
+    let rows = minimap(&buffer);
+    assert_eq!(rows.len(), 20);
+    let lit: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            row.iter()
+                .flat_map(|&(upper, lower)| [upper, lower])
+                .flatten()
+                .any(|colour| colour != theme::OVERLAY)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert!(!lit.is_empty());
+    assert!(lit.iter().all(|row| (6..=13).contains(row)), "{lit:?}");
+    assert!(
+        rows[0]
+            .iter()
+            .any(|&(upper, _)| upper == Some(theme::OVERLAY))
+    );
+}
+
+/// Given: the same file, with the cursor on line 51, the closing brace.
+/// When: the scene types the function.
+/// Then: the minimap row of line 51 holds the brace in the full text
+/// colour, and no other row holds that colour.
+///
+/// Why it matters: a cursor line dimmed like the rest of the snippet
+/// still reads brighter than a dimmed keyword, so only the undimmed colour
+/// tells the cursor line apart.
+#[test]
+fn the_cursor_line_is_the_only_one_at_full_colour() {
+    let buffer = settled_files(
+        &[("a.rs", &function_in_the_middle())],
+        Rect::new(0, 0, 120, 26),
+    );
+    let holds_text: Vec<usize> = minimap(&buffer)
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            row.iter()
+                .flat_map(|&(upper, lower)| [upper, lower])
+                .any(|colour| colour == Some(theme::TEXT))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(holds_text, [10]);
+}
+
+/// Given: a function whose body holds an 80 glyph line, a 40 glyph line,
+/// and a 40 glyph line indented by 40.
+/// When: the scene types it on a 120 column area, whose minimap is 13
+/// cells wide.
+/// Then: the first line fills all 13 cells, the second the left 7, and the
+/// indented one the right 7.
+///
+/// Why it matters: a line drawn from column 0 hides the indentation, which
+/// is the shape a reader sees code by.
+#[test]
+fn the_minimap_draws_each_line_from_its_indent_to_its_end() {
+    let file = format!(
+        "fn f() {{\n    {}\n    {}\n{}{}\n}}\n",
+        "x".repeat(76),
+        "y".repeat(36),
+        " ".repeat(40),
+        "z".repeat(40)
+    );
+    let buffer = settled_files(&[("a.rs", &file)], Rect::new(0, 0, 120, 26));
+    let rows = minimap(&buffer);
+    let lit = |half: usize| -> Vec<usize> {
+        let row = &rows[half / 2];
+        (0..row.len())
+            .filter(|&x| {
+                let (upper, lower) = row[x];
+                if half.is_multiple_of(2) {
+                    upper.is_some()
+                } else {
+                    lower.is_some()
+                }
+            })
+            .collect()
+    };
+    assert_eq!(lit(1), (0..13).collect::<Vec<_>>());
+    assert_eq!(lit(2), (0..=6).collect::<Vec<_>>());
+    assert_eq!(lit(3), (6..=12).collect::<Vec<_>>());
+}
+
+/// Given: one file, on a 120 column area and on a 40 column area, whose
+/// right padding is five columns.
+/// When: the snippet is typed whole on each.
+/// Then: the wide area draws a minimap, and the narrow one draws nothing
+/// right of the frame.
+#[test]
+fn a_narrow_padding_has_no_minimap() {
+    let wide = settled_files(&[("a.rs", "fn f() {}\n")], Rect::new(0, 0, 120, 10));
+    assert!(minimap(&wide)[0].iter().any(|&(upper, _)| upper.is_some()));
+    let narrow = settled_files(&[("a.rs", "fn f() {}\n")], Rect::new(0, 0, 40, 10));
+    let frame = frame(&narrow);
+    for y in 0..narrow.area.height {
+        for x in frame.right()..narrow.area.right() {
+            assert_eq!(narrow[(x, y)].symbol(), " ", "{x},{y}");
+        }
+    }
+}
