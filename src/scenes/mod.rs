@@ -1,3 +1,4 @@
+pub mod bonsai;
 pub mod fire;
 pub mod life;
 pub mod matrix;
