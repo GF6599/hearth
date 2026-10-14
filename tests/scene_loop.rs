@@ -7,6 +7,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, Ke
 use hearth::app::App;
 use hearth::events::{EventSource, handle_events};
 use hearth::scene::SceneKind;
+use hearth::theme;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -145,26 +146,86 @@ fn ctrl_c_quits() {
     assert!(app.should_quit);
 }
 
-/// Tab and Esc belong to the picker, which does not exist yet. Until it
-/// does they must neither quit nor change the frame.
+fn shows_picker(buffer: &Buffer) -> bool {
+    (0..buffer.area.height).any(|y| {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol().to_string())
+            .collect::<String>()
+            .contains(theme::PICKER_TITLE)
+    })
+}
+
+/// Given: a running scene.
+/// When: Esc is pressed.
+/// Then: the picker shows, and the app has not quit.
 #[test]
-fn tab_and_esc_leave_the_scene_running() {
+fn esc_returns_to_the_picker() {
     // Given:
     let mut app = ticked(7, 1);
-    let before = frame(&app, WIDTH, HEIGHT);
+    assert!(!shows_picker(&frame(&app, WIDTH, HEIGHT)));
+
+    // When:
+    send(&mut app, vec![press(KeyCode::Esc, KeyModifiers::NONE)]);
+
+    // Then:
+    assert!(!app.should_quit);
+    assert!(shows_picker(&frame(&app, WIDTH, HEIGHT)));
+}
+
+/// Given: the app opened on the picker.
+/// When: Enter is pressed and the app ticks.
+/// Then: the picker is gone and a scene is drawing.
+#[test]
+fn enter_starts_the_selected_scene() {
+    // Given:
+    let mut app = App::picker(7);
+    assert!(shows_picker(&frame(&app, WIDTH, HEIGHT)));
+
+    // When:
+    send(&mut app, vec![press(KeyCode::Enter, KeyModifiers::NONE)]);
+    app.tick(Rect::new(0, 0, WIDTH, HEIGHT));
+
+    // Then:
+    let buffer = frame(&app, WIDTH, HEIGHT);
+    assert!(!shows_picker(&buffer));
+    assert!(!is_blank(&buffer));
+}
+
+/// Given: the picker on its last row.
+/// When: Down and `j` are pressed, then Up and `k` past the first row.
+/// Then: the marker stays on a row, and the app has not quit.
+#[test]
+fn the_picker_selection_stays_inside_the_list() {
+    // Given:
+    let mut app = App::picker(7);
 
     // When:
     send(
         &mut app,
         vec![
-            press(KeyCode::Tab, KeyModifiers::NONE),
-            press(KeyCode::Esc, KeyModifiers::NONE),
+            press(KeyCode::Down, KeyModifiers::NONE),
+            key('j'),
+            press(KeyCode::Up, KeyModifiers::NONE),
+            key('k'),
+            key('k'),
         ],
     );
 
     // Then:
+    let buffer = frame(&app, WIDTH, HEIGHT);
+    let marked = (0..buffer.area.height)
+        .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| buffer[(x, y)].symbol() == "[")
+        .count();
+    assert_eq!(marked, 1);
     assert!(!app.should_quit);
-    assert_eq!(frame(&app, WIDTH, HEIGHT), before);
+}
+
+#[test]
+fn the_picker_quits_on_q() {
+    let mut app = App::picker(7);
+    send(&mut app, vec![key('q')]);
+    assert!(app.should_quit);
 }
 
 /// A key release must not count as a second press, or a terminal that
