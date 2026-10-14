@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
+use crate::minimap::Outline;
 use crate::scene::{Rng, Scene, TICK_RATE};
 use crate::snippet;
 use crate::theme;
@@ -43,6 +44,9 @@ const SMALLEST_FRAME: u16 = 3;
 /// Under this many columns a tree shows marks and the first letters of
 /// names, which nobody can read.
 const LEAST_TREE_WIDTH: u16 = 8;
+
+/// Under this many cells a minimap is a column of blocks with no shape.
+const LEAST_MINIMAP_WIDTH: u16 = 4;
 
 /// A blank cell before the line numbers and another after them.
 const GUTTER_GAP: usize = 1;
@@ -129,6 +133,7 @@ pub struct Typing {
     /// paths and only the open path changes from one snippet to the next.
     tree: Tree,
     tree_rows: Vec<tree::Row>,
+    outline: Outline,
     /// The snippet on screen, each glyph with its colour from the grammar.
     glyphs: Vec<(char, Color)>,
     /// The lines in the whole snippet, so the gutter does not widen while
@@ -155,6 +160,7 @@ impl Typing {
             language: "",
             tree,
             tree_rows: Vec::new(),
+            outline: Outline::default(),
             glyphs: Vec::new(),
             line_count: 0,
             offset: 0,
@@ -202,6 +208,7 @@ impl Typing {
                 .unwrap_or_default();
             self.language = highlighted.language;
             self.tree_rows = self.tree.rows(&source.path);
+            self.outline = Outline::new(&source.text, &highlighted.colours);
             self.line_count = span.len();
             self.glyphs = glyphs(&source.text, &highlighted.colours, span);
             return;
@@ -317,6 +324,39 @@ impl Typing {
                 }
             };
             buf.set_line(x, y, &line, width);
+        }
+    }
+
+    fn render_minimap(&self, area: Rect, frame: Rect, first: usize, buf: &mut Buffer) {
+        let width = (area.right() - frame.right()).saturating_sub(2);
+        if width < LEAST_MINIMAP_WIDTH {
+            return;
+        }
+        let x = frame.right() + 1;
+        let snippet = first..first + self.line_count;
+        let cursor = first + self.lines.len() - 1;
+        let cells = self.outline.cells(
+            usize::from(width),
+            usize::from(frame.height),
+            snippet,
+            cursor,
+        );
+        for (y, row) in (frame.y..frame.bottom()).zip(cells) {
+            for (x, halves) in (x..x + width).zip(row) {
+                let cell = &mut buf[(x, y)];
+                match halves {
+                    (Some(upper), lower) => {
+                        cell.set_char('▀').set_fg(upper);
+                        if let Some(lower) = lower {
+                            cell.set_bg(lower);
+                        }
+                    }
+                    (None, Some(lower)) => {
+                        cell.set_char('▄').set_fg(lower);
+                    }
+                    (None, None) => {}
+                }
+            }
         }
     }
 
@@ -450,6 +490,7 @@ impl Scene for Typing {
             self.render_status(frame, first, buf);
         }
         self.render_tree(area, frame, buf);
+        self.render_minimap(area, frame, first, buf);
         if self.notice > 0 {
             let notice = format!("{} cps", self.speed);
             if let Ok(width) = u16::try_from(notice.len())

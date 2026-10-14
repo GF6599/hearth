@@ -187,7 +187,7 @@ fn cursors(buffer: &Buffer) -> Vec<Position> {
     buffer
         .area
         .positions()
-        .filter(|&p| buffer[p].bg == theme::TEXT)
+        .filter(|&p| buffer[p].bg == theme::TEXT && buffer[p].symbol() == " ")
         .collect()
 }
 

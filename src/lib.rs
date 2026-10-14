@@ -11,6 +11,7 @@
 //!              ├── scenes    One module per scene
 //!              ├── corpus    The source files the typing scene types
 //!              ├── highlight Colours a source file by its grammar
+//!              ├── minimap   A whole file drawn small, two lines to a row
 //!              ├── snippet   Cuts a source file into one snippet per function
 //!              ├── tree      The rows of a file tree for one open path
 //!              └── theme     The palette
@@ -21,6 +22,7 @@ pub mod cli;
 pub mod corpus;
 pub mod events;
 pub mod highlight;
+pub mod minimap;
 pub mod picker;
 pub mod scene;
 pub mod scenes;
