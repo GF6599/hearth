@@ -12,6 +12,7 @@
 //!              ├── corpus    The source files the typing scene types
 //!              ├── highlight Colours a source file by its grammar
 //!              ├── snippet   Cuts a source file into one snippet per function
+//!              ├── tree      The rows of a file tree for one open path
 //!              └── theme     The palette
 //! ```
 
@@ -25,3 +26,4 @@ pub mod scene;
 pub mod scenes;
 pub mod snippet;
 pub mod theme;
+pub mod tree;

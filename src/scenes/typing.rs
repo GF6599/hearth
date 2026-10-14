@@ -14,6 +14,7 @@ use crate::highlight;
 use crate::scene::{Rng, Scene, TICK_RATE};
 use crate::snippet;
 use crate::theme;
+use crate::tree::{self, Tree};
 
 pub use crate::snippet::MOST_SNIPPET_LINES;
 
@@ -39,6 +40,10 @@ const LEAST_PADDING_Y: u16 = 1;
 /// Two rules and one cell between them.
 const SMALLEST_FRAME: u16 = 3;
 
+/// Under this many columns a tree shows marks and the first letters of
+/// names, which nobody can read.
+const LEAST_TREE_WIDTH: u16 = 8;
+
 /// A blank cell before the line numbers and another after them.
 const GUTTER_GAP: usize = 1;
 
@@ -48,6 +53,8 @@ const FILE_COLOUR: Color = theme::FOAM;
 const FUNCTION_MARK_COLOUR: Color = theme::PINE;
 const FUNCTION_COLOUR: Color = theme::ROSE;
 const STATUS_COLOUR: Color = theme::SUBTLE;
+const TREE_COLOUR: Color = theme::SUBTLE;
+const ARROW_COLOUR: Color = theme::MUTED;
 const CURSOR_COLOUR: Color = theme::TEXT;
 const NOTICE_COLOUR: Color = theme::SUBTLE;
 const FRAME_COLOUR: Color = theme::MUTED;
@@ -118,6 +125,10 @@ pub struct Typing {
     current: Option<(usize, usize)>,
     function: String,
     language: &'static str,
+    /// Built once, because a large repository holds tens of thousands of
+    /// paths and only the open path changes from one snippet to the next.
+    tree: Tree,
+    tree_rows: Vec<tree::Row>,
     /// The snippet on screen, each glyph with its colour from the grammar.
     glyphs: Vec<(char, Color)>,
     /// The lines in the whole snippet, so the gutter does not widen while
@@ -131,6 +142,7 @@ pub struct Typing {
 
 impl Typing {
     pub fn new(rng: Rng, corpus: Arc<Corpus>, speed: Speed) -> Self {
+        let tree = Tree::new(corpus.files().iter().map(|source| source.path.as_str()));
         let mut scene = Self {
             rng,
             corpus,
@@ -141,6 +153,8 @@ impl Typing {
             current: None,
             function: String::new(),
             language: "",
+            tree,
+            tree_rows: Vec::new(),
             glyphs: Vec::new(),
             line_count: 0,
             offset: 0,
@@ -187,6 +201,7 @@ impl Typing {
                 .find_map(Clone::clone)
                 .unwrap_or_default();
             self.language = highlighted.language;
+            self.tree_rows = self.tree.rows(&source.path);
             self.line_count = span.len();
             self.glyphs = glyphs(&source.text, &highlighted.colours, span);
             return;
@@ -250,6 +265,59 @@ impl Typing {
             width,
             height,
         )
+    }
+
+    /// A file's name lines up with the names of the folders beside it, and
+    /// the current file stays near the middle when the tree is taller than
+    /// the frame.
+    fn render_tree(&self, area: Rect, frame: Rect, buf: &mut Buffer) {
+        let width = (frame.x - area.x).saturating_sub(2);
+        if width < LEAST_TREE_WIDTH {
+            return;
+        }
+        let x = area.x + 1;
+        let height = usize::from(frame.height);
+        let current = self
+            .tree_rows
+            .iter()
+            .position(|row| row.kind == tree::Kind::File { current: true })
+            .unwrap_or(0);
+        let top = current
+            .saturating_sub(height / 2)
+            .min(self.tree_rows.len().saturating_sub(height));
+        let plain = Style::default().fg(TREE_COLOUR);
+        let marker = Style::default().fg(theme::MARKER);
+        for (y, row) in (frame.y..frame.bottom()).zip(&self.tree_rows[top..]) {
+            let indent = " ".repeat(row.depth);
+            let line = match row.kind {
+                tree::Kind::Folder { open } => Line::from(vec![
+                    Span::raw(indent),
+                    Span::styled(
+                        if open { "▾ " } else { "▸ " },
+                        Style::default().fg(ARROW_COLOUR),
+                    ),
+                    Span::styled(row.name.as_str(), plain),
+                ]),
+                tree::Kind::File { current } => {
+                    // The closing mark always fits, so the name is cut
+                    // before it rather than the mark at the tree's edge.
+                    let room = usize::from(width).saturating_sub(row.depth + 3);
+                    let name: String = row.name.chars().take(room).collect();
+                    let (open, close, name_style) = if current {
+                        ("[", "]", Style::default().fg(theme::MARKED))
+                    } else {
+                        (" ", " ", plain)
+                    };
+                    Line::from(vec![
+                        Span::raw(indent + " "),
+                        Span::styled(open, marker),
+                        Span::styled(name, name_style),
+                        Span::styled(close, marker),
+                    ])
+                }
+            };
+            buf.set_line(x, y, &line, width);
+        }
     }
 
     /// A part that does not fit goes whole, the language first and then
@@ -381,6 +449,7 @@ impl Scene for Typing {
         if frame.bottom() < area.bottom() {
             self.render_status(frame, first, buf);
         }
+        self.render_tree(area, frame, buf);
         if self.notice > 0 {
             let notice = format!("{} cps", self.speed);
             if let Ok(width) = u16::try_from(notice.len())
