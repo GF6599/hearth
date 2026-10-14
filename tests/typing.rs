@@ -172,3 +172,70 @@ fn the_scene_types_at_the_speed_it_is_given() {
         );
     }
 }
+
+/// A file typed at 200 keystrokes per second for ten ticks: between 60 and
+/// 180 keystrokes, which types a short file and stays inside the hold.
+fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
+    let scene = Typing::new(
+        Rng::seed_from_u64(7),
+        Arc::new(Corpus::from_files([(path.to_string(), text.to_string())])),
+        "200".parse().unwrap(),
+    );
+    render(&ticked(scene, area, 10), area, area)
+}
+
+fn colour_at(buffer: &Buffer, line: &str, needle: &str, y: u16) -> ratatui::style::Color {
+    let x = u16::try_from(line.find(needle).unwrap()).unwrap();
+    buffer[(x, y)].fg
+}
+
+/// Given: a Rust file with a keyword, a function name, a string and a
+/// comment on one line.
+/// When: the scene has typed it.
+/// Then: each takes its colour from the Rust grammar.
+///
+/// Why it matters: colour by line, as before, paints a trailing comment
+/// in the code colour and a string in the comment colour.
+#[test]
+fn rust_is_highlighted_by_its_grammar() {
+    // Given:
+    let line = "fn main() { let s = \"x\"; } // c";
+    let area = Rect::new(0, 0, 40, 4);
+
+    // When:
+    let buffer = typed_file("a.rs", &format!("{line}\n"), area);
+
+    // Then:
+    assert_eq!(row_text(&buffer, 1), line);
+    assert_eq!(colour_at(&buffer, line, "fn", 1), theme::PINE);
+    assert_eq!(colour_at(&buffer, line, "main", 1), theme::ROSE);
+    assert_eq!(colour_at(&buffer, line, "x\"", 1), theme::GOLD);
+    assert_eq!(colour_at(&buffer, line, "//", 1), theme::MUTED);
+}
+
+/// Given: a Python file.
+/// When: the scene has typed it.
+/// Then: `def` is a keyword and the function name is a function, so the
+/// grammar came from the extension and not from Rust.
+#[test]
+fn the_grammar_follows_the_extension() {
+    let line = "def greet():";
+    let area = Rect::new(0, 0, 40, 4);
+    let buffer = typed_file("a.py", &format!("{line}\n    pass\n"), area);
+    assert_eq!(colour_at(&buffer, line, "def", 1), theme::PINE);
+    assert_eq!(colour_at(&buffer, line, "greet", 1), theme::ROSE);
+}
+
+/// Given: a file with an extension no grammar claims.
+/// When: the scene has typed it.
+/// Then: every typed cell is in the text colour.
+#[test]
+fn an_unknown_file_is_plain_text() {
+    let line = "fn \"x\" // y";
+    let area = Rect::new(0, 0, 40, 4);
+    let buffer = typed_file("notes.zzz", &format!("{line}\n"), area);
+    assert_eq!(row_text(&buffer, 1), line);
+    for x in 0..u16::try_from(line.len()).unwrap() {
+        assert_eq!(buffer[(x, 1)].fg, theme::TEXT, "cell {x}");
+    }
+}
