@@ -15,6 +15,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `pipes` | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
 | `bonsai` | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
 | `aquarium` | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
+| `typing` | Types the source files of a git repository the way a person would, file after file, with a cursor and a pause at each line |
 
 `hearth --help` lists every scene the build carries.
 
@@ -47,6 +48,16 @@ hearth --seed 7     # replay the same frames
 ```
 
 `--seed <n>` fixes the random source, so two runs with the same seed draw the same frames and the same chain of restarts. Without it, the clock seeds each run.
+
+The typing scene types hearth's own source unless `--repo` names another repository:
+
+```sh
+hearth typing --repo ~/code/some-project      # a checkout on disk
+hearth typing --repo rust-lang/rust           # a GitHub repository
+hearth typing --repo https://example.com/x.git
+```
+
+A GitHub repository or a clone address is cloned once, shallow, into `~/.cache/hearth` (or `$XDG_CACHE_HOME/hearth`), with one line on stderr before the terminal opens. Every later run reads the cache, so the scene starts without a network. Only tracked text files under 64 KiB are typed, so an ignored or untracked file never shows.
 
 ### Picker
 
