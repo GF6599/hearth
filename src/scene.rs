@@ -4,6 +4,7 @@ use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
 
 /// The one random source every scene draws from. A seed fixes every frame.
@@ -20,15 +21,17 @@ pub trait Scene {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SceneKind {
     Noise,
+    Matrix,
 }
 
 /// The order the picker lists and Tab cycles.
-pub const ALL: &[SceneKind] = &[SceneKind::Noise];
+pub const ALL: &[SceneKind] = &[SceneKind::Noise, SceneKind::Matrix];
 
 impl SceneKind {
     pub fn name(self) -> &'static str {
         match self {
             SceneKind::Noise => "noise",
+            SceneKind::Matrix => "matrix",
         }
     }
 
@@ -36,6 +39,7 @@ impl SceneKind {
         let rng = Rng::seed_from_u64(seed);
         match self {
             SceneKind::Noise => Box::new(Noise::new(rng)),
+            SceneKind::Matrix => Box::new(Matrix::new(rng)),
         }
     }
 
