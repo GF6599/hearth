@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene};
-use hearth::scenes::typing::Typing;
+use hearth::scene::{Rng, Scene, TICK_RATE};
+use hearth::scenes::typing::{Speed, Typing};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -18,7 +18,7 @@ fn corpus(text: &str) -> Arc<Corpus> {
 }
 
 fn scene(seed: u64, text: &str) -> Typing {
-    Typing::new(Rng::seed_from_u64(seed), corpus(text))
+    Typing::new(Rng::seed_from_u64(seed), corpus(text), Speed::DEFAULT)
 }
 
 fn ticked(mut scene: Typing, area: Rect, ticks: usize) -> Typing {
@@ -138,4 +138,35 @@ fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
         "cursor not after the line: {:?}",
         cursors(&buffer)
     );
+}
+
+/// Given: a file of one long line, so no newline pauses the typing.
+/// When: the scene ticks for three seconds of wall time at 50 and at 100
+/// keystrokes per second.
+/// Then: it types about 150 and about 300 glyphs.
+///
+/// Why it matters: the speed is a promise in keystrokes per second, so
+/// the count follows the clock and not the number of ticks.
+#[test]
+fn the_scene_types_at_the_speed_it_is_given() {
+    let area = Rect::new(0, 0, 400, 3);
+    let ticks = (3.0 / TICK_RATE.as_secs_f64()).round() as usize;
+    for (speed, expected) in [("50", 150), ("100", 300)] {
+        // Given:
+        let scene = Typing::new(
+            Rng::seed_from_u64(7),
+            corpus(&"x".repeat(1000)),
+            speed.parse().unwrap(),
+        );
+
+        // When:
+        let buffer = render(&ticked(scene, area, ticks), area, area);
+
+        // Then:
+        let count = row_text(&buffer, 1).len();
+        assert!(
+            count.abs_diff(expected) <= expected / 10,
+            "{count} glyphs at {speed} keystrokes per second"
+        );
+    }
 }

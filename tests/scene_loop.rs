@@ -9,6 +9,7 @@ use hearth::app::App;
 use hearth::corpus::Corpus;
 use hearth::events::{EventSource, handle_events};
 use hearth::scene::SceneKind;
+use hearth::scenes::typing::Speed;
 use hearth::theme;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -311,4 +312,70 @@ fn an_unbounded_burst_does_not_starve_the_redraw() {
 
     // Then:
     assert!(!source.queued.is_empty());
+}
+
+fn header(app: &App) -> String {
+    let buffer = frame(app, 60, HEIGHT);
+    (0..buffer.area.width)
+        .map(|x| buffer[(x, 0)].symbol().to_string())
+        .collect()
+}
+
+fn shown(speed: Speed) -> String {
+    format!("{speed} cps")
+}
+
+/// Given: the typing scene at the default speed.
+/// When: `+` is pressed twice, `r` restarts the scene, and `-` is pressed.
+/// Then: the header shows each new speed, the restart keeps it, and the
+/// value goes once the scene has ticked for two seconds.
+#[test]
+fn plus_and_minus_change_the_typing_speed() {
+    // Given:
+    let faster = Speed::DEFAULT.faster();
+    assert!(faster > Speed::DEFAULT);
+    let mut app = App::new(SceneKind::Typing, 7, corpus());
+
+    // When, then:
+    send(&mut app, vec![key('+')]);
+    assert!(header(&app).contains(&shown(faster)), "{}", header(&app));
+    send(&mut app, vec![key('+')]);
+    assert!(header(&app).contains(&shown(faster.faster())));
+    send(&mut app, vec![key('r'), key('-')]);
+    assert!(header(&app).contains(&shown(faster)), "{}", header(&app));
+    for _ in 0..34 {
+        app.tick(Rect::new(0, 0, 60, HEIGHT));
+    }
+    assert!(!header(&app).contains("cps"), "{}", header(&app));
+}
+
+/// Given: the aquarium, the scene before typing.
+/// When: `+` is pressed twice, Tab moves to typing, and `+` is pressed.
+/// Then: typing shows one step above the default, not three.
+///
+/// Why it matters: a key that changes a scene the user cannot see changes
+/// it with no feedback, and the typing scene then starts at a speed nobody
+/// chose.
+#[test]
+fn plus_outside_the_typing_scene_does_nothing() {
+    // Given:
+    let mut app = App::new(SceneKind::Aquarium, 7, corpus());
+
+    // When:
+    send(
+        &mut app,
+        vec![
+            key('+'),
+            key('+'),
+            press(KeyCode::Tab, KeyModifiers::NONE),
+            key('+'),
+        ],
+    );
+
+    // Then:
+    assert!(
+        header(&app).contains(&shown(Speed::DEFAULT.faster())),
+        "{}",
+        header(&app)
+    );
 }
