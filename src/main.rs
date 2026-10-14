@@ -4,18 +4,23 @@ use std::time::Instant;
 use clap::Parser;
 use hearth::app::App;
 use hearth::cli::Cli;
+use hearth::config::{self, Config};
 use hearth::events::{self, TerminalEvents};
 use hearth::scene::TICK_RATE;
 use hearth::scenes::typing;
 
 fn main() {
     let cli = Cli::parse();
-    let corpus = match cli.corpus() {
+    let config = Config::load(&config::default_path()).unwrap_or_else(|e| {
+        eprintln!("hearth: {e}");
+        std::process::exit(1);
+    });
+    let corpus = match cli.corpus(&config) {
         Ok(corpus) if corpus.is_empty() => {
             eprintln!("hearth: that repository has no text file to type");
             std::process::exit(1);
         }
-        Ok(corpus) if cli.repo.is_some() && !typing::has_snippet(&corpus) => {
+        Ok(corpus) if cli.repo(&config).is_some() && !typing::has_snippet(&corpus) => {
             eprintln!("hearth: that repository has no function to type");
             std::process::exit(1);
         }
@@ -25,11 +30,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let app = match cli.scene {
-        Some(kind) => App::new(kind, cli.seed(), corpus),
-        None => App::picker(cli.seed(), corpus),
-    }
-    .with_speed(cli.speed);
+    let app = cli.app(&config, corpus);
     if let Err(e) = run_tui(app) {
         eprintln!("hearth: {e}");
         std::process::exit(1);

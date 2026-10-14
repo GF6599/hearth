@@ -82,6 +82,22 @@ impl Speed {
         Speed(step.max(Self::SLOWEST))
     }
 
+    pub fn from_cps(cps: i64) -> Result<Speed, String> {
+        u16::try_from(cps)
+            .ok()
+            .filter(|cps| (Self::SLOWEST..=Self::FASTEST).contains(cps))
+            .map(Speed)
+            .ok_or_else(Self::range_message)
+    }
+
+    pub fn range_message() -> String {
+        format!(
+            "a speed is a whole number of keystrokes per second, from {} to {}",
+            Self::SLOWEST,
+            Self::FASTEST
+        )
+    }
+
     fn per_tick(self) -> f64 {
         f64::from(self.0) * TICK_RATE.as_secs_f64()
     }
@@ -97,15 +113,8 @@ impl FromStr for Speed {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let range = Self::SLOWEST..=Self::FASTEST;
-        match text.parse::<u16>() {
-            Ok(cps) if range.contains(&cps) => Ok(Speed(cps)),
-            _ => Err(format!(
-                "a speed is a whole number of keystrokes per second, from {} to {}",
-                Self::SLOWEST,
-                Self::FASTEST
-            )),
-        }
+        let cps = text.parse::<i64>().map_err(|_| Self::range_message())?;
+        Self::from_cps(cps)
     }
 }
 

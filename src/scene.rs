@@ -58,6 +58,24 @@ impl Rate {
     pub fn quarters(self) -> u32 {
         RATES[self.0].0
     }
+
+    /// The step that runs `times` as fast as normal. Every step is a whole
+    /// number of quarters, so each compares exactly as a float.
+    pub fn from_times(times: f64) -> Option<Rate> {
+        let quarters = times * f64::from(QUARTERS_PER_TICK);
+        RATES
+            .iter()
+            .position(|&(step, _)| f64::from(step) == quarters)
+            .map(Rate)
+    }
+
+    pub fn all_times() -> String {
+        RATES
+            .iter()
+            .map(|&(step, _)| (f64::from(step) / f64::from(QUARTERS_PER_TICK)).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 impl std::fmt::Display for Rate {
@@ -114,6 +132,10 @@ impl SceneKind {
             SceneKind::Aquarium => "aquarium",
             SceneKind::Typing => "typing",
         }
+    }
+
+    pub fn from_name(name: &str) -> Option<SceneKind> {
+        ALL.iter().copied().find(|kind| kind.name() == name)
     }
 
     pub fn build(self, seed: u64, corpus: &Arc<Corpus>, speed: Speed) -> Box<dyn Scene> {

@@ -1,9 +1,12 @@
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 
+use crate::app::App;
+use crate::config::{self, Config};
 use crate::corpus::{self, Corpus};
 use crate::scene::SceneKind;
 use crate::scenes::typing::Speed;
@@ -24,10 +27,10 @@ pub struct Cli {
     #[arg(long, value_name = "REPO")]
     pub repo: Option<String>,
 
-    /// How fast the typing scene types, in keystrokes per second. `+` and
-    /// `-` change it while the scene runs
-    #[arg(long, value_name = "CPS", default_value_t = Speed::DEFAULT)]
-    pub speed: Speed,
+    /// How fast the typing scene types, in keystrokes per second, over the
+    /// config file. `+` and `-` change it while the scene runs
+    #[arg(long, value_name = "CPS")]
+    pub speed: Option<Speed>,
 }
 
 impl Cli {
@@ -42,18 +45,34 @@ impl Cli {
         })
     }
 
+    pub fn repo<'a>(&'a self, config: &'a Config) -> Option<&'a str> {
+        self.repo.as_deref().or(config.repo.as_deref())
+    }
+
+    pub fn app(&self, config: &Config, corpus: Arc<Corpus>) -> App {
+        let app = match self.scene.or(config.scene) {
+            Some(kind) => App::new(kind, self.seed(), corpus),
+            None => App::picker(self.seed(), corpus),
+        }
+        .with_config(config);
+        match self.speed {
+            Some(speed) => app.with_speed(speed),
+            None => app,
+        }
+    }
+
     /// The source files for the typing scene. A clone happens on the first
     /// run for an address, with one line on stderr before the terminal
     /// opens, and the cache serves every run after.
-    pub fn corpus(&self) -> io::Result<Corpus> {
-        let Some(repo) = &self.repo else {
+    pub fn corpus(&self, config: &Config) -> io::Result<Corpus> {
+        let Some(repo) = self.repo(config) else {
             return Ok(Corpus::embedded());
         };
         if Path::new(repo).is_dir() {
             return Corpus::from_checkout(Path::new(repo));
         }
         let address = clone_address(repo);
-        let cache = cache_dir();
+        let cache = config::xdg_dir("XDG_CACHE_HOME", ".cache");
         if !corpus::cache_path(&address, &cache).join(".git").exists() {
             eprintln!("hearth: fetching {address} into {}", cache.display());
         }
@@ -71,12 +90,4 @@ fn clone_address(repo: &str) -> String {
     } else {
         repo.to_string()
     }
-}
-
-fn cache_dir() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("hearth")
 }

@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 
+use crate::config::Config;
 use crate::corpus::Corpus;
 use crate::picker::Picker;
 use crate::scene::{ALL, QUARTERS_PER_TICK, Rate, Scene, SceneKind};
@@ -79,6 +80,18 @@ impl App {
         self.speed = speed;
         self.scene = self.kind.build(self.seed, &self.corpus, speed);
         self
+    }
+
+    pub fn with_config(mut self, config: &Config) -> Self {
+        for (rate, saved) in self.rates.iter_mut().zip(&config.rates) {
+            if let Some(saved) = saved {
+                *rate = *saved;
+            }
+        }
+        match config.typing {
+            Some(speed) => self.with_speed(speed),
+            None => self,
+        }
     }
 
     pub fn is_picking(&self) -> bool {

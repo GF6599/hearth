@@ -21,7 +21,7 @@ fn a_speed_outside_the_range_is_refused() {
         assert!(error.to_string().contains("--speed"), "{error}");
     }
     let cli = Cli::try_parse_from(["hearth", "--speed", "80"]).unwrap();
-    assert_eq!(cli.speed, "80".parse().unwrap());
+    assert_eq!(cli.speed, Some("80".parse().unwrap()));
 }
 
 fn repository(name: &str, file: &str, text: &str) -> PathBuf {

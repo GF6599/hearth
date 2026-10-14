@@ -4,6 +4,7 @@
 //! main ─► loop { draw → handle_events → tick }
 //!              │
 //!              ├── cli       Command-line arguments
+//!              ├── config    The preferences kept between runs
 //!              ├── app       The running scene, its seed, and the keys
 //!              ├── events    Terminal events → App mutations
 //!              ├── picker    The scene list, the only chrome
@@ -19,6 +20,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod config;
 pub mod corpus;
 pub mod events;
 pub mod highlight;
