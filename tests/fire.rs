@@ -107,17 +107,16 @@ fn heat_only_comes_from_below() {
         let current = levels(&render(&scene, area, area), area);
 
         // Then:
-        for y in 0..current.len() - 1 {
-            for x in 0..current[y].len() {
-                let below = &previous[y + 1];
+        for (y, row) in current.iter().enumerate().take(current.len() - 1) {
+            let below = &previous[y + 1];
+            for (x, &heat) in row.iter().enumerate() {
                 let hottest_below = (x.saturating_sub(1)..=(x + 1).min(below.len() - 1))
                     .map(|sx| below[sx])
                     .max()
                     .unwrap();
                 assert!(
-                    current[y][x] <= hottest_below,
-                    "tick {tick}: heat {} at ({x}, {y}) above at most {hottest_below}",
-                    current[y][x]
+                    heat <= hottest_below,
+                    "tick {tick}: heat {heat} at ({x}, {y}) above at most {hottest_below}"
                 );
             }
         }
