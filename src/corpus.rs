@@ -54,7 +54,10 @@ impl Corpus {
     }
 
     /// The tracked text files of a checkout. Only `git ls-files` decides
-    /// what is read, so an ignored or untracked file is never opened.
+    /// what is read, so an ignored or untracked file is never opened. The
+    /// metadata is read without following links, so a tracked symlink in a
+    /// cloned repository cannot point the scene at a file on this machine,
+    /// and a file over the cap is never read into memory.
     pub fn from_checkout(root: &Path) -> io::Result<Self> {
         let listing = Command::new("git")
             .arg("-C")
@@ -76,10 +79,17 @@ impl Corpus {
             if path.is_empty() {
                 continue;
             }
-            let Ok(bytes) = fs::read(root.join(path)) else {
+            let file = root.join(path);
+            let Ok(meta) = fs::symlink_metadata(&file) else {
                 continue;
             };
-            if bytes.len() > SIZE_CAP || bytes.contains(&0) {
+            if !meta.is_file() || meta.len() > SIZE_CAP as u64 {
+                continue;
+            }
+            let Ok(bytes) = fs::read(&file) else {
+                continue;
+            };
+            if bytes.contains(&0) {
                 continue;
             }
             if let Ok(text) = String::from_utf8(bytes) {
