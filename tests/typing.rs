@@ -822,3 +822,127 @@ fn a_tiny_area_draws_nothing_outside_it() {
         }
     }
 }
+
+fn settled_files(files: &[(&str, &str)], area: Rect) -> Buffer {
+    let files = files
+        .iter()
+        .map(|&(path, text)| (path.to_string(), text.to_string()));
+    let mut scene = Typing::new(
+        Rng::seed_from_u64(7),
+        Arc::new(Corpus::from_files(files)),
+        Speed::DEFAULT,
+    );
+    settled(&mut scene, area)
+}
+
+fn tree(buffer: &Buffer) -> Vec<String> {
+    let frame = frame(buffer);
+    let mut rows: Vec<String> = (frame.y..frame.bottom())
+        .map(|y| {
+            (buffer.area.x + 1..frame.x)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    while rows.last().is_some_and(String::is_empty) {
+        rows.pop();
+    }
+    rows
+}
+
+/// Given: `src/a.rs`, `src/b/c.rs` and `README.md`, where only `c.rs`
+/// holds a function.
+/// When: the scene types it on a 120 by 40 area.
+/// Then: the left padding lists `src` and `b` open, `c.rs` in gold
+/// brackets with an iris name, then `a.rs`, then `README.md`, folders above
+/// files at each level.
+#[test]
+fn the_tree_opens_the_folders_on_the_path_and_marks_the_file() {
+    // Given:
+    let files = [
+        ("src/a.rs", "const A: u8 = 1;\n"),
+        ("src/b/c.rs", "fn c() {}\n"),
+        ("README.md", "# hearth\n"),
+    ];
+
+    // When:
+    let buffer = settled_files(&files, Rect::new(0, 0, 120, 40));
+
+    // Then:
+    assert_eq!(
+        tree(&buffer),
+        ["▾ src", " ▾ b", "   [c.rs]", "   a.rs", "  README.md"]
+    );
+    let y = frame(&buffer).y + 2;
+    let at = |x: u16| (buffer[(x, y)].symbol().to_string(), buffer[(x, y)].fg);
+    assert_eq!(at(4), ("[".to_string(), theme::MARKER));
+    assert_eq!(at(5), ("c".to_string(), theme::MARKED));
+    assert_eq!(at(9), ("]".to_string(), theme::MARKER));
+}
+
+/// Given: one file, on a 120 column area and on a 40 column area, whose
+/// left padding is five columns.
+/// When: the snippet is typed whole on each.
+/// Then: the wide area shows the file in the tree, and the narrow one
+/// draws nothing left of the frame.
+///
+/// Why it matters: a tree squeezed into a few columns is cut to marks
+/// nobody can read.
+#[test]
+fn a_narrow_padding_has_no_tree() {
+    let wide = settled_files(&[("a.rs", "fn f() {}\n")], Rect::new(0, 0, 120, 10));
+    assert_eq!(tree(&wide), [" [a.rs]"]);
+    let narrow = settled_files(&[("a.rs", "fn f() {}\n")], Rect::new(0, 0, 40, 10));
+    let frame = frame(&narrow);
+    for y in 0..narrow.area.height {
+        for x in 0..frame.x {
+            assert_eq!(narrow[(x, y)].symbol(), " ", "{x},{y}");
+        }
+    }
+}
+
+/// Given: sixty files in one folder, where only the last holds a function.
+/// When: the scene types it on a 120 by 40 area, whose frame is 30 rows.
+/// Then: the tree fills the frame's rows and one of them is the marked
+/// file.
+///
+/// Why it matters: a tree drawn from its top shows the first thirty files
+/// and never the one being typed.
+#[test]
+fn a_tall_tree_scrolls_to_the_current_file() {
+    let names: Vec<String> = (0..60).map(|n| format!("src/f{n:02}.rs")).collect();
+    let files: Vec<(&str, &str)> = names
+        .iter()
+        .map(|name| {
+            let text = if name.ends_with("59.rs") {
+                "fn f() {}\n"
+            } else {
+                "const A: u8 = 1;\n"
+            };
+            (name.as_str(), text)
+        })
+        .collect();
+    let buffer = settled_files(&files, Rect::new(0, 0, 120, 40));
+    let rows = tree(&buffer);
+    assert_eq!(rows.len(), usize::from(frame(&buffer).height));
+    assert!(rows.contains(&"  [f59.rs]".to_string()), "{rows:?}");
+}
+
+/// Given: a current file whose name is wider than the tree.
+/// When: the scene types it on a 120 by 40 area.
+/// Then: the name is cut so the closing bracket still shows, and the
+/// column before the frame stays blank.
+#[test]
+fn a_long_name_is_cut_inside_the_tree() {
+    let buffer = settled_files(
+        &[("src/a_very_long_module_name.rs", "fn f() {}\n")],
+        Rect::new(0, 0, 120, 40),
+    );
+    assert_eq!(tree(&buffer), ["▾ src", "  [a_very_lo]"]);
+    let frame = frame(&buffer);
+    for y in frame.y..frame.bottom() {
+        assert_eq!(buffer[(frame.x - 1, y)].symbol(), " ", "row {y}");
+    }
+}
