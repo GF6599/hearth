@@ -626,9 +626,9 @@ fn the_status_line_follows_the_cursor() {
     }
 }
 
-/// Given: one line functions 30, 16 and 11 glyphs wide, so each frame is
-/// narrower than the one before.
-/// When: each is typed whole.
+/// Given: a one line function on areas 40, 28 and 20 columns wide, so
+/// each frame is narrower than the one before.
+/// When: it is typed whole on each.
 /// Then: the widest status line holds everything, the next drops the
 /// language, and the narrowest also drops the speed, each flush with the
 /// frame's right edge.
@@ -637,19 +637,15 @@ fn the_status_line_follows_the_cursor() {
 /// word cut in half, where dropping a whole part keeps the rest readable.
 #[test]
 fn a_narrow_status_line_drops_the_language_and_then_the_speed() {
-    let area = Rect::new(0, 0, 120, 40);
     let cases = [
-        (30, "Rust", "Ln 1, Col 31  50 cps"),
-        (16, "", "Ln 1, Col 17  50 cps"),
-        (11, "", "Ln 1, Col 12"),
+        (40, "Rust", "Ln 1, Col 10  50 cps"),
+        (28, "", "Ln 1, Col 10  50 cps"),
+        (20, "", "Ln 1, Col 10"),
     ];
-    for (glyphs, language, place) in cases {
-        // Given:
-        let code = format!("fn f() {{ {} }}", "x".repeat(glyphs - 11));
-        assert_eq!(code.len(), glyphs);
-
-        // When:
-        let buffer = settled_file("a.rs", &format!("{code}\n"), area);
+    for (width, language, place) in cases {
+        // Given, when:
+        let area = Rect::new(0, 0, width, 10);
+        let buffer = settled_file("a.rs", "fn f() {}\n", area);
 
         // Then:
         let status = status(&buffer);
@@ -660,10 +656,10 @@ fn a_narrow_status_line_drops_the_language_and_then_the_speed() {
     }
 }
 
-/// Given: a function whose code is wider than the file and its name, and
-/// one whose code is narrower, each in a file whose path is wider than
-/// either frame.
-/// When: each snippet is typed whole.
+/// Given: a function in a file whose path is wider than the frame, on an
+/// area whose padded frame holds the file and the function, and on one
+/// whose padded frame would be narrower than those two.
+/// When: the snippet is typed whole on each.
 /// Then: both breadcrumbs drop the leading folders, keep the whole file
 /// and function, and start at the frame's left edge.
 ///
@@ -671,15 +667,15 @@ fn a_narrow_status_line_drops_the_language_and_then_the_speed() {
 /// name, which is the part the reader cannot get from anywhere else.
 #[test]
 fn a_narrow_frame_drops_the_leading_folders() {
-    let area = Rect::new(0, 0, 80, 10);
-    for code in ["fn tick() { go(); }\n", "fn tick() {}\n"] {
-        let buffer = settled_file("src/scenes/typing.rs", code, area);
+    for width in [28, 20] {
+        let area = Rect::new(0, 0, width, 10);
+        let buffer = settled_file("src/scenes/typing.rs", "fn tick() {}\n", area);
         let frame = frame(&buffer);
-        assert_eq!(breadcrumb(&buffer), "typing.rs › fn tick", "{code:?}");
+        assert_eq!(breadcrumb(&buffer), "typing.rs › fn tick", "{width}");
         assert_eq!(
             row_text(&buffer, frame.y - 1).trim_start(),
             "typing.rs › fn tick",
-            "{code:?}"
+            "{width}"
         );
     }
 }
@@ -766,17 +762,42 @@ fn every_width_keeps_the_frame_inside_the_area() {
     }
 }
 
-/// Given: a ten line snippet on an area too small for it and its margin.
+/// Given: a ten line snippet on an area eight rows tall.
 /// When: the scene has typed it.
-/// Then: the frame fills the area, so no padding is left, and the gutter
-/// numbers the last six lines, which are the ones still on screen.
+/// Then: the frame leaves one row above it for the breadcrumb and one below
+/// it for the status line, and the gutter numbers the last four lines,
+/// which are the ones still on screen.
+///
+/// Why it matters: a snippet taller than the area is the common case on a
+/// terminal, and a frame that fills the height then hides both rows.
 #[test]
-fn a_small_area_is_filled_by_the_frame() {
-    let area = Rect::new(0, 0, 24, 8);
+fn a_tall_snippet_keeps_its_breadcrumb_and_status_line() {
+    let area = Rect::new(0, 0, 40, 8);
     let buffer = settled(&mut scene(7, &block_of_ten()), area);
-    assert_eq!(frame(&buffer), area);
+    let frame = frame(&buffer);
+    assert_eq!((frame.y, frame.bottom()), (1, 7));
+    assert_eq!(breadcrumb(&buffer), "a.rs › fn f");
+    assert!(status(&buffer).contains("Ln 10,"), "{:?}", status(&buffer));
     let numbers: Vec<usize> = code_rows(&buffer).iter().map(|row| row.number).collect();
-    assert_eq!(numbers, [5, 6, 7, 8, 9, 10]);
+    assert_eq!(numbers, [7, 8, 9, 10]);
+}
+
+/// Given: snippets of one, ten and forty lines on one 120 by 40 area.
+/// When: each is typed whole.
+/// Then: each sits in the same frame.
+///
+/// Why it matters: a frame sized from the snippet moves its edges with
+/// every snippet, so the padding beside it changes width each time.
+#[test]
+fn every_snippet_sits_in_the_same_frame() {
+    let area = Rect::new(0, 0, 120, 40);
+    let forty = format!("fn long() {{\n{}}}\n", "    x();\n".repeat(38));
+    let frames: Vec<Rect> = ["fn f() {}\n", &block_of_ten(), &forty]
+        .into_iter()
+        .map(|text| frame(&settled(&mut scene(7, text), area)))
+        .collect();
+    assert_eq!(frames[0], frames[1]);
+    assert_eq!(frames[0], frames[2]);
 }
 
 /// Given: a half typed snippet.
