@@ -349,35 +349,78 @@ fn plus_and_minus_change_the_typing_speed() {
     assert!(!header(&app).contains("cps"), "{}", header(&app));
 }
 
-/// Given: the aquarium, the scene before typing.
-/// When: `+` is pressed twice, Tab moves to typing, and `+` is pressed.
-/// Then: typing shows one step above the default, not three.
+fn tab() -> Event {
+    press(KeyCode::Tab, KeyModifiers::NONE)
+}
+
+/// Given: the fire scene with `+` pressed twice, and a second fire scene on
+/// the same seed left at its own pace.
+/// When: the first runs 20 frames and the second 40.
+/// Then: the two frames are equal.
 ///
-/// Why it matters: a key that changes a scene the user cannot see changes
-/// it with no feedback, and the typing scene then starts at a speed nobody
-/// chose.
+/// Why it matters: a rate that only shows in the notice and never reaches
+/// the tick leaves every scene at one pace.
 #[test]
-fn plus_outside_the_typing_scene_does_nothing() {
+fn plus_twice_runs_a_scene_at_twice_its_pace() {
     // Given:
-    let mut app = App::new(SceneKind::Aquarium, 7, corpus());
+    let area = Rect::new(0, 0, WIDTH, HEIGHT);
+    let mut doubled = App::new(SceneKind::Fire, 7, corpus());
+    send(&mut doubled, vec![key('+'), key('+')]);
+    let mut plain = App::new(SceneKind::Fire, 7, corpus());
 
     // When:
-    send(
-        &mut app,
-        vec![
-            key('+'),
-            key('+'),
-            press(KeyCode::Tab, KeyModifiers::NONE),
-            key('+'),
-        ],
-    );
+    for _ in 0..20 {
+        doubled.tick(area);
+    }
+    for _ in 0..40 {
+        plain.tick(area);
+    }
 
     // Then:
+    assert_eq!(frame(&doubled, WIDTH, HEIGHT), frame(&plain, WIDTH, HEIGHT));
+}
+
+/// Given: fire at 2×.
+/// When: Tab moves to life and `+` is pressed, `r` restarts life, Tab moves
+/// on to typing and `+` is pressed, Tab comes back to fire and `-` is
+/// pressed, and the picker starts life again and `-` is pressed.
+/// Then: life shows `1.5×`, typing shows one step above its default, fire
+/// shows `1.5×` after its own 2×, and life shows `1×` after its own `1.5×`.
+///
+/// Why it matters: one shared speed carries the last scene's change into
+/// the next scene, and a speed that a restart, Tab or the picker resets is
+/// lost each time the user moves.
+#[test]
+fn each_scene_keeps_its_own_speed() {
+    // Given:
+    let mut app = App::new(SceneKind::Fire, 7, corpus());
+    send(&mut app, vec![key('+'), key('+')]);
+
+    // When, then:
+    send(&mut app, vec![tab(), key('+')]);
+    assert!(header(&app).contains("1.5×"), "{}", header(&app));
+    send(
+        &mut app,
+        vec![key('r'), tab(), tab(), tab(), tab(), key('+')],
+    );
     assert!(
         header(&app).contains(&shown(Speed::DEFAULT.faster())),
         "{}",
         header(&app)
     );
+    send(&mut app, vec![tab(), tab(), tab(), key('-')]);
+    assert!(header(&app).contains("1.5×"), "{}", header(&app));
+    send(
+        &mut app,
+        vec![
+            press(KeyCode::Esc, KeyModifiers::NONE),
+            key('j'),
+            press(KeyCode::Enter, KeyModifiers::NONE),
+            key('-'),
+        ],
+    );
+    assert!(header(&app).contains("1×"), "{}", header(&app));
+    assert!(!header(&app).contains("1.5×"), "{}", header(&app));
 }
 
 /// Given: the typing scene, one step faster than the default.
