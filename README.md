@@ -15,7 +15,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `pipes` | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
 | `bonsai` | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
 | `aquarium` | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
-| `typing` | Types the source files of a git repository the way a person would, file after file, with a cursor and a pause at each line |
+| `typing` | Types the source files of a git repository the way a person would, file after file, with a cursor and a pause at each line, at a speed you set |
 
 `hearth --help` lists every scene the build carries.
 
@@ -45,9 +45,12 @@ alias hth=hearth
 hearth              # open the picker
 hearth noise        # start one scene
 hearth --seed 7     # replay the same frames
+hearth typing --speed 80   # type 80 keystrokes per second
 ```
 
 `--seed <n>` fixes the random source, so two runs with the same seed draw the same frames and the same chain of restarts. Without it, the clock seeds each run.
+
+`--speed <cps>` sets how fast the typing scene types, in keystrokes per second, from 1 to 1000. The default is 50. `+` and `-` change it while the scene runs, and the new value shows in the corner for a second.
 
 The typing scene types hearth's own source unless `--repo` names another repository:
 
@@ -73,6 +76,7 @@ A GitHub repository or a clone address is cloned once, shallow, into `~/.cache/h
 |---|---|
 | `Tab` | Next scene |
 | `r` | Restart the scene with a new seed |
+| `+` / `-` | Type faster or slower, in the typing scene |
 | `Esc` | Back to the picker |
 | `q` / `Ctrl-c` | Quit |
 
