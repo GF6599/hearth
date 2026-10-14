@@ -33,9 +33,9 @@ fn row_text(buffer: &Buffer, y: u16) -> String {
 fn locate(buffer: &Buffer, label: &str) -> (u16, u16) {
     (0..buffer.area.height)
         .find_map(|y| {
-            row_text(buffer, y)
-                .find(label)
-                .map(|x| (u16::try_from(x).unwrap(), y))
+            let row = row_text(buffer, y);
+            row.find(label)
+                .map(|byte| (u16::try_from(row[..byte].chars().count()).unwrap(), y))
         })
         .unwrap_or_else(|| panic!("no row shows {label}"))
 }
