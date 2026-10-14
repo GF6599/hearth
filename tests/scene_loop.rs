@@ -1,10 +1,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use hearth::app::App;
+use hearth::corpus::Corpus;
 use hearth::events::{EventSource, handle_events};
 use hearth::scene::SceneKind;
 use hearth::theme;
@@ -66,8 +68,12 @@ fn frame(app: &App, width: u16, height: u16) -> Buffer {
     terminal.backend().buffer().clone()
 }
 
+fn corpus() -> Arc<Corpus> {
+    Arc::new(Corpus::embedded())
+}
+
 fn ticked(seed: u64, ticks: usize) -> App {
-    let mut app = App::new(SceneKind::Noise, seed);
+    let mut app = App::new(SceneKind::Noise, seed, corpus());
     for _ in 0..ticks {
         app.tick(Rect::new(0, 0, WIDTH, HEIGHT));
     }
@@ -144,7 +150,7 @@ fn tab_moves_to_the_next_scene() {
 
     // When:
     send(&mut app, vec![press(KeyCode::Tab, KeyModifiers::NONE)]);
-    let mut matrix = App::new(SceneKind::Matrix, 8);
+    let mut matrix = App::new(SceneKind::Matrix, 8, corpus());
     for _ in 0..10 {
         app.tick(Rect::new(0, 0, WIDTH, HEIGHT));
         matrix.tick(Rect::new(0, 0, WIDTH, HEIGHT));
@@ -205,7 +211,7 @@ fn esc_returns_to_the_picker() {
 #[test]
 fn enter_starts_the_selected_scene() {
     // Given:
-    let mut app = App::picker(7);
+    let mut app = App::picker(7, corpus());
     assert!(shows_picker(&frame(&app, WIDTH, HEIGHT)));
 
     // When:
@@ -224,7 +230,7 @@ fn enter_starts_the_selected_scene() {
 #[test]
 fn the_picker_selection_stays_inside_the_list() {
     // Given:
-    let mut app = App::picker(7);
+    let mut app = App::picker(7, corpus());
 
     // When:
     send(
@@ -250,7 +256,7 @@ fn the_picker_selection_stays_inside_the_list() {
 
 #[test]
 fn the_picker_quits_on_q() {
-    let mut app = App::picker(7);
+    let mut app = App::picker(7, corpus());
     send(&mut app, vec![key('q')]);
     assert!(app.should_quit);
 }
@@ -279,7 +285,7 @@ fn a_key_release_is_ignored() {
 fn a_scene_and_the_picker_render_inside_any_area() {
     // Given:
     let scene = ticked(7, 1);
-    let picker = App::picker(7);
+    let picker = App::picker(7, corpus());
 
     // When, then:
     for app in [&scene, &picker] {
