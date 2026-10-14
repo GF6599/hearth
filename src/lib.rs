@@ -9,11 +9,13 @@
 //!              ├── picker   The scene list, the only chrome
 //!              ├── scene    The Scene trait and the list of scenes
 //!              ├── scenes   One module per scene
+//!              ├── corpus   The source files the typing scene types
 //!              └── theme    The palette
 //! ```
 
 pub mod app;
 pub mod cli;
+pub mod corpus;
 pub mod events;
 pub mod picker;
 pub mod scene;

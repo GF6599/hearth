@@ -13,9 +13,7 @@ clap = { version = "4.6.6", features = ["derive"] }
 # frames after a crate upgrade.
 rand = { version = "0.10", default-features = false }
 rand_chacha = { version = "0.10", default-features = false }
-
-[dev-dependencies]
-# The same crate ratatui measures cells with, so a glyph test and the
+# The same crate ratatui measures cells with, so the corpus and the
 # renderer agree on every width.
 unicode-width = "0.2"
 

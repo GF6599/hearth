@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
+use crate::corpus::Corpus;
 use crate::picker::Picker;
 use crate::scene::{ALL, Scene, SceneKind};
 use crate::theme;
@@ -16,6 +19,7 @@ enum Mode {
 pub struct App {
     kind: SceneKind,
     seed: u64,
+    corpus: Arc<Corpus>,
     scene: Box<dyn Scene>,
     mode: Mode,
     selected: usize,
@@ -35,19 +39,20 @@ impl std::fmt::Debug for App {
 }
 
 impl App {
-    pub fn new(kind: SceneKind, seed: u64) -> Self {
+    pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
         Self {
             kind,
             seed,
-            scene: kind.build(seed),
+            scene: kind.build(seed, &corpus),
+            corpus,
             mode: Mode::Running,
             selected: ALL.iter().position(|k| *k == kind).unwrap_or(0),
             should_quit: false,
         }
     }
 
-    pub fn picker(seed: u64) -> Self {
-        let mut app = Self::new(ALL[0], seed);
+    pub fn picker(seed: u64, corpus: Arc<Corpus>) -> Self {
+        let mut app = Self::new(ALL[0], seed, corpus);
         app.mode = Mode::Picking;
         app
     }
@@ -83,7 +88,7 @@ impl App {
     /// `--seed` replays the same sequence of restarts.
     pub fn restart(&mut self) {
         self.seed = self.seed.wrapping_add(1);
-        self.scene = self.kind.build(self.seed);
+        self.scene = self.kind.build(self.seed, &self.corpus);
     }
 
     pub fn next_scene(&mut self) {

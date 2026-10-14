@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use clap::ValueEnum;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::corpus::Corpus;
 use crate::scenes::aquarium::Aquarium;
 use crate::scenes::bonsai::Bonsai;
 use crate::scenes::fire::Fire;
@@ -11,6 +14,7 @@ use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
 use crate::scenes::pipes::Pipes;
+use crate::scenes::typing::Typing;
 
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
@@ -32,6 +36,7 @@ pub enum SceneKind {
     Pipes,
     Bonsai,
     Aquarium,
+    Typing,
 }
 
 /// The order the picker lists and Tab cycles.
@@ -43,6 +48,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Pipes,
     SceneKind::Bonsai,
     SceneKind::Aquarium,
+    SceneKind::Typing,
 ];
 
 impl SceneKind {
@@ -55,10 +61,11 @@ impl SceneKind {
             SceneKind::Pipes => "pipes",
             SceneKind::Bonsai => "bonsai",
             SceneKind::Aquarium => "aquarium",
+            SceneKind::Typing => "typing",
         }
     }
 
-    pub fn build(self, seed: u64) -> Box<dyn Scene> {
+    pub fn build(self, seed: u64, corpus: &Arc<Corpus>) -> Box<dyn Scene> {
         let rng = Rng::seed_from_u64(seed);
         match self {
             SceneKind::Noise => Box::new(Noise::new(rng)),
@@ -68,6 +75,7 @@ impl SceneKind {
             SceneKind::Pipes => Box::new(Pipes::new(rng)),
             SceneKind::Bonsai => Box::new(Bonsai::new(rng)),
             SceneKind::Aquarium => Box::new(Aquarium::new(rng)),
+            SceneKind::Typing => Box::new(Typing::new(rng, Arc::clone(corpus))),
         }
     }
 

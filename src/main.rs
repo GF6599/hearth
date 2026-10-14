@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -11,9 +12,20 @@ const TICK_RATE: Duration = Duration::from_millis(60);
 
 fn main() {
     let cli = Cli::parse();
+    let corpus = match cli.corpus() {
+        Ok(corpus) if corpus.is_empty() => {
+            eprintln!("hearth: that repository has no text file to type");
+            std::process::exit(1);
+        }
+        Ok(corpus) => Arc::new(corpus),
+        Err(e) => {
+            eprintln!("hearth: {e}");
+            std::process::exit(1);
+        }
+    };
     let app = match cli.scene {
-        Some(kind) => App::new(kind, cli.seed()),
-        None => App::picker(cli.seed()),
+        Some(kind) => App::new(kind, cli.seed(), corpus),
+        None => App::picker(cli.seed(), corpus),
     };
     if let Err(e) = run_tui(app) {
         eprintln!("hearth: {e}");
