@@ -3,10 +3,10 @@
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::bonsai::{Bonsai, HOLD_TICKS, POT_HEIGHT};
 use hearth::theme;
+use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use rand::SeedableRng;
 
 const TREE_GLYPHS: &[&str] = &["/", "\\", "|", "~", "&", "_"];
 
@@ -89,18 +89,17 @@ fn the_tree_grows_then_holds_then_starts_over() {
         .collect();
 
     // Then:
-    let peak = *counts.iter().max().unwrap();
-    let first_peak = counts.iter().position(|&c| c == peak).unwrap();
+    let first_drop = counts
+        .windows(2)
+        .position(|w| w[1] < w[0])
+        .unwrap_or_else(|| panic!("no new tree in 800 ticks: {counts:?}"));
+    let first_tree = &counts[..=first_drop];
+    let peak = *first_tree.last().unwrap();
     assert!(peak > counts[0], "the tree never grew: {counts:?}");
+    let held = first_tree.iter().rev().take_while(|&&c| c == peak).count();
     assert!(
-        counts[..first_peak].windows(2).all(|w| w[0] <= w[1]),
-        "the tree shrank while growing: {counts:?}"
-    );
-    let held = counts[first_peak..].iter().take_while(|&&c| c == peak).count();
-    assert!(held >= HOLD_TICKS, "held {held} ticks, expected {HOLD_TICKS}");
-    assert!(
-        counts[first_peak + held..].iter().any(|&c| c < peak),
-        "no new tree after the hold"
+        held >= HOLD_TICKS,
+        "held {held} ticks, expected {HOLD_TICKS}: {counts:?}"
     );
 }
 
