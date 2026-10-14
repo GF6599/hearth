@@ -10,6 +10,13 @@ default:
 run *args:
     cargo run -- "$@"
 
+# Record doc/demo.gif from demo.tape
+[group('run')]
+demo:
+    cargo build --locked --release
+    mkdir -p doc
+    vhs demo.tape
+
 # Lint with the same denial level CI uses
 [group('dev')]
 lint:
@@ -25,10 +32,36 @@ fmt:
 test:
     cargo test --locked --all-targets
 
+# Pinned, so a newer cargo-deny cannot change the verdict on one machine.
+cargo_deny := "0.20.2"
+
+# Install the tools the gate needs beyond the Rust toolchain
+[group('dev')]
+tools:
+    cargo install --locked cargo-deny@{{ cargo_deny }}
+
+# Check advisories, licences, duplicate crates and sources against deny.toml
+[group('dev')]
+deny:
+    cargo deny --locked check
+
 # `cargo fmt --check` belongs to no other recipe: `fmt` rewrites files,
 # which is the opposite of what a gate should do.
 
 # Run the whole quality gate
 [group('dev')]
-check: lint test
+check: lint test deny
     cargo fmt --all -- --check
+
+# Build the release binary, sign it ad hoc, and copy it to dist/
+[group('deploy')]
+build:
+    cargo build --locked --release
+    mkdir -p dist
+    cp target/release/hearth dist/
+    codesign --force --sign - dist/hearth
+
+# Install the dist binary to ~/self-made-bin/
+[group('deploy')]
+ship: build
+    cp dist/hearth ~/self-made-bin/

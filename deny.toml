@@ -1,0 +1,24 @@
+# cargo-deny configuration. `just deny` runs it, and `just check` includes it.
+# Every key absent here keeps the cargo-deny default.
+
+[licenses]
+# The SPDX identifiers present in Cargo.lock. Add one only as a deliberate
+# decision about a new dependency, never as a glob.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+# A warning and not a denial: clap_derive has moved to syn 3 while the other
+# derive macros still use syn 2, and kasuari holds an older hashbrown than
+# the rest of ratatui. Make it "deny" when the graph holds one of each again.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
