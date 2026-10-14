@@ -10,6 +10,7 @@ use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
+use ratatui::style::Color;
 use unicode_width::UnicodeWidthStr;
 
 const PROGRAM: &str = "fn main() {\n    println!(\"hi\");\n}\n";
@@ -300,7 +301,7 @@ fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
     render(&ticked(scene, area, 10), area, area)
 }
 
-fn colour_at(buffer: &Buffer, needle: &str) -> ratatui::style::Color {
+fn colour_at(buffer: &Buffer, needle: &str) -> Color {
     let row = &code_rows(buffer)[0];
     let x = u16::try_from(row.text.find(needle).unwrap()).unwrap();
     buffer[(row.x + x, row.y)].fg
@@ -605,7 +606,7 @@ fn every_width_keeps_the_frame_inside_the_area() {
                     " ",
                     "{width}x{height} at {position:?}"
                 );
-                assert_eq!(buffer[position].bg, Buffer::empty(canvas)[position].bg);
+                assert_eq!(buffer[position].bg, Color::Reset);
             }
             let frame = frame(&buffer);
             assert!(area.contains(Position::new(frame.right() - 1, frame.bottom() - 1)));
@@ -626,10 +627,36 @@ fn every_width_keeps_the_frame_inside_the_area() {
 
 /// Given: a ten line snippet on an area too small for it and its margin.
 /// When: the scene has typed it.
-/// Then: the frame fills the area, so no padding is left.
+/// Then: the frame fills the area, so no padding is left, and the gutter
+/// numbers the last six lines, which are the ones still on screen.
 #[test]
 fn a_small_area_is_filled_by_the_frame() {
     let area = Rect::new(0, 0, 24, 8);
     let buffer = settled(&mut scene(7, &block_of_ten()), area);
     assert_eq!(frame(&buffer), area);
+    let numbers: Vec<usize> = code_rows(&buffer).iter().map(|row| row.number).collect();
+    assert_eq!(numbers, [5, 6, 7, 8, 9, 10]);
+}
+
+/// Given: a half typed snippet.
+/// When: it renders on every area from 0 by 0 to 9 by 4, too small for a
+/// frame with a line in it.
+/// Then: nothing panics and nothing is drawn outside the area.
+#[test]
+fn a_tiny_area_draws_nothing_outside_it() {
+    let half = ticked(scene(7, &block_of_ten()), Rect::new(0, 0, 200, 40), 60);
+    for height in 0..=4 {
+        for width in 0..=9 {
+            let area = Rect::new(3, 2, width, height);
+            let canvas = Rect::new(0, 0, width + 6, height + 4);
+            let buffer = render(&half, area, canvas);
+            for position in canvas.positions().filter(|p| !area.contains(*p)) {
+                assert_eq!(
+                    buffer[position],
+                    Buffer::empty(canvas)[(0, 0)],
+                    "{width}x{height}"
+                );
+            }
+        }
+    }
 }
