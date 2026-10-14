@@ -4,6 +4,7 @@ use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::scenes::fire::Fire;
 use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
 
@@ -22,16 +23,18 @@ pub trait Scene {
 pub enum SceneKind {
     Noise,
     Matrix,
+    Fire,
 }
 
 /// The order the picker lists and Tab cycles.
-pub const ALL: &[SceneKind] = &[SceneKind::Noise, SceneKind::Matrix];
+pub const ALL: &[SceneKind] = &[SceneKind::Noise, SceneKind::Matrix, SceneKind::Fire];
 
 impl SceneKind {
     pub fn name(self) -> &'static str {
         match self {
             SceneKind::Noise => "noise",
             SceneKind::Matrix => "matrix",
+            SceneKind::Fire => "fire",
         }
     }
 
@@ -40,6 +43,7 @@ impl SceneKind {
         match self {
             SceneKind::Noise => Box::new(Noise::new(rng)),
             SceneKind::Matrix => Box::new(Matrix::new(rng)),
+            SceneKind::Fire => Box::new(Fire::new(rng)),
         }
     }
 
