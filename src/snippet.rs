@@ -5,6 +5,10 @@ use std::ops::Range;
 /// A longer function is cut here, so a snippet fits a terminal.
 pub const MOST_SNIPPET_LINES: usize = 40;
 
+/// The comment and attribute lines kept above a definition. A quarter of
+/// the cap, so a long doc comment cannot leave the body out.
+const MOST_LEAD_LINES: usize = MOST_SNIPPET_LINES / 4;
+
 /// The line range of each function in `lines`, in the order the
 /// functions start. `functions` holds the name each line defines and
 /// `comment` one flag for each line, both from the grammar.
@@ -18,7 +22,7 @@ pub fn snippets(
         .enumerate()
         .filter(|(_, function)| function.is_some())
         .map(|(start, _)| {
-            let first = lead(lines, comment, start);
+            let first = lead(lines, comment, start).max(start.saturating_sub(MOST_LEAD_LINES));
             first..end(lines, start).min(first + MOST_SNIPPET_LINES)
         })
         .collect()
