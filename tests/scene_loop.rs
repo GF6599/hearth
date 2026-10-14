@@ -109,25 +109,23 @@ fn a_different_seed_draws_a_different_frame() {
 
 /// Given: an app that has ticked once.
 /// When: `r` is pressed and it ticks again.
-/// Then: its frame differs from an untouched app at the same tick count.
+/// Then: its frame differs from the first frame of the seed it started on.
 ///
 /// Why it matters: a restart that keeps the seed replays the same scene, which
-/// reads as the key doing nothing.
+/// reads as the key doing nothing. A fresh scene on the old seed draws that
+/// first frame again, so that is the frame to compare against.
 #[test]
 fn r_restarts_the_scene_with_a_new_seed() {
     // Given:
     let mut restarted = ticked(7, 1);
-    let untouched = ticked(7, 2);
+    let first_frame_of_seed_7 = frame(&ticked(7, 1), WIDTH, HEIGHT);
 
     // When:
     send(&mut restarted, vec![key('r')]);
     restarted.tick(Rect::new(0, 0, WIDTH, HEIGHT));
 
     // Then:
-    assert_ne!(
-        frame(&restarted, WIDTH, HEIGHT),
-        frame(&untouched, WIDTH, HEIGHT)
-    );
+    assert_ne!(frame(&restarted, WIDTH, HEIGHT), first_frame_of_seed_7);
 }
 
 #[test]
@@ -140,7 +138,10 @@ fn q_quits() {
 #[test]
 fn ctrl_c_quits() {
     let mut app = ticked(7, 1);
-    send(&mut app, vec![press(KeyCode::Char('c'), KeyModifiers::CONTROL)]);
+    send(
+        &mut app,
+        vec![press(KeyCode::Char('c'), KeyModifiers::CONTROL)],
+    );
     assert!(app.should_quit);
 }
 
