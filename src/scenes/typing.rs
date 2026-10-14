@@ -27,9 +27,6 @@ const FILE_PAUSE: u32 = 150;
 /// rhythm is uneven the way a person's is.
 const JITTER: std::ops::Range<f64> = 0.5..1.5;
 
-/// Ticks a changed speed stays on screen, about one second.
-const NOTICE_TICKS: u32 = 16;
-
 /// Each side of the frame keeps this share of the area clear, so every
 /// snippet sits in the same frame and the padding does not move.
 const PADDING_SHARE: u16 = 8;
@@ -60,7 +57,6 @@ const STATUS_COLOUR: Color = theme::SUBTLE;
 const TREE_COLOUR: Color = theme::SUBTLE;
 const ARROW_COLOUR: Color = theme::MUTED;
 const CURSOR_COLOUR: Color = theme::TEXT;
-const NOTICE_COLOUR: Color = theme::SUBTLE;
 const FRAME_COLOUR: Color = theme::MUTED;
 const GUTTER_COLOUR: Color = theme::MUTED;
 const FILL: Color = theme::SURFACE;
@@ -121,7 +117,6 @@ pub struct Typing {
     /// Keystrokes owed and not yet typed. The fraction carries from one
     /// tick to the next, so a speed under one keystroke per tick still types.
     credit: f64,
-    notice: u32,
     /// The files that may hold a function. A file found to hold none
     /// leaves the list, so it is parsed once at most.
     candidates: Vec<usize>,
@@ -153,7 +148,6 @@ impl Typing {
             corpus,
             speed,
             credit: 0.0,
-            notice: 0,
             candidates: Vec::new(),
             current: None,
             function: String::new(),
@@ -454,7 +448,6 @@ fn glyphs(text: &str, colours: &[Color], span: std::ops::Range<usize>) -> Vec<(c
 
 impl Scene for Typing {
     fn tick(&mut self, _area: Rect) {
-        self.notice = self.notice.saturating_sub(1);
         self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
         while self.credit >= 1.0 {
             self.credit -= 1.0;
@@ -464,7 +457,6 @@ impl Scene for Typing {
 
     fn set_speed(&mut self, speed: Speed) {
         self.speed = speed;
-        self.notice = NOTICE_TICKS;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -491,15 +483,6 @@ impl Scene for Typing {
         }
         self.render_tree(area, frame, buf);
         self.render_minimap(area, frame, first, buf);
-        if self.notice > 0 {
-            let notice = format!("{} cps", self.speed);
-            if let Ok(width) = u16::try_from(notice.len())
-                && width <= area.width
-            {
-                let style = Style::default().fg(NOTICE_COLOUR);
-                buf.set_string(area.right() - width, area.y, notice, style);
-            }
-        }
         if inner.is_empty() {
             return;
         }

@@ -74,8 +74,8 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') => app.quit(),
             KeyCode::Char('r') => app.restart(),
-            KeyCode::Char('+') => app.type_faster(),
-            KeyCode::Char('-') => app.type_slower(),
+            KeyCode::Char('+') => app.faster(),
+            KeyCode::Char('-') => app.slower(),
             KeyCode::Tab => app.next_scene(),
             KeyCode::Esc => app.open_picker(),
             _ => {}

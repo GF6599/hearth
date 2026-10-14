@@ -2,14 +2,18 @@ use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 
 use crate::corpus::Corpus;
 use crate::picker::Picker;
-use crate::scene::{ALL, Scene, SceneKind};
+use crate::scene::{ALL, QUARTERS_PER_TICK, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
 use crate::theme;
+
+/// Frames a changed speed stays on screen, about one second.
+const NOTICE_TICKS: u32 = 16;
+const NOTICE_COLOUR: Color = theme::SUBTLE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -22,6 +26,12 @@ pub struct App {
     seed: u64,
     corpus: Arc<Corpus>,
     speed: Speed,
+    /// One for each scene in `ALL`, so each keeps its own through a
+    /// restart, Tab and the picker.
+    rates: [Rate; ALL.len()],
+    /// Quarter ticks owed and not yet run, carried from frame to frame.
+    credit: u32,
+    notice: u32,
     scene: Box<dyn Scene>,
     mode: Mode,
     selected: usize,
@@ -34,6 +44,7 @@ impl std::fmt::Debug for App {
             .field("kind", &self.kind)
             .field("seed", &self.seed)
             .field("speed", &self.speed)
+            .field("rates", &self.rates)
             .field("mode", &self.mode)
             .field("selected", &self.selected)
             .field("should_quit", &self.should_quit)
@@ -49,6 +60,9 @@ impl App {
             scene: kind.build(seed, &corpus, Speed::DEFAULT),
             corpus,
             speed: Speed::DEFAULT,
+            rates: [Rate::NORMAL; ALL.len()],
+            credit: 0,
+            notice: 0,
             mode: Mode::Running,
             selected: ALL.iter().position(|k| *k == kind).unwrap_or(0),
             should_quit: false,
@@ -71,8 +85,21 @@ impl App {
         self.mode == Mode::Picking
     }
 
+    /// Typing keeps one tick a frame and counts its own speed in
+    /// keystrokes. Every other scene ticks once for each whole tick its
+    /// rate has paid for.
     pub fn tick(&mut self, area: Rect) {
-        if self.mode == Mode::Running {
+        self.notice = self.notice.saturating_sub(1);
+        if self.mode != Mode::Running {
+            return;
+        }
+        if self.kind == SceneKind::Typing {
+            self.scene.tick(area);
+            return;
+        }
+        self.credit += self.rates[self.slot()].quarters();
+        while self.credit >= QUARTERS_PER_TICK {
+            self.credit -= QUARTERS_PER_TICK;
             self.scene.tick(area);
         }
     }
@@ -90,14 +117,36 @@ impl App {
             Mode::Running => {
                 buf.set_style(area, Style::default().bg(theme::BASE));
                 self.scene.render(area, buf);
+                if self.notice > 0 {
+                    self.render_notice(area, buf);
+                }
             }
         }
+    }
+
+    fn render_notice(&self, area: Rect, buf: &mut Buffer) {
+        let notice = if self.kind == SceneKind::Typing {
+            format!("{} cps", self.speed)
+        } else {
+            self.rates[self.slot()].to_string()
+        };
+        if let Ok(width) = u16::try_from(notice.chars().count())
+            && width <= area.width
+        {
+            let style = Style::default().fg(NOTICE_COLOUR);
+            buf.set_string(area.right() - width, area.y, notice, style);
+        }
+    }
+
+    fn slot(&self) -> usize {
+        ALL.iter().position(|k| *k == self.kind).unwrap_or(0)
     }
 
     /// Rebuilds the scene from the next seed in the chain, so a run with
     /// `--seed` replays the same sequence of restarts.
     pub fn restart(&mut self) {
         self.seed = self.seed.wrapping_add(1);
+        self.credit = 0;
         self.scene = self.kind.build(self.seed, &self.corpus, self.speed);
     }
 
@@ -105,21 +154,23 @@ impl App {
         self.switch_to(self.kind.next());
     }
 
-    pub fn type_faster(&mut self) {
-        self.change_speed(self.speed.faster());
+    pub fn faster(&mut self) {
+        self.change_speed(Speed::faster, Rate::faster);
     }
 
-    pub fn type_slower(&mut self) {
-        self.change_speed(self.speed.slower());
+    pub fn slower(&mut self) {
+        self.change_speed(Speed::slower, Rate::slower);
     }
 
-    /// The speed belongs to the typing scene, so another scene keeps it
-    /// as it is.
-    fn change_speed(&mut self, speed: Speed) {
+    fn change_speed(&mut self, speed: fn(Speed) -> Speed, rate: fn(Rate) -> Rate) {
         if self.kind == SceneKind::Typing {
-            self.speed = speed;
-            self.scene.set_speed(speed);
+            self.speed = speed(self.speed);
+            self.scene.set_speed(self.speed);
+        } else {
+            let slot = self.slot();
+            self.rates[slot] = rate(self.rates[slot]);
         }
+        self.notice = NOTICE_TICKS;
     }
 
     pub fn open_picker(&mut self) {
