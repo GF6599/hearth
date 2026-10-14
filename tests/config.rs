@@ -235,3 +235,34 @@ fn a_failed_save_shows_in_the_notice_and_keeps_the_speed() {
     assert!(shown.contains("not saved"), "{shown}");
     assert_eq!(fs::read_to_string(&path).unwrap(), "[speed]\nfire = 2.0\n");
 }
+
+/// Given: a config file that is a symlink to a file in another folder, as
+/// a dotfiles manager makes.
+/// When: `+` is pressed in fire.
+/// Then: the link is still a link, and the file it points to holds the
+/// new speed.
+///
+/// Why it matters: a save that renames over the link puts a plain file in
+/// its place, and the user's dotfiles stop seeing every later change.
+#[test]
+fn a_save_through_a_symlink_keeps_the_link() {
+    // Given:
+    let real = config_file("real", Some("[speed]\nfire = 2.0\n"));
+    let link = config_file("link", None);
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let config = Config::load(&link).unwrap();
+    let mut app = app(&["hearth", "fire"], &config).saving_to(link.clone());
+
+    // When:
+    app.faster();
+
+    // Then:
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let saved = Config::load(&real).unwrap();
+    assert!(app_with(&saved, "fire").contains("3×"));
+}
