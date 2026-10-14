@@ -71,8 +71,8 @@ impl Fire {
     /// The largest decay per heat row. Its mean puts the flames at about
     /// three fifths of the height.
     fn max_decay(&self) -> u16 {
-        let rows = u16::try_from(self.rows).unwrap_or(u16::MAX).max(1);
-        (MAX_HEAT * 10 / (3 * rows)).max(1)
+        let cap = usize::from(MAX_HEAT) * 10 / (3 * self.rows.max(1));
+        u16::try_from(cap.max(1)).unwrap_or(MAX_HEAT)
     }
 }
 
