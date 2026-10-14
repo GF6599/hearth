@@ -142,3 +142,96 @@ fn a_bad_value_names_the_file_and_the_key() {
         assert!(error.contains(key), "{name}: {error}");
     }
 }
+
+/// Given: a file with a comment above the table, one above `fire`, one
+/// after its value, and `matrix` after `fire`.
+/// When: hearth saves to it, `+` is pressed in fire, and `+` in typing.
+/// Then: the file reads fire at 3 and typing one step above the default,
+/// every comment is still there, and `fire` still comes before `matrix`.
+///
+/// Why it matters: a save that rewrites the file from scratch throws away
+/// the notes the user wrote in it.
+#[test]
+fn plus_saves_the_speed_and_keeps_the_comments() {
+    // Given:
+    let text = "# my speeds\n[speed]\n# the fire one\nfire = 2.0 # quick\nmatrix = 0.5\n";
+    let path = config_file("save", Some(text));
+    let config = Config::load(&path).unwrap();
+    let mut app = app(&["hearth", "fire"], &config).saving_to(path.clone());
+
+    // When:
+    app.faster();
+    for _ in 0..5 {
+        app.next_scene();
+    }
+    app.faster();
+
+    // Then:
+    let saved = Config::load(&path).unwrap();
+    let fire = app_with(&saved, "fire");
+    assert!(fire.contains("3×"), "{fire}");
+    assert_eq!(saved.typing, Some(Speed::DEFAULT.faster()));
+    let text = fs::read_to_string(&path).unwrap();
+    for comment in ["# my speeds", "# the fire one", "# quick"] {
+        assert!(text.contains(comment), "{comment} lost: {text}");
+    }
+    assert!(
+        text.find("fire").unwrap() < text.find("matrix").unwrap(),
+        "{text}"
+    );
+}
+
+/// The header after the scene steps to its own speed and back, which
+/// shows the speed it started at.
+fn app_with(config: &Config, scene: &str) -> String {
+    let mut app = app(&["hearth", scene], config);
+    app.faster();
+    app.slower();
+    header(&app)
+}
+
+/// Given: a path in a folder that does not exist yet.
+/// When: `-` is pressed in fire.
+/// Then: the folder and the file now exist, and the file reads fire at ¾×.
+#[test]
+fn the_first_save_creates_the_folder_and_the_file() {
+    let path = config_file("first", None)
+        .parent()
+        .unwrap()
+        .join("new")
+        .join("config.toml");
+    let mut app = app(&["hearth", "fire"], &Config::default()).saving_to(path.clone());
+    app.slower();
+    let saved = Config::load(&path).unwrap();
+    assert!(app_with(&saved, "fire").contains("¾×"));
+}
+
+/// Given: a config file in a folder no one may write to.
+/// When: `+` is pressed in fire.
+/// Then: the notice shows the new speed and that it was not saved, fire
+/// runs at that speed, and the file is unchanged.
+///
+/// Why it matters: a save that fails in silence lets the user think the
+/// speed will be there next run, and one that stops the scene loses a
+/// screensaver to a full disk.
+#[test]
+fn a_failed_save_shows_in_the_notice_and_keeps_the_speed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Given:
+    let path = config_file("locked", Some("[speed]\nfire = 2.0\n"));
+    let folder = path.parent().unwrap().to_path_buf();
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+    let config = Config::load(&path).unwrap();
+    let mut app = app(&["hearth", "fire"], &config).saving_to(path.clone());
+
+    // When:
+    app.faster();
+
+    // Then:
+    let shown = header(&app);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(shown.contains("3×"), "{shown}");
+    assert!(shown.contains("not saved"), "{shown}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "[speed]\nfire = 2.0\n");
+}
