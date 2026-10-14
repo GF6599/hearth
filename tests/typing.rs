@@ -1099,3 +1099,31 @@ fn a_narrow_padding_has_no_minimap() {
         }
     }
 }
+
+/// Given: a function under 45 doc comment lines, and one under exactly 10.
+/// When: the scene types each snippet.
+/// Then: the first keeps the 10 doc lines nearest the definition, from
+/// line 36, and the second keeps all 10, and both type the whole function
+/// and name it in the breadcrumb.
+///
+/// Why it matters: a cap counted from the top of a long doc comment fills
+/// the snippet with comments and never reaches the definition.
+#[test]
+fn a_long_doc_comment_keeps_the_lines_nearest_the_definition() {
+    let area = Rect::new(0, 0, 60, 30);
+    let function = "fn deep() {\n    x();\n}";
+    for (doc_lines, first) in [(45, 36), (10, 1)] {
+        let file = format!("{}{function}\n", "/// doc\n".repeat(doc_lines));
+        let buffer = settled_files(&[("a.rs", &file)], area);
+        assert_eq!(
+            snippet_name(&buffer),
+            format!("a.rs › fn deep:{first}"),
+            "{doc_lines}"
+        );
+        assert_eq!(
+            typed(&buffer),
+            format!("{}{function}", "/// doc\n".repeat(10)),
+            "{doc_lines}"
+        );
+    }
+}
