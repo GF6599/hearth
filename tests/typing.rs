@@ -43,14 +43,100 @@ fn row_text(buffer: &Buffer, y: u16) -> String {
         .to_string()
 }
 
-/// The typed text under the path header, as the rows read.
-fn typed(buffer: &Buffer, area: Rect) -> String {
-    (area.y + 1..area.bottom())
-        .map(|y| row_text(buffer, y))
+/// The editor frame: the rectangle from its top left corner to its bottom
+/// right corner.
+fn frame(buffer: &Buffer) -> Rect {
+    let symbol = |p: Position| buffer[p].symbol().to_string();
+    let top_left = buffer
+        .area
+        .positions()
+        .find(|&p| symbol(p) == "┌")
+        .expect("no frame");
+    let right = (top_left.x..buffer.area.right())
+        .find(|&x| symbol(Position::new(x, top_left.y)) == "┐")
+        .expect("no top right corner");
+    let bottom = (top_left.y..buffer.area.bottom())
+        .find(|&y| symbol(Position::new(top_left.x, y)) == "└")
+        .expect("no bottom left corner");
+    Rect::new(
+        top_left.x,
+        top_left.y,
+        right - top_left.x + 1,
+        bottom - top_left.y + 1,
+    )
+}
+
+/// The text cut into the top rule of the frame.
+fn title(buffer: &Buffer) -> String {
+    let frame = frame(buffer);
+    (frame.x + 1..frame.right() - 1)
+        .map(|x| buffer[(x, frame.y)].symbol().to_string())
+        .collect::<String>()
+        .trim_matches('─')
+        .trim()
+        .to_string()
+}
+
+/// One typed line inside the frame: its number in the gutter, the column
+/// its code starts at, and the code.
+#[derive(Debug)]
+struct CodeRow {
+    number: usize,
+    x: u16,
+    y: u16,
+    text: String,
+}
+
+/// The typed lines inside the frame. A row with no number in the gutter is
+/// not typed yet.
+fn code_rows(buffer: &Buffer) -> Vec<CodeRow> {
+    let frame = frame(buffer);
+    let mut rows = Vec::new();
+    for y in frame.y + 1..frame.bottom() - 1 {
+        let cells: Vec<String> = (frame.x + 1..frame.right() - 1)
+            .map(|x| buffer[(x, y)].symbol().to_string())
+            .collect();
+        let Some(start) = cells.iter().position(|c| c != " ") else {
+            break;
+        };
+        let digits = cells[start..]
+            .iter()
+            .take_while(|c| c.chars().all(|g| g.is_ascii_digit()))
+            .count();
+        if digits == 0 {
+            break;
+        }
+        let number = cells[start..start + digits].concat().parse().unwrap();
+        let code = (start + digits + 1).min(cells.len());
+        rows.push(CodeRow {
+            number,
+            x: frame.x + 1 + u16::try_from(code).unwrap(),
+            y,
+            text: cells[code..].concat().trim_end().to_string(),
+        });
+    }
+    rows
+}
+
+/// The typed text inside the frame, as the rows read, without the gutter.
+fn typed(buffer: &Buffer) -> String {
+    code_rows(buffer)
+        .iter()
+        .map(|row| row.text.as_str())
         .collect::<Vec<_>>()
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+/// The file line number of the first line on screen.
+fn first_number(buffer: &Buffer) -> usize {
+    code_rows(buffer).first().expect("no typed line").number
+}
+
+/// The title and the first line number, which together name a snippet.
+fn snippet_name(buffer: &Buffer) -> String {
+    format!("{}:{}", title(buffer), first_number(buffer))
 }
 
 /// Ticks until the frame holds still for twelve ticks, which only the hold
@@ -93,8 +179,8 @@ fn cursors(buffer: &Buffer) -> Vec<Position> {
 
 /// Given: two scenes on one seed over one file.
 /// When: each ticks eight times.
-/// Then: the frames are equal, the header names the file, and the rows
-/// under it hold a non-empty prefix of the file.
+/// Then: the frames are equal, the title names the file, and the rows
+/// inside the frame hold a non-empty prefix of the file.
 ///
 /// Why it matters: a replay with `--seed` has to type the same text, and
 /// typed text that is not a prefix of the source is a scene showing
@@ -108,8 +194,8 @@ fn a_seed_types_the_same_prefix_of_the_file() {
 
     // Then:
     assert_eq!(first, second);
-    assert_eq!(row_text(&first, 0), "a.rs:1");
-    let text = typed(&first, area);
+    assert_eq!(snippet_name(&first), "a.rs:1");
+    let text = typed(&first);
     assert!(!text.is_empty());
     assert!(PROGRAM.starts_with(&text), "{text:?} is not a prefix");
 }
@@ -155,21 +241,20 @@ fn the_cursor_never_leaves_the_area() {
 #[test]
 fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
     // Given, when:
-    let area = Rect::new(0, 0, 30, 4);
+    let area = Rect::new(0, 0, 50, 6);
     let buffer = settled(&mut scene(7, "fn f() { let s = \"日本\"; } // ok\n"), area);
 
     // Then:
-    let row = row_text(&buffer, 1);
-    assert_eq!(row, "fn f() { let s = \"\"; } // ok");
+    let row = &code_rows(&buffer)[0];
+    assert_eq!(row.text, "fn f() { let s = \"\"; } // ok");
     for x in 0..area.width {
-        assert!(buffer[(x, 1)].symbol().width() <= 1, "wide cell at {x}");
+        assert!(buffer[(x, row.y)].symbol().width() <= 1, "wide cell at {x}");
     }
-    let expected = u16::try_from(row.len()).unwrap();
-    assert!(
-        cursors(&buffer).iter().any(|c| c.y == 1 && c.x == expected)
-            || cursors(&buffer).iter().any(|c| c.y == 2 && c.x == 0),
-        "cursor not after the line: {:?}",
-        cursors(&buffer)
+    let expected = row.x + u16::try_from(row.text.len()).unwrap();
+    assert_eq!(
+        cursors(&buffer),
+        [Position::new(expected, row.y)],
+        "cursor not after the line"
     );
 }
 
@@ -182,7 +267,7 @@ fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
 /// the count follows the clock and not the number of ticks.
 #[test]
 fn the_scene_types_at_the_speed_it_is_given() {
-    let area = Rect::new(0, 0, 400, 3);
+    let area = Rect::new(0, 0, 1100, 5);
     let ticks = (3.0 / TICK_RATE.as_secs_f64()).round() as usize;
     for (speed, expected) in [("50", 150), ("100", 300)] {
         // Given:
@@ -196,7 +281,7 @@ fn the_scene_types_at_the_speed_it_is_given() {
         let buffer = render(&ticked(scene, area, ticks), area, area);
 
         // Then:
-        let count = row_text(&buffer, 1).len();
+        let count = typed(&buffer).len();
         assert!(
             count.abs_diff(expected) <= expected / 10,
             "{count} glyphs at {speed} keystrokes per second"
@@ -215,9 +300,10 @@ fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
     render(&ticked(scene, area, 10), area, area)
 }
 
-fn colour_at(buffer: &Buffer, line: &str, needle: &str, y: u16) -> ratatui::style::Color {
-    let x = u16::try_from(line.find(needle).unwrap()).unwrap();
-    buffer[(x, y)].fg
+fn colour_at(buffer: &Buffer, needle: &str) -> ratatui::style::Color {
+    let row = &code_rows(buffer)[0];
+    let x = u16::try_from(row.text.find(needle).unwrap()).unwrap();
+    buffer[(row.x + x, row.y)].fg
 }
 
 /// Given: a Rust file with a keyword, a function name, a string and a
@@ -231,17 +317,17 @@ fn colour_at(buffer: &Buffer, line: &str, needle: &str, y: u16) -> ratatui::styl
 fn rust_is_highlighted_by_its_grammar() {
     // Given:
     let line = "fn main() { let s = \"x\"; } // c";
-    let area = Rect::new(0, 0, 40, 4);
+    let area = Rect::new(0, 0, 50, 6);
 
     // When:
     let buffer = typed_file("a.rs", &format!("{line}\n"), area);
 
     // Then:
-    assert_eq!(row_text(&buffer, 1), line);
-    assert_eq!(colour_at(&buffer, line, "fn", 1), theme::PINE);
-    assert_eq!(colour_at(&buffer, line, "main", 1), theme::ROSE);
-    assert_eq!(colour_at(&buffer, line, "x\"", 1), theme::GOLD);
-    assert_eq!(colour_at(&buffer, line, "//", 1), theme::MUTED);
+    assert_eq!(typed(&buffer), line);
+    assert_eq!(colour_at(&buffer, "fn"), theme::PINE);
+    assert_eq!(colour_at(&buffer, "main"), theme::ROSE);
+    assert_eq!(colour_at(&buffer, "x\""), theme::GOLD);
+    assert_eq!(colour_at(&buffer, "//"), theme::MUTED);
 }
 
 /// Given: a Python file.
@@ -251,10 +337,10 @@ fn rust_is_highlighted_by_its_grammar() {
 #[test]
 fn the_grammar_follows_the_extension() {
     let line = "def greet():";
-    let area = Rect::new(0, 0, 40, 4);
+    let area = Rect::new(0, 0, 40, 8);
     let buffer = typed_file("a.py", &format!("{line}\n    pass\n"), area);
-    assert_eq!(colour_at(&buffer, line, "def", 1), theme::PINE);
-    assert_eq!(colour_at(&buffer, line, "greet", 1), theme::ROSE);
+    assert_eq!(colour_at(&buffer, "def"), theme::PINE);
+    assert_eq!(colour_at(&buffer, "greet"), theme::ROSE);
 }
 
 /// Given: a file no grammar claims and a Markdown file, beside a Rust
@@ -279,7 +365,7 @@ fn a_file_with_no_function_is_skipped() {
             Speed::DEFAULT,
         );
         let buffer = settled(&mut scene, area);
-        assert_eq!(row_text(&buffer, 0), "a.rs:1", "seed {seed}");
+        assert_eq!(snippet_name(&buffer), "a.rs:1", "seed {seed}");
     }
 }
 
@@ -289,7 +375,7 @@ const TWO_FUNCTIONS: &str = "//! A header.\nuse std::fmt;\n\n/// Adds one.\nfn a
 /// and a one-line function.
 /// When: the scene types its first snippet, on several seeds.
 /// Then: each snippet is one whole function with its doc comment, the
-/// header names the line it starts on, and both functions come up.
+/// gutter numbers the line it starts on, and both functions come up.
 ///
 /// Why it matters: a snippet that starts at the top of the file types
 /// imports, and one that stops early or late cuts a function in half or
@@ -306,7 +392,7 @@ fn a_snippet_is_one_function_with_its_doc_comment() {
         let buffer = settled(&mut scene, area);
 
         // Then:
-        seen.insert((row_text(&buffer, 0), typed(&buffer, area)));
+        seen.insert((snippet_name(&buffer), typed(&buffer)));
     }
     let expected = HashSet::from([
         (
@@ -332,7 +418,7 @@ fn a_python_snippet_ends_where_the_indentation_does() {
         Speed::DEFAULT,
     );
     let buffer = settled(&mut scene, area);
-    assert_eq!(typed(&buffer, area), "def greet():\n    print('hi')");
+    assert_eq!(typed(&buffer), "def greet():\n    print('hi')");
 }
 
 /// Given: a method inside an `impl` block.
@@ -344,10 +430,7 @@ fn a_nested_function_is_its_own_snippet() {
     let area = Rect::new(0, 0, 40, 8);
     let file = "struct S;\n\nimpl S {\n    fn a(&self) -> u8 {\n        1\n    }\n}\n";
     let buffer = settled(&mut scene(7, file), area);
-    assert_eq!(
-        typed(&buffer, area),
-        "    fn a(&self) -> u8 {\n        1\n    }"
-    );
+    assert_eq!(typed(&buffer), "    fn a(&self) -> u8 {\n        1\n    }");
 }
 
 /// Given: a function longer than the snippet cap.
@@ -358,7 +441,7 @@ fn a_long_function_is_cut_at_the_cap() {
     let area = Rect::new(0, 0, 30, 80);
     let file = format!("fn long() {{\n{}}}\n", "    x();\n".repeat(60));
     let buffer = settled(&mut scene(7, &file), area);
-    assert_eq!(typed(&buffer, area).lines().count(), MOST_SNIPPET_LINES);
+    assert_eq!(typed(&buffer).lines().count(), MOST_SNIPPET_LINES);
 }
 
 /// Given: a file with two functions.
@@ -369,8 +452,8 @@ fn a_snippet_does_not_come_twice_in_a_row() {
     let area = Rect::new(0, 0, 40, 12);
     for seed in 0..6 {
         let mut scene = scene(seed, TWO_FUNCTIONS);
-        let first = row_text(&settled(&mut scene, area), 0);
-        let second = row_text(&next_snippet(&mut scene, area), 0);
+        let first = snippet_name(&settled(&mut scene, area));
+        let second = snippet_name(&next_snippet(&mut scene, area));
         assert_ne!(first, second, "seed {seed}");
     }
 }
@@ -405,6 +488,148 @@ fn a_snippet_runs_to_the_line_that_closes_the_function() {
             Arc::new(Corpus::from_files([(path.to_string(), file.to_string())])),
             Speed::DEFAULT,
         );
-        assert_eq!(typed(&settled(&mut scene, area), area), snippet, "{path}");
+        assert_eq!(typed(&settled(&mut scene, area)), snippet, "{path}");
     }
+}
+
+/// Ten lines of thirty glyphs each, numbered from line 1.
+fn block_of_ten() -> String {
+    let body = format!("    let value = compute({});\n", "x".repeat(6));
+    format!("fn f() {{\n{}}}\n", body.repeat(8))
+}
+
+/// Given: a ten line snippet on a 120 by 40 area.
+/// When: the scene has typed one key, and when it has typed the snippet.
+/// Then: the frame is the same in both, it is smaller than the area, and
+/// the padding on each side differs from the opposite side by one at most.
+///
+/// Why it matters: a frame sized from the typed text grows as it types,
+/// and a frame that is not centred leaves the other padding uneven.
+#[test]
+fn the_frame_is_centred_and_does_not_grow() {
+    // Given:
+    let area = Rect::new(0, 0, 120, 40);
+    let early = ticked(scene(7, &block_of_ten()), area, 2);
+    let mut done = scene(7, &block_of_ten());
+
+    // When:
+    let early = frame(&render(&early, area, area));
+    let done = frame(&settled(&mut done, area));
+
+    // Then:
+    assert_eq!(early, done);
+    assert!(
+        done.width < area.width && done.height < area.height,
+        "{done:?}"
+    );
+    let left = done.x - area.x;
+    let right = area.right() - done.right();
+    let top = done.y - area.y;
+    let bottom = area.bottom() - done.bottom();
+    assert!(left.abs_diff(right) <= 1, "left {left}, right {right}");
+    assert!(top.abs_diff(bottom) <= 1, "top {top}, bottom {bottom}");
+}
+
+/// Given: a one line function in a file with a long path.
+/// When: the scene has typed it.
+/// Then: the top rule reads the corner, a dash, the path, a gap, at least
+/// one more dash, and the other corner, so the frame is wide enough for
+/// its title.
+#[test]
+fn the_path_is_cut_into_the_top_rule() {
+    let area = Rect::new(0, 0, 80, 8);
+    let path = "src/scenes/a_long_module_name.rs";
+    let mut scene = Typing::new(
+        Rng::seed_from_u64(7),
+        Arc::new(Corpus::from_files([(
+            path.to_string(),
+            "fn f() {}\n".to_string(),
+        )])),
+        Speed::DEFAULT,
+    );
+    let buffer = settled(&mut scene, area);
+    let frame = frame(&buffer);
+    let row = row_text(&buffer, frame.y);
+    let rule = row.trim_start();
+    let lead = format!("┌─ {path} ─");
+    assert!(rule.starts_with(&lead), "{rule:?}");
+    assert!(rule.ends_with('┐'), "{rule:?}");
+    assert!(
+        rule[lead.len()..].chars().all(|c| c == '─' || c == '┐'),
+        "{rule:?}"
+    );
+}
+
+/// Given: a file whose documented function runs from line 3 to line 6.
+/// When: the scene has typed it.
+/// Then: the gutter numbers the rows 3 to 6 in the muted colour, and the
+/// code starts after the gutter.
+///
+/// Why it matters: a gutter that counts from 1 says the snippet is the top
+/// of the file, which it is not.
+#[test]
+fn the_gutter_shows_the_line_numbers_of_the_file() {
+    let area = Rect::new(0, 0, 40, 12);
+    let file = "use std::fmt;\n\n/// Adds one.\nfn add(a: u32) -> u32 {\n    a + 1\n}\n";
+    let mut scene = scene(7, file);
+    let buffer = settled(&mut scene, area);
+    let rows = code_rows(&buffer);
+    let numbers: Vec<usize> = rows.iter().map(|row| row.number).collect();
+    assert_eq!(numbers, [3, 4, 5, 6]);
+    for row in &rows {
+        assert_eq!(buffer[(row.x - 2, row.y)].fg, theme::MUTED, "{row:?}");
+    }
+}
+
+/// Given: a ten line snippet whose lines are wider than most areas, inside
+/// a larger canvas.
+/// When: the area sweeps every width from 10 to 200, at heights 5 and 30,
+/// with the snippet half typed.
+/// Then: nothing is drawn outside the area, the frame keeps its right
+/// rule, and the one cursor sits inside the frame.
+///
+/// Why it matters: a line wider than the frame that is not cut at the
+/// frame edge writes over the rule, and past the area into the padding a
+/// later card fills.
+#[test]
+fn every_width_keeps_the_frame_inside_the_area() {
+    let half = ticked(scene(7, &block_of_ten()), Rect::new(0, 0, 200, 40), 60);
+    for height in [5, 30] {
+        for width in 10..=200 {
+            let area = Rect::new(3, 2, width, height);
+            let canvas = Rect::new(0, 0, width + 6, height + 4);
+            let buffer = render(&half, area, canvas);
+            for position in canvas.positions().filter(|p| !area.contains(*p)) {
+                assert_eq!(
+                    buffer[position].symbol(),
+                    " ",
+                    "{width}x{height} at {position:?}"
+                );
+                assert_eq!(buffer[position].bg, Buffer::empty(canvas)[position].bg);
+            }
+            let frame = frame(&buffer);
+            assert!(area.contains(Position::new(frame.right() - 1, frame.bottom() - 1)));
+            for y in frame.y + 1..frame.bottom() - 1 {
+                assert_eq!(
+                    buffer[(frame.right() - 1, y)].symbol(),
+                    "│",
+                    "{width}x{height} row {y}"
+                );
+            }
+            let inner = Rect::new(frame.x + 1, frame.y + 1, frame.width - 2, frame.height - 2);
+            let cursors = cursors(&buffer);
+            assert_eq!(cursors.len(), 1, "{width}x{height}: {cursors:?}");
+            assert!(inner.contains(cursors[0]), "{width}x{height}: {cursors:?}");
+        }
+    }
+}
+
+/// Given: a ten line snippet on an area too small for it and its margin.
+/// When: the scene has typed it.
+/// Then: the frame fills the area, so no padding is left.
+#[test]
+fn a_small_area_is_filled_by_the_frame() {
+    let area = Rect::new(0, 0, 24, 8);
+    let buffer = settled(&mut scene(7, &block_of_ten()), area);
+    assert_eq!(frame(&buffer), area);
 }
