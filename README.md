@@ -13,6 +13,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `fire` | The doom fire, in half blocks: heat rises from a white-hot base through gold and love and dies into the background |
 | `life` | Conway's game of life on a torus, newborn cells in rose and settled ones in iris, reseeded when the board goes still |
 | `pipes` | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
+| `bonsai` | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
 
 `hearth --help` lists every scene the build carries.
 
