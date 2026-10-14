@@ -112,7 +112,10 @@ fn a_head_falls_one_row_at_a_time() {
         }
         previous = current;
     }
-    assert!(fell.iter().all(|&moved| moved), "a column never fell: {fell:?}");
+    assert!(
+        fell.iter().all(|&moved| moved),
+        "a column never fell: {fell:?}"
+    );
 }
 
 /// Given: areas of one column, one row, one cell and no cells, inside a
@@ -144,7 +147,11 @@ fn nothing_is_written_outside_a_narrow_area() {
                     drew |= cell.symbol() != " ";
                 } else {
                     assert_eq!(cell.symbol(), " ", "glyph outside {area:?} at {position:?}");
-                    assert_eq!(cell.fg, Color::Reset, "colour outside {area:?} at {position:?}");
+                    assert_eq!(
+                        cell.fg,
+                        Color::Reset,
+                        "colour outside {area:?} at {position:?}"
+                    );
                 }
             }
         }
