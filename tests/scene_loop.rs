@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use hearth::app::App;
+use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::events::{EventSource, handle_events};
 use hearth::scene::SceneKind;
@@ -442,7 +443,7 @@ fn a_restart_keeps_the_typing_speed() {
 
     // When:
     send(&mut app, vec![key('r')]);
-    let mut kept = App::new(SceneKind::Typing, 8, corpus()).with_speed(faster);
+    let mut kept = App::new(SceneKind::Typing, 8, corpus()).with_config(&typing_at(faster));
     let mut dropped = App::new(SceneKind::Typing, 8, corpus());
     for _ in 0..17 {
         for each in [&mut app, &mut kept, &mut dropped] {
@@ -456,11 +457,19 @@ fn a_restart_keeps_the_typing_speed() {
     assert_eq!(after, frame(&kept, width, HEIGHT));
 }
 
-/// Given: the typing scene started with a speed, as `--speed` starts it.
+fn typing_at(speed: Speed) -> Config {
+    Config {
+        typing: Some(speed),
+        ..Config::default()
+    }
+}
+
+/// Given: the typing scene started with a speed from the config file.
 /// When: it renders.
 /// Then: the header shows no speed, because no key changed it.
 #[test]
-fn a_speed_from_the_command_line_shows_no_notice() {
-    let app = App::new(SceneKind::Typing, 7, corpus()).with_speed(Speed::DEFAULT.faster());
+fn a_speed_from_the_config_file_shows_no_notice() {
+    let app =
+        App::new(SceneKind::Typing, 7, corpus()).with_config(&typing_at(Speed::DEFAULT.faster()));
     assert!(!header(&app).contains("cps"), "{}", header(&app));
 }

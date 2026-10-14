@@ -85,7 +85,7 @@ impl App {
         app
     }
 
-    pub fn with_speed(mut self, speed: Speed) -> Self {
+    fn with_speed(mut self, speed: Speed) -> Self {
         self.speed = speed;
         self.scene = self.kind.build(self.seed, &self.corpus, speed);
         self

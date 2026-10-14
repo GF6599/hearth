@@ -9,7 +9,6 @@ use crate::app::App;
 use crate::config::{self, Config};
 use crate::corpus::{self, Corpus};
 use crate::scene::SceneKind;
-use crate::scenes::typing::Speed;
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -26,11 +25,6 @@ pub struct Cli {
     /// clone address. Without it, hearth types its own source
     #[arg(long, value_name = "REPO")]
     pub repo: Option<String>,
-
-    /// How fast the typing scene types, in keystrokes per second, over the
-    /// config file. `+` and `-` change it while the scene runs
-    #[arg(long, value_name = "CPS")]
-    pub speed: Option<Speed>,
 }
 
 impl Cli {
@@ -50,15 +44,11 @@ impl Cli {
     }
 
     pub fn app(&self, config: &Config, corpus: Arc<Corpus>) -> App {
-        let app = match self.scene.or(config.scene) {
+        match self.scene.or(config.scene) {
             Some(kind) => App::new(kind, self.seed(), corpus),
             None => App::picker(self.seed(), corpus),
         }
-        .with_config(config);
-        match self.speed {
-            Some(speed) => app.with_speed(speed),
-            None => app,
-        }
+        .with_config(config)
     }
 
     /// The source files for the typing scene. A clone happens on the first
