@@ -45,14 +45,11 @@ alias hth=hearth
 hearth              # open the picker
 hearth noise        # start one scene
 hearth --seed 7     # replay the same frames
-hearth typing --speed 80   # type 80 keystrokes per second
 ```
 
 `--seed <n>` fixes the random source, so two runs with the same seed draw the same frames and the same chain of restarts. Without it, the clock seeds each run.
 
-`--speed <cps>` sets how fast the typing scene types, in keystrokes per second, from 1 to 1000. The default is 50.
-
-Every scene keeps its own speed. `+` and `-` change the speed of the scene on screen, and the new value shows in the corner for a second. Typing steps in keystrokes per second. The other scenes step through ¼×, ½×, ¾×, 1×, 1.5×, 2×, 3× and 4×. A restart, Tab and the picker keep each scene's speed.
+Every scene keeps its own speed. `+` and `-` change the speed of the scene on screen, and the new value shows in the corner for a second. Typing steps in keystrokes per second, from 1 to 1000, and starts at 50. The other scenes step through ¼×, ½×, ¾×, 1×, 1.5×, 2×, 3× and 4×. A restart, Tab and the picker keep each scene's speed, and the config file keeps it between runs.
 
 The typing scene types hearth's own source unless `--repo` names another repository:
 
@@ -63,6 +60,21 @@ hearth typing --repo https://example.com/x.git
 ```
 
 A GitHub repository or a clone address is cloned once, shallow, into `~/.cache/hearth` (or `$XDG_CACHE_HOME/hearth`), with one line on stderr before the terminal opens. Every later run reads the cache, so the scene starts without a network. Only tracked text files under 64 KiB are read, so an ignored or untracked file never shows. A repository with no function in any of them is refused at startup.
+
+### Config file
+
+hearth reads `~/.config/hearth/config.toml` (or `$XDG_CONFIG_HOME/hearth/config.toml`) at startup. Every key is optional, and a missing file gives the defaults:
+
+```toml
+scene = "fire"            # the scene a bare `hearth` starts. Absent: the picker
+repo = "rust-lang/rust"   # what the typing scene types. Absent: hearth's own source
+
+[speed]
+typing = 50     # keystrokes per second, from 1 to 1000
+fire = 1.5      # times the normal pace: 0.25, 0.5, 0.75, 1, 1.5, 2, 3 or 4
+```
+
+A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
 
 ### Picker
 
