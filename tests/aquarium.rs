@@ -85,7 +85,11 @@ fn a_bubble_rises_one_row_per_tick_and_pops_at_the_surface() {
         // Then:
         let bubbles = cells_with(&render(&tank, area), &[BUBBLE]);
         assert_eq!(bubbles.len(), 1, "after {ticks} ticks: {bubbles:?}");
-        assert_eq!(bubbles[0].0, Position::new(5, 6 - ticks), "after {ticks} ticks");
+        assert_eq!(
+            bubbles[0].0,
+            Position::new(5, 6 - ticks),
+            "after {ticks} ticks"
+        );
     }
 
     // And:
