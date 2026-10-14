@@ -227,11 +227,11 @@ impl Typing {
         from(start)
     }
 
-    /// The cursor's line and column in the file, both from 1, and the speed.
+    /// The cursor's line and column in the file, both from 1.
     fn place(&self, first: usize) -> String {
         let column = self.lines.last().map_or(0, Vec::len) + 1;
         let line = first + self.lines.len();
-        format!("Ln {line}, Col {column}  {} cps", self.speed)
+        format!("Ln {line}, Col {column}")
     }
 
     /// The digits of the last line number, which every number is padded to.
@@ -258,19 +258,26 @@ impl Typing {
         )
     }
 
-    /// When the language and the place do not both fit, the language goes,
-    /// and a place wider than the frame is cut at its right edge.
+    /// A part that does not fit goes whole, the language first and then
+    /// the speed, so no word is cut while a whole part could go instead.
     fn render_status(&self, frame: Rect, first: usize, buf: &mut Buffer) {
         let style = Style::default().fg(STATUS_COLOUR);
         let y = frame.bottom();
-        let place = self.place(first);
-        let place_width = place.chars().count();
         let room = usize::from(frame.width);
-        let place_x = frame.right() - u16::try_from(place_width.min(room)).unwrap_or(0);
-        buf.set_stringn(place_x, y, &place, room, style);
-        if self.language.chars().count() + 1 + place_width <= room {
+        let place = self.place(first);
+        let with_speed = format!("{place}  {} cps", self.speed);
+        let with_speed_width = with_speed.chars().count();
+        if self.language.chars().count() + 1 + with_speed_width <= room {
             buf.set_string(frame.x, y, self.language, style);
         }
+        let right = if with_speed_width <= room {
+            with_speed
+        } else {
+            place
+        };
+        let right_width = right.chars().count();
+        let right_x = frame.right() - u16::try_from(right_width.min(room)).unwrap_or(0);
+        buf.set_stringn(right_x, y, &right, room, style);
     }
 
     /// Spends one keystroke: on a pause, on opening the next file, or on
