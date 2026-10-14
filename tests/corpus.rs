@@ -31,7 +31,7 @@ fn repository(name: &str) -> PathBuf {
     let repo = scratch(name);
     git(&repo, &["init", "-q"]);
     fs::write(repo.join("main.rs"), "fn main() {}\n").unwrap();
-    fs::write(repo.join("blob.bin"), [0u8, 159, 146, 150, 0, 1]).unwrap();
+    fs::write(repo.join("blob.bin"), b"PK\x03\x04\x00\x00\x00\x08").unwrap();
     git(&repo, &["add", "main.rs", "blob.bin"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     fs::write(repo.join("notes.txt"), "not tracked\n").unwrap();
