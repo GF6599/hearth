@@ -121,3 +121,38 @@ fn a_repository_with_no_function_is_refused_at_startup() {
     let (_, stderr) = run_typing(&repository("code", "main.rs", "fn main() {}\n"));
     assert!(!stderr.contains("no function"), "{stderr}");
 }
+
+/// Given: no `HOME` and no `XDG_CONFIG_HOME`, and a bad config file in the
+/// temp folder, where any user on the machine can put one.
+/// When: hearth starts fire.
+/// Then: it does not read that file.
+///
+/// Why it matters: a config read from a shared folder lets another user
+/// choose the repository hearth runs git in, and a symlink planted there
+/// sends a save over a file of their choosing.
+#[test]
+fn no_home_folder_means_no_config_file() {
+    // Given:
+    let temp = std::env::temp_dir().join(format!("hearth-cli-{}-tmpdir", std::process::id()));
+    let _ = fs::remove_dir_all(&temp);
+    fs::create_dir_all(temp.join("hearth")).unwrap();
+    fs::write(
+        temp.join("hearth").join("config.toml"),
+        "scene = \"nope\"\n",
+    )
+    .unwrap();
+
+    // When:
+    let output = Command::new(env!("CARGO_BIN_EXE_hearth"))
+        .arg("fire")
+        .env_remove("HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("TMPDIR", &temp)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&temp);
+
+    // Then:
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("scene must be"), "{stderr}");
+}
