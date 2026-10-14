@@ -12,6 +12,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `matrix` | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
 | `fire` | The doom fire, in half blocks: heat rises from a white-hot base through gold and love and dies into the background |
 | `life` | Conway's game of life on a torus, newborn cells in rose and settled ones in iris, reseeded when the board goes still |
+| `pipes` | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
 
 `hearth --help` lists every scene the build carries.
 
