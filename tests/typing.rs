@@ -626,6 +626,40 @@ fn the_status_line_follows_the_cursor() {
     }
 }
 
+/// Given: one line functions 30, 16 and 11 glyphs wide, so each frame is
+/// narrower than the one before.
+/// When: each is typed whole.
+/// Then: the widest status line holds everything, the next drops the
+/// language, and the narrowest also drops the speed, each flush with the
+/// frame's right edge.
+///
+/// Why it matters: a status line cut at the frame edge shows `50 cp`, a
+/// word cut in half, where dropping a whole part keeps the rest readable.
+#[test]
+fn a_narrow_status_line_drops_the_language_and_then_the_speed() {
+    let area = Rect::new(0, 0, 120, 40);
+    let cases = [
+        (30, "Rust", "Ln 1, Col 31  50 cps"),
+        (16, "", "Ln 1, Col 17  50 cps"),
+        (11, "", "Ln 1, Col 12"),
+    ];
+    for (glyphs, language, place) in cases {
+        // Given:
+        let code = format!("fn f() {{ {} }}", "x".repeat(glyphs - 11));
+        assert_eq!(code.len(), glyphs);
+
+        // When:
+        let buffer = settled_file("a.rs", &format!("{code}\n"), area);
+
+        // Then:
+        let status = status(&buffer);
+        assert!(status.starts_with(language), "{status:?}");
+        assert!(status.ends_with(place), "{status:?}");
+        let left = status[..status.len() - place.len()].trim();
+        assert_eq!(left, language, "{status:?}");
+    }
+}
+
 /// Given: a function whose code is wider than the file and its name, and
 /// one whose code is narrower, each in a file whose path is wider than
 /// either frame.
