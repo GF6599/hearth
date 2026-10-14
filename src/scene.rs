@@ -5,6 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use crate::scenes::fire::Fire;
+use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
 
@@ -24,10 +25,16 @@ pub enum SceneKind {
     Noise,
     Matrix,
     Fire,
+    Life,
 }
 
 /// The order the picker lists and Tab cycles.
-pub const ALL: &[SceneKind] = &[SceneKind::Noise, SceneKind::Matrix, SceneKind::Fire];
+pub const ALL: &[SceneKind] = &[
+    SceneKind::Noise,
+    SceneKind::Matrix,
+    SceneKind::Fire,
+    SceneKind::Life,
+];
 
 impl SceneKind {
     pub fn name(self) -> &'static str {
@@ -35,6 +42,7 @@ impl SceneKind {
             SceneKind::Noise => "noise",
             SceneKind::Matrix => "matrix",
             SceneKind::Fire => "fire",
+            SceneKind::Life => "life",
         }
     }
 
@@ -44,6 +52,7 @@ impl SceneKind {
             SceneKind::Noise => Box::new(Noise::new(rng)),
             SceneKind::Matrix => Box::new(Matrix::new(rng)),
             SceneKind::Fire => Box::new(Fire::new(rng)),
+            SceneKind::Life => Box::new(Life::new(rng)),
         }
     }
 
