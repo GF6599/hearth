@@ -17,7 +17,7 @@ pub trait Scene {
     fn render(&self, area: Rect, buf: &mut Buffer);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum SceneKind {
     Noise,
 }
