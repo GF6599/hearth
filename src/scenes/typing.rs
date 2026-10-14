@@ -8,6 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::corpus::Corpus;
+use crate::highlight;
 use crate::scene::{Rng, Scene, TICK_RATE};
 use crate::theme;
 
@@ -23,8 +24,6 @@ const JITTER: std::ops::Range<f64> = 0.5..1.5;
 const NOTICE_TICKS: u32 = 16;
 
 const PATH_COLOUR: Color = theme::FOAM;
-const CODE_COLOUR: Color = theme::TEXT;
-const COMMENT_COLOUR: Color = theme::MUTED;
 const CURSOR_COLOUR: Color = theme::TEXT;
 const NOTICE_COLOUR: Color = theme::SUBTLE;
 
@@ -86,9 +85,10 @@ pub struct Typing {
     credit: f64,
     notice: u32,
     file: usize,
-    glyphs: Vec<char>,
+    /// The open file, each glyph with its colour from the grammar.
+    glyphs: Vec<(char, Color)>,
     offset: usize,
-    lines: Vec<String>,
+    lines: Vec<Vec<(char, Color)>>,
     pause: u32,
     finished: bool,
 }
@@ -104,7 +104,7 @@ impl Typing {
             file: 0,
             glyphs: Vec::new(),
             offset: 0,
-            lines: vec![String::new()],
+            lines: vec![Vec::new()],
             pause: 0,
             finished: false,
         };
@@ -118,10 +118,13 @@ impl Typing {
             .corpus
             .files()
             .get(file)
-            .map(|source| source.text.chars().collect())
+            .map(|source| {
+                let colours = highlight::colours(&source.path, &source.text);
+                source.text.chars().zip(colours).collect()
+            })
             .unwrap_or_default();
         self.offset = 0;
-        self.lines = vec![String::new()];
+        self.lines = vec![Vec::new()];
         self.finished = false;
     }
 
@@ -144,24 +147,19 @@ impl Typing {
             self.open(next);
             return;
         }
-        let Some(&glyph) = self.glyphs.get(self.offset) else {
+        let Some(&(glyph, colour)) = self.glyphs.get(self.offset) else {
             self.finished = true;
             self.pause = FILE_PAUSE;
             return;
         };
         self.offset += 1;
         if glyph == '\n' {
-            self.lines.push(String::new());
+            self.lines.push(Vec::new());
             self.pause = self.rng.random_range(LINE_PAUSE);
         } else if let Some(line) = self.lines.last_mut() {
-            line.push(glyph);
+            line.push((glyph, colour));
         }
     }
-}
-
-fn is_comment(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("//") || line.starts_with('#')
 }
 
 impl Scene for Typing {
@@ -184,8 +182,8 @@ impl Scene for Typing {
             return;
         }
         let width = usize::from(area.width);
-        let mut put = |row: u16, start: usize, text: &str, colour: Color| {
-            for (column, glyph) in (start..width).zip(text.chars()) {
+        let mut put = |row: u16, start: usize, text: &mut dyn Iterator<Item = (char, Color)>| {
+            for (column, (glyph, colour)) in (start..width).zip(text) {
                 let Ok(column) = u16::try_from(column) else {
                     break;
                 };
@@ -194,14 +192,17 @@ impl Scene for Typing {
                     .set_fg(colour);
             }
         };
-        put(0, 0, self.path(), PATH_COLOUR);
+        put(
+            0,
+            0,
+            &mut self.path().chars().map(|glyph| (glyph, PATH_COLOUR)),
+        );
         if self.notice > 0 {
             let notice = format!("{} cps", self.speed);
             put(
                 0,
                 width.saturating_sub(notice.len()),
-                &notice,
-                NOTICE_COLOUR,
+                &mut notice.chars().map(|glyph| (glyph, NOTICE_COLOUR)),
             );
         }
 
@@ -215,16 +216,11 @@ impl Scene for Typing {
             let Ok(row) = u16::try_from(index + 1) else {
                 break;
             };
-            let colour = if is_comment(line) {
-                COMMENT_COLOUR
-            } else {
-                CODE_COLOUR
-            };
-            put(row, 0, line, colour);
+            put(row, 0, &mut line.iter().copied());
         }
 
         if let Some(last) = shown.last() {
-            let column = last.chars().count().min(width - 1);
+            let column = last.len().min(width - 1);
             let row = shown.len();
             if let (Ok(column), Ok(row)) = (u16::try_from(column), u16::try_from(row)) {
                 buf[(area.x + column, area.y + row)]
