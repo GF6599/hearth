@@ -5,7 +5,9 @@ use std::sync::Arc;
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Widget};
 
 use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
@@ -26,9 +28,20 @@ const JITTER: std::ops::Range<f64> = 0.5..1.5;
 /// Ticks a changed speed stays on screen, about one second.
 const NOTICE_TICKS: u32 = 16;
 
+/// Cells kept clear on each side of the frame when the area has room for
+/// them. Without that room the frame fills the area on that axis.
+const MARGIN_X: u16 = 2;
+const MARGIN_Y: u16 = 1;
+
+/// A blank cell before the line numbers and another after them.
+const GUTTER_GAP: usize = 1;
+
 const PATH_COLOUR: Color = theme::FOAM;
 const CURSOR_COLOUR: Color = theme::TEXT;
 const NOTICE_COLOUR: Color = theme::SUBTLE;
+const FRAME_COLOUR: Color = theme::MUTED;
+const GUTTER_COLOUR: Color = theme::MUTED;
+const FILL: Color = theme::SURFACE;
 
 /// Keystrokes per second.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,6 +107,10 @@ pub struct Typing {
     current: Option<(usize, usize)>,
     /// The snippet on screen, each glyph with its colour from the grammar.
     glyphs: Vec<(char, Color)>,
+    /// The size of the whole snippet, in glyphs and lines, so the frame
+    /// does not grow while it types.
+    widest: usize,
+    line_count: usize,
     offset: usize,
     lines: Vec<Vec<(char, Color)>>,
     pause: u32,
@@ -111,6 +128,8 @@ impl Typing {
             candidates: Vec::new(),
             current: None,
             glyphs: Vec::new(),
+            widest: 0,
+            line_count: 0,
             offset: 0,
             lines: vec![Vec::new()],
             pause: 0,
@@ -148,19 +167,52 @@ impl Typing {
             }
             let span = spans[pick].clone();
             self.current = Some((file, span.start));
+            self.line_count = span.len();
             self.glyphs = glyphs(&source.text, &highlighted.colours, span);
+            self.widest = self
+                .glyphs
+                .split(|&(glyph, _)| glyph == '\n')
+                .map(<[_]>::len)
+                .max()
+                .unwrap_or(0);
             return;
         }
     }
 
-    /// The header: the file and the line the snippet starts on.
-    fn header(&self) -> String {
-        self.current
-            .and_then(|(file, first)| {
-                let source = self.corpus.files().get(file)?;
-                Some(format!("{}:{}", source.path, first + 1))
-            })
-            .unwrap_or_default()
+    /// The path of the file on screen, cut into the top rule.
+    fn title(&self) -> Line<'_> {
+        let path = self
+            .current
+            .and_then(|(file, _)| self.corpus.files().get(file))
+            .map_or("", |source| source.path.as_str());
+        let rule = Style::default().fg(FRAME_COLOUR);
+        Line::from(vec![
+            Span::styled("─ ", rule),
+            Span::styled(path, Style::default().fg(PATH_COLOUR)),
+            Span::styled(" ", rule),
+        ])
+    }
+
+    /// The digits of the last line number, which every number is padded to.
+    fn digits(&self) -> usize {
+        let last = self.current.map_or(0, |(_, first)| first + self.line_count);
+        last.to_string().len()
+    }
+
+    /// The frame sized for the whole snippet and centred in the area.
+    fn frame(&self, area: Rect) -> Rect {
+        let gutter = GUTTER_GAP + self.digits() + GUTTER_GAP;
+        // One cell after the widest line holds the cursor, and one rule cell
+        // after the title keeps it off the corner.
+        let content = (gutter + self.widest + 1).max(self.title().width() + 1);
+        let width = fit(content + 2, area.width, MARGIN_X);
+        let height = fit(self.line_count + 2, area.height, MARGIN_Y);
+        Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        )
     }
 
     /// Spends one keystroke: on a pause, on opening the next file, or on
@@ -206,6 +258,15 @@ fn snippets(source: &SourceFile) -> (highlight::Highlighted, Vec<std::ops::Range
     (highlighted, spans)
 }
 
+/// The wanted size when it fits in the room with its margin on both sides,
+/// and the whole room when it does not.
+fn fit(want: usize, room: u16, margin: u16) -> u16 {
+    match u16::try_from(want) {
+        Ok(want) if want.saturating_add(2 * margin) <= room => want,
+        _ => room,
+    }
+}
+
 /// The glyphs of the lines in `span`, each with its colour, and a newline
 /// between two lines.
 fn glyphs(text: &str, colours: &[Color], span: std::ops::Range<usize>) -> Vec<(char, Color)> {
@@ -241,55 +302,62 @@ impl Scene for Typing {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
+        let Some((_, first)) = self.current else {
+            return;
+        };
+        if area.is_empty() {
             return;
         }
-        let width = usize::from(area.width);
-        let mut put = |row: u16, start: usize, text: &mut dyn Iterator<Item = (char, Color)>| {
-            for (column, (glyph, colour)) in (start..width).zip(text) {
-                let Ok(column) = u16::try_from(column) else {
-                    break;
-                };
-                buf[(area.x + column, area.y + row)]
-                    .set_char(glyph)
-                    .set_fg(colour);
-            }
-        };
-        put(
-            0,
-            0,
-            &mut self.header().chars().map(|glyph| (glyph, PATH_COLOUR)),
-        );
+        let frame = self.frame(area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(theme::BORDER)
+            .border_style(Style::default().fg(FRAME_COLOUR))
+            .style(Style::default().bg(FILL))
+            .title(self.title());
+        let inner = block.inner(frame);
+        block.render(frame, buf);
         if self.notice > 0 {
             let notice = format!("{} cps", self.speed);
-            put(
-                0,
-                width.saturating_sub(notice.len()),
-                &mut notice.chars().map(|glyph| (glyph, NOTICE_COLOUR)),
-            );
+            if let Ok(width) = u16::try_from(notice.len())
+                && width <= area.width
+            {
+                let style = Style::default().fg(NOTICE_COLOUR);
+                buf.set_string(area.right() - width, area.y, notice, style);
+            }
         }
-
-        let visible = usize::from(area.height) - 1;
-        if visible == 0 {
+        if inner.is_empty() {
             return;
         }
-        let first = self.lines.len().saturating_sub(visible);
-        let shown = &self.lines[first..];
-        for (index, line) in shown.iter().enumerate() {
-            let Ok(row) = u16::try_from(index + 1) else {
-                break;
-            };
-            put(row, 0, &mut line.iter().copied());
+
+        // The gutter goes when it would leave no cell for the code.
+        let digits = self.digits();
+        let gutter = GUTTER_GAP + digits + GUTTER_GAP;
+        let gutter = if gutter < usize::from(inner.width) {
+            gutter
+        } else {
+            0
+        };
+        let code_x = inner.x + u16::try_from(gutter).unwrap_or(0);
+        let top = self.lines.len().saturating_sub(usize::from(inner.height));
+        let shown = &self.lines[top..];
+        for (y, (index, line)) in (inner.y..inner.bottom()).zip(shown.iter().enumerate()) {
+            if gutter > 0 {
+                let number = format!("{:>digits$}", first + top + index + 1);
+                let style = Style::default().fg(GUTTER_COLOUR);
+                let gutter_x = inner.x + u16::try_from(GUTTER_GAP).unwrap_or(0);
+                buf.set_stringn(gutter_x, y, number, digits, style);
+            }
+            for (x, &(glyph, colour)) in (code_x..inner.right()).zip(line) {
+                buf[(x, y)].set_char(glyph).set_fg(colour);
+            }
         }
 
         if let Some(last) = shown.last() {
-            let column = last.len().min(width - 1);
-            let row = shown.len();
-            if let (Ok(column), Ok(row)) = (u16::try_from(column), u16::try_from(row)) {
-                buf[(area.x + column, area.y + row)]
-                    .set_char(' ')
-                    .set_bg(CURSOR_COLOUR);
-            }
+            let room = usize::from(inner.right() - code_x - 1);
+            let x = code_x + u16::try_from(last.len().min(room)).unwrap_or(0);
+            let y = inner.y + u16::try_from(shown.len() - 1).unwrap_or(0);
+            buf[(x, y)].set_char(' ').set_bg(CURSOR_COLOUR);
         }
     }
 }

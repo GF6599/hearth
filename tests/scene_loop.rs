@@ -390,7 +390,9 @@ fn plus_outside_the_typing_scene_does_nothing() {
 #[test]
 fn a_restart_keeps_the_typing_speed() {
     // Given:
-    let area = Rect::new(0, 0, 60, HEIGHT);
+    // Wide enough that the glyphs the faster speed adds land inside the frame.
+    let width = 120;
+    let area = Rect::new(0, 0, width, HEIGHT);
     let faster = Speed::DEFAULT.faster();
     let mut app = App::new(SceneKind::Typing, 7, corpus());
     send(&mut app, vec![key('+')]);
@@ -406,9 +408,9 @@ fn a_restart_keeps_the_typing_speed() {
     }
 
     // Then:
-    let after = frame(&app, 60, HEIGHT);
-    assert_ne!(frame(&kept, 60, HEIGHT), frame(&dropped, 60, HEIGHT));
-    assert_eq!(after, frame(&kept, 60, HEIGHT));
+    let after = frame(&app, width, HEIGHT);
+    assert_ne!(frame(&kept, width, HEIGHT), frame(&dropped, width, HEIGHT));
+    assert_eq!(after, frame(&kept, width, HEIGHT));
 }
 
 /// Given: the typing scene started with a speed, as `--speed` starts it.
