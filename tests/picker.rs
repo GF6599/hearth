@@ -331,8 +331,9 @@ fn app_frame(app: &App, area: Rect) -> Buffer {
     buffer
 }
 
-/// The inside of the right-most frame, which is the preview pane when
-/// there is one.
+/// The inside of the top-most frame right of the list, which is the
+/// preview pane when there is one. A scene in the pane can draw frames of
+/// its own, and each starts lower than the pane's top rule.
 fn pane_inner(buffer: &Buffer) -> Option<Rect> {
     let area = buffer.area;
     let corners: Vec<(u16, u16)> = (0..area.height)
@@ -342,7 +343,9 @@ fn pane_inner(buffer: &Buffer) -> Option<Rect> {
     if corners.len() < 2 {
         return None;
     }
-    let &(x, y) = corners.iter().max_by_key(|(x, _)| *x)?;
+    let &(x, y) = corners
+        .iter()
+        .min_by_key(|&&(x, y)| (y, std::cmp::Reverse(x)))?;
     let right = (x + 1..area.width).find(|&r| buffer[(r, y)].symbol() == "┐")?;
     let bottom = (y + 1..area.height).find(|&b| buffer[(x, b)].symbol() == "└")?;
     Some(Rect::new(x + 1, y + 1, right - x - 1, bottom - y - 1))
@@ -354,7 +357,9 @@ fn alone(kind: SceneKind, ticks: usize, inner: Rect) -> Buffer {
     for _ in 0..ticks {
         app.tick(inner);
     }
-    app_frame(&app, WIDE)
+    let mut buffer = Buffer::empty(WIDE);
+    app.render(inner, &mut buffer);
+    buffer
 }
 
 fn assert_same_inside(shown: &Buffer, expected: &Buffer, inner: Rect, what: &str) {

@@ -41,6 +41,11 @@ pub struct App {
     /// Why the last change was not saved, shown with it in the notice.
     unsaved: Option<String>,
     scene: Box<dyn Scene>,
+    /// The marked scene, running in the picker's pane. Built when the
+    /// picker opens or the mark moves, so it always starts from its first
+    /// frame.
+    preview: Option<Box<dyn Scene>>,
+    preview_credit: u32,
     mode: Mode,
     selected: usize,
     pub should_quit: bool,
@@ -73,6 +78,8 @@ impl App {
             notice: 0,
             saving: None,
             unsaved: None,
+            preview: None,
+            preview_credit: 0,
             mode: Mode::Running,
             selected: slot_of(kind),
             should_quit: false,
@@ -81,13 +88,16 @@ impl App {
 
     pub fn picker(seed: u64, corpus: Arc<Corpus>) -> Self {
         let mut app = Self::new(ALL[0], seed, corpus);
-        app.mode = Mode::Picking;
+        app.open_picker();
         app
     }
 
     fn with_speed(mut self, speed: Speed) -> Self {
         self.speed = speed;
         self.scene = self.kind.build(self.seed, &self.corpus, speed);
+        if self.mode == Mode::Picking {
+            self.build_preview();
+        }
         self
     }
 
@@ -112,44 +122,50 @@ impl App {
         self.mode == Mode::Picking
     }
 
-    /// Typing keeps one tick a frame and counts its own speed in
-    /// keystrokes. Every other scene ticks once for each whole tick its
-    /// rate has paid for.
     pub fn tick(&mut self, area: Rect) {
         self.notice = self.notice.saturating_sub(1);
-        if self.mode != Mode::Running {
-            return;
+        match self.mode {
+            Mode::Running => {
+                let rate = self.rates[self.slot()];
+                advance(&mut *self.scene, self.kind, rate, &mut self.credit, area);
+            }
+            Mode::Picking => {
+                let kind = ALL[self.selected];
+                let rate = self.rates[self.selected];
+                let pane = self.with_picker(|picker| picker.preview_area(area));
+                if let (Some(scene), Some(pane)) = (&mut self.preview, pane) {
+                    advance(&mut **scene, kind, rate, &mut self.preview_credit, pane);
+                }
+            }
         }
-        if self.kind == SceneKind::Typing {
-            self.scene.tick(area);
-            return;
-        }
-        self.credit += self.rates[self.slot()].quarters();
-        while self.credit >= QUARTERS_PER_TICK {
-            self.credit -= QUARTERS_PER_TICK;
-            self.scene.tick(area);
-        }
+    }
+
+    fn with_picker<R>(&self, f: impl FnOnce(Picker) -> R) -> R {
+        let speeds: Vec<String> = ALL.iter().map(|kind| self.speed_label(*kind)).collect();
+        let entries: Vec<Entry> = ALL
+            .iter()
+            .zip(&speeds)
+            .map(|(kind, speed)| Entry {
+                name: kind.name(),
+                summary: kind.summary(),
+                speed,
+            })
+            .collect();
+        f(Picker {
+            entries: &entries,
+            selected: self.selected,
+        })
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         match self.mode {
-            Mode::Picking => {
-                let speeds: Vec<String> = ALL.iter().map(|kind| self.speed_label(*kind)).collect();
-                let entries: Vec<Entry> = ALL
-                    .iter()
-                    .zip(&speeds)
-                    .map(|(kind, speed)| Entry {
-                        name: kind.name(),
-                        summary: kind.summary(),
-                        speed,
-                    })
-                    .collect();
-                Picker {
-                    entries: &entries,
-                    selected: self.selected,
+            Mode::Picking => self.with_picker(|picker| {
+                let pane = picker.preview_area(area);
+                picker.render(area, buf);
+                if let (Some(scene), Some(pane)) = (&self.preview, pane) {
+                    scene.render(pane, buf);
                 }
-                .render(area, buf);
-            }
+            }),
             Mode::Running => {
                 buf.set_style(area, Style::default().bg(theme::BASE));
                 self.scene.render(area, buf);
@@ -228,14 +244,28 @@ impl App {
 
     pub fn open_picker(&mut self) {
         self.mode = Mode::Picking;
+        self.build_preview();
     }
 
     pub fn select_previous(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        self.select(self.selected.saturating_sub(1));
     }
 
     pub fn select_next(&mut self) {
-        self.selected = (self.selected + 1).min(ALL.len() - 1);
+        self.select((self.selected + 1).min(ALL.len() - 1));
+    }
+
+    fn select(&mut self, index: usize) {
+        if index != self.selected {
+            self.selected = index;
+            self.build_preview();
+        }
+    }
+
+    fn build_preview(&mut self) {
+        let kind = ALL[self.selected];
+        self.preview = Some(kind.build(self.seed, &self.corpus, self.speed));
+        self.preview_credit = 0;
     }
 
     pub fn start_selected(&mut self) {
@@ -246,6 +276,7 @@ impl App {
         self.kind = kind;
         self.selected = slot_of(kind);
         self.mode = Mode::Running;
+        self.preview = None;
         self.restart();
     }
 
@@ -256,4 +287,18 @@ impl App {
 
 fn slot_of(kind: SceneKind) -> usize {
     ALL.iter().position(|k| *k == kind).unwrap_or(0)
+}
+
+/// Typing keeps one tick a frame and counts its own speed in keystrokes.
+/// Every other scene ticks once for each whole tick its rate has paid for.
+fn advance(scene: &mut dyn Scene, kind: SceneKind, rate: Rate, credit: &mut u32, area: Rect) {
+    if kind == SceneKind::Typing {
+        scene.tick(area);
+        return;
+    }
+    *credit += rate.quarters();
+    while *credit >= QUARTERS_PER_TICK {
+        *credit -= QUARTERS_PER_TICK;
+        scene.tick(area);
+    }
 }

@@ -6,6 +6,14 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::theme;
 
+/// The least inside of the preview pane. A scene squeezed below it reads
+/// as noise, so the pane goes and the list keeps the whole area.
+const LEAST_PREVIEW_WIDTH: u16 = 24;
+const LEAST_PREVIEW_HEIGHT: u16 = 8;
+
+/// Columns between the list's frame and the pane, and outside each.
+const GAP: u16 = 2;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Entry<'a> {
     pub name: &'a str,
@@ -15,7 +23,7 @@ pub struct Entry<'a> {
 
 /// The `[ ]` pair is drawn on every row and only coloured on the current
 /// one, so the labels stay in one column as the selection moves.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Picker<'a> {
     pub entries: &'a [Entry<'a>],
     pub selected: usize,
@@ -24,6 +32,31 @@ pub struct Picker<'a> {
 impl Picker<'_> {
     /// A summary takes a row of its own, so on an area too short for two
     /// rows a scene the summaries go and every name stays in the list.
+    /// The inside of the pane to the right of the list, or `None` when the
+    /// area leaves it too small. `App` ticks the preview in the same
+    /// rectangle it draws it in.
+    pub fn preview_area(&self, area: Rect) -> Option<Rect> {
+        let list = self.list_width(area);
+        let pane = Rect::new(
+            area.x + list,
+            area.y + 1,
+            area.width.saturating_sub(list + GAP),
+            area.height.saturating_sub(2),
+        );
+        let inner = Rect::new(
+            pane.x + 1,
+            pane.y + 1,
+            pane.width.saturating_sub(2),
+            pane.height.saturating_sub(2),
+        );
+        (inner.width >= LEAST_PREVIEW_WIDTH && inner.height >= LEAST_PREVIEW_HEIGHT)
+            .then_some(inner)
+    }
+
+    fn list_width(&self, area: Rect) -> u16 {
+        self.frame(area, self.has_summaries(area)).width + 2 * GAP
+    }
+
     fn has_summaries(&self, area: Rect) -> bool {
         self.entries.len() * 2 + 2 <= usize::from(area.height)
     }
@@ -60,8 +93,19 @@ impl Picker<'_> {
 impl Widget for Picker<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         buf.set_style(area, Style::default().bg(theme::BASE));
+        let preview = self.preview_area(area);
         let summaries = self.has_summaries(area);
-        let frame = self.frame(area, summaries);
+        let list_area = match preview {
+            Some(inner) => {
+                pane().render(
+                    Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2),
+                    buf,
+                );
+                Rect::new(area.x, area.y, self.list_width(area), area.height)
+            }
+            None => area,
+        };
+        let frame = self.frame(list_area, summaries);
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
@@ -119,4 +163,12 @@ impl Widget for Picker<'_> {
 /// speed, `1` for `1.5×`.
 fn name_row(entry: &Entry) -> usize {
     entry.name.chars().count() + entry.speed.chars().count() + 4
+}
+
+fn pane() -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(theme::BORDER)
+        .border_style(Style::default().fg(theme::MUTED))
+        .style(Style::default().bg(theme::BASE))
 }
