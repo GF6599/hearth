@@ -20,6 +20,7 @@ pub struct Entry<'a> {
     pub name: &'a str,
     pub summary: &'a str,
     pub speed: &'a str,
+    pub credit: Option<&'a str>,
 }
 
 /// The `[ ]` pair is drawn on every row and only coloured on the current
@@ -177,26 +178,24 @@ impl Widget for Picker<'_> {
             Paragraph::new(mark.lines()).render(at.intersection(area), buf);
         }
         if let Some(inner) = preview {
-            pane().render(
-                Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2),
-                buf,
-            );
+            let area = Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2);
+            let credit = self
+                .entries
+                .get(self.selected)
+                .and_then(|entry| entry.credit);
+            match credit {
+                Some(credit) => cut_bottom(pane(), area.width, &format!("─ {credit} ")),
+                None => pane(),
+            }
+            .render(area, buf);
         }
-        let mut block = Block::default()
+        let block = Block::default()
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
             .border_style(Style::default().fg(theme::MUTED))
             .style(Style::default().bg(theme::SURFACE))
             .title(theme::PICKER_TITLE);
-        // A hint cut at the corner names keys that do not exist, so it
-        // shows whole or not at all.
-        if usize::from(frame.width) >= theme::PICKER_HINT.chars().count() + 2 {
-            let (lead, keys) = theme::PICKER_HINT.split_at("─ ".len());
-            block = block.title_bottom(Line::from(vec![
-                Span::styled(lead, Style::default().fg(theme::MUTED)),
-                Span::styled(keys, Style::default().fg(theme::SUBTLE)),
-            ]));
-        }
+        let block = cut_bottom(block, frame.width, theme::PICKER_HINT);
         let inner = block.inner(frame);
         block.render(frame, buf);
 
@@ -239,6 +238,21 @@ impl Widget for Picker<'_> {
 /// speed, `1` for `1.5×`.
 fn name_row(entry: &Entry) -> usize {
     entry.name.chars().count() + entry.speed.chars().count() + 4
+}
+
+/// Cuts `label`, written `─ text `, into the bottom rule of a block
+/// `width` cells wide, in the hint's colours. A label cut at the corner
+/// names a key or a person that does not exist, so it shows whole or not
+/// at all.
+fn cut_bottom(block: Block<'static>, width: u16, label: &str) -> Block<'static> {
+    if usize::from(width) < label.chars().count() + 2 {
+        return block;
+    }
+    let (lead, text) = label.split_at("─ ".len());
+    block.title_bottom(Line::from(vec![
+        Span::styled(lead.to_owned(), Style::default().fg(theme::MUTED)),
+        Span::styled(text.to_owned(), Style::default().fg(theme::SUBTLE)),
+    ]))
 }
 
 fn pane() -> Block<'static> {

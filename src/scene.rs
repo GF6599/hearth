@@ -153,6 +153,21 @@ impl SceneKind {
         }
     }
 
+    /// The work and the person whose idea the scene reuses. The README's
+    /// scene table links each one.
+    pub fn credit(self) -> Option<&'static str> {
+        match self {
+            SceneKind::Noise => None,
+            SceneKind::Matrix => Some("after cmatrix by Chris Allegretta"),
+            SceneKind::Fire => Some("after the PSX Doom fire, via Fabien Sanglard"),
+            SceneKind::Life => Some("after John Conway's Game of Life"),
+            SceneKind::Pipes => Some("after pipes.sh by Matthew Simpson"),
+            SceneKind::Bonsai => Some("after cbonsai by John Allbritten"),
+            SceneKind::Aquarium => Some("after asciiquarium by Kirk Baucom"),
+            SceneKind::Typing => Some("after gittype by Yuji Ueki"),
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<SceneKind> {
         ALL.iter().copied().find(|kind| kind.name() == name)
     }

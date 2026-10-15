@@ -150,6 +150,7 @@ impl App {
                 name: kind.name(),
                 summary: kind.summary(),
                 speed,
+                credit: kind.credit(),
             })
             .collect();
         f(Picker {
