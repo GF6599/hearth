@@ -248,13 +248,13 @@ fn each_speed_sits_at_the_right_of_its_name_row() {
 
 /// Given: terminal widths from 6 to 40 columns.
 /// When: the picker renders at each.
-/// Then: a row that shows a speed shows its whole name, there is a width
-/// where the whole name shows with no speed, and at 40 the speed shows.
+/// Then: the cells after the marked name hold its whole speed or nothing,
+/// some width shows the name with no speed, and at 40 the speed shows.
 ///
-/// Why it matters: a speed beside a cut name tells the user how fast a
-/// scene runs and not which scene it is.
+/// Why it matters: a speed cut at the border reads as another speed, `2`
+/// for `2×` or `1` for `1.5×`.
 #[test]
-fn the_speed_goes_before_the_name_is_cut() {
+fn a_speed_shows_whole_or_not_at_all() {
     let entry = ENTRIES[1];
     let mut name_alone = false;
     for width in 6..=40 {
@@ -266,15 +266,15 @@ fn the_speed_goes_before_the_name_is_cut() {
             .unwrap_or_else(|| panic!("no marked row at width {width}"));
 
         // Then:
-        let whole = row.contains(&format!("[{}]", entry.name));
-        let speed = row.contains(entry.speed);
+        let (_, after_name) = row.split_once(']').unwrap();
+        let speed = after_name.trim_matches(|c| matches!(c, ' ' | '│'));
         assert!(
-            !speed || whole,
-            "speed beside a cut name at {width}: {row:?}"
+            speed.is_empty() || speed == entry.speed,
+            "cut speed at width {width}: {row:?}"
         );
-        name_alone |= whole && !speed;
+        name_alone |= speed.is_empty() && row.contains(&format!("[{}]", entry.name));
         if width == 40 {
-            assert!(speed, "{row:?}");
+            assert_eq!(speed, entry.speed, "{row:?}");
         }
     }
     assert!(name_alone, "no width shows the name without its speed");
