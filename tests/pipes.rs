@@ -102,3 +102,34 @@ fn the_screen_clears_at_the_fill_share() {
     }
     assert!(dropped, "the screen never cleared");
 }
+
+/// Given: pipes from many seeds on a screen wide enough for the most
+/// pipes at once.
+/// When: each runs for a while.
+/// Then: no cell is in the marker colour.
+///
+/// Why it matters: the focused pane shows gold corner marks in
+/// `theme::MARKER`. A pipe in that colour that turns at a pane corner
+/// draws the same rune in the same colour, and an unfocused pane then
+/// reads as focused.
+#[test]
+fn no_pipe_is_in_the_marker_colour() {
+    // Given:
+    let area = Rect::new(0, 0, 240, 20);
+    for seed in 0..32 {
+        let mut scene = Pipes::new(Rng::seed_from_u64(seed));
+
+        // When:
+        for _ in 0..50 {
+            scene.tick(area);
+        }
+
+        // Then:
+        let buffer = render(&scene, area);
+        let marked = buffer
+            .area
+            .positions()
+            .find(|&p| buffer[p].fg == theme::MARKER);
+        assert_eq!(marked, None, "seed {seed} drew a pipe in the marker colour");
+    }
+}
