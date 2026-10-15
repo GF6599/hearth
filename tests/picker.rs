@@ -183,12 +183,13 @@ fn a_short_area_drops_the_summaries_and_keeps_every_name() {
 }
 
 /// Each row of the app's frame with its border, its marker pair and its
-/// padding cut off, so a name row reads as the bare name.
+/// padding cut off, so a name row starts with the bare name.
 fn bare_rows(buffer: &Buffer) -> Vec<String> {
     (0..buffer.area.height)
         .map(|y| {
             row_text(buffer, y)
-                .trim_matches(|c| matches!(c, ' ' | '│' | '[' | ']'))
+                .replace(['[', ']'], " ")
+                .trim_matches(|c| matches!(c, ' ' | '│'))
                 .to_string()
         })
         .collect()
@@ -218,7 +219,7 @@ fn the_app_lists_every_scene_with_its_summary() {
         assert!(!kind.summary().is_empty(), "{}", kind.name());
         let at = rows
             .iter()
-            .position(|row| row == kind.name())
+            .position(|row| row.split_whitespace().next() == Some(kind.name()))
             .unwrap_or_else(|| panic!("no row for {}: {rows:#?}", kind.name()));
         assert_eq!(rows[at + 1], kind.summary(), "{rows:#?}");
     }

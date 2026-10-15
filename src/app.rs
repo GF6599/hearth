@@ -134,11 +134,14 @@ impl App {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         match self.mode {
             Mode::Picking => {
+                let speeds: Vec<String> = ALL.iter().map(|kind| self.speed_label(*kind)).collect();
                 let entries: Vec<Entry> = ALL
                     .iter()
-                    .map(|kind| Entry {
+                    .zip(&speeds)
+                    .map(|(kind, speed)| Entry {
                         name: kind.name(),
                         summary: kind.summary(),
+                        speed,
                     })
                     .collect();
                 Picker {
@@ -160,11 +163,7 @@ impl App {
     /// A notice wider than the area is cut at its left edge, so the reason
     /// a save failed is never hidden by the speed in front of it.
     fn render_notice(&self, area: Rect, buf: &mut Buffer) {
-        let mut notice = if self.kind == SceneKind::Typing {
-            format!("{} cps", self.speed)
-        } else {
-            self.rates[self.slot()].to_string()
-        };
+        let mut notice = self.speed_label(self.kind);
         if let Some(reason) = &self.unsaved {
             notice = format!("{notice}, not saved: {reason}");
         }
@@ -174,8 +173,16 @@ impl App {
         buf.set_stringn(x, area.y, notice, usize::from(area.width), style);
     }
 
+    fn speed_label(&self, kind: SceneKind) -> String {
+        if kind == SceneKind::Typing {
+            format!("{} cps", self.speed)
+        } else {
+            self.rates[slot_of(kind)].to_string()
+        }
+    }
+
     fn slot(&self) -> usize {
-        ALL.iter().position(|k| *k == self.kind).unwrap_or(0)
+        slot_of(self.kind)
     }
 
     /// Rebuilds the scene from the next seed in the chain, so a run with
@@ -245,4 +252,8 @@ impl App {
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
+}
+
+fn slot_of(kind: SceneKind) -> usize {
+    ALL.iter().position(|k| *k == kind).unwrap_or(0)
 }

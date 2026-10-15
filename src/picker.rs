@@ -10,6 +10,7 @@ use crate::theme;
 pub struct Entry<'a> {
     pub name: &'a str,
     pub summary: &'a str,
+    pub speed: &'a str,
 }
 
 /// The `[ ]` pair is drawn on every row and only coloured on the current
@@ -32,12 +33,12 @@ impl Picker<'_> {
             .entries
             .iter()
             .map(|entry| {
-                let name = entry.name.chars().count();
-                let summary = entry.summary.chars().count();
-                if summaries { name.max(summary) } else { name }
+                let named = name_row(entry);
+                let summary = entry.summary.chars().count() + 2;
+                if summaries { named.max(summary) } else { named }
             })
             .max();
-        let content = widest.unwrap_or(0) + 2;
+        let content = widest.unwrap_or(0);
         let title = theme::PICKER_TITLE.chars().count();
         let rows = self.entries.len() * if summaries { 2 } else { 1 };
         let width = u16::try_from(content.max(title) + 2).unwrap_or(u16::MAX);
@@ -67,7 +68,8 @@ impl Widget for Picker<'_> {
         let inner = block.inner(frame);
         block.render(frame, buf);
 
-        let text_width = usize::from(inner.width).saturating_sub(2);
+        let inner_width = usize::from(inner.width);
+        let text_width = inner_width.saturating_sub(2);
         let clip = |text: &str| text.chars().take(text_width).collect::<String>();
         let marker = Style::default().fg(theme::MARKER);
         let mut rows = Vec::new();
@@ -75,11 +77,19 @@ impl Widget for Picker<'_> {
             let current = index == self.selected;
             let (open, close) = if current { ("[", "]") } else { (" ", " ") };
             let name_style = Style::default().fg(if current { theme::MARKED } else { theme::TEXT });
-            rows.push(Line::from(vec![
+            let mut row = vec![
                 Span::styled(open, marker),
                 Span::styled(clip(entry.name), name_style),
                 Span::styled(close, marker),
-            ]));
+            ];
+            if let Some(gap) = inner_width.checked_sub(name_row(entry)) {
+                row.push(Span::raw(" ".repeat(gap + 1)));
+                row.push(Span::styled(
+                    entry.speed,
+                    Style::default().fg(theme::SUBTLE),
+                ));
+            }
+            rows.push(Line::from(row));
             if summaries {
                 rows.push(Line::from(vec![
                     Span::raw(" "),
@@ -89,4 +99,12 @@ impl Widget for Picker<'_> {
         }
         Paragraph::new(rows).render(inner, buf);
     }
+}
+
+/// The cells a name row needs to show its speed: the pair, the name, one
+/// gap, the speed and a blank cell before the border. A row with fewer
+/// drops the whole speed, because one cut at the border reads as another
+/// speed, `1` for `1.5×`.
+fn name_row(entry: &Entry) -> usize {
+    entry.name.chars().count() + entry.speed.chars().count() + 4
 }
