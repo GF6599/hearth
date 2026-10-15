@@ -105,8 +105,8 @@ fn the_screen_clears_at_the_fill_share() {
     assert!(dropped, "the screen never cleared");
 }
 
-/// Given: pipes from many seeds on a screen wide enough for the most
-/// pipes at once.
+/// Given: pipes from many seeds, in every theme, on a screen wide enough
+/// for the most pipes at once.
 /// When: each runs for a while.
 /// Then: no cell is in the marker colour.
 ///
@@ -118,20 +118,25 @@ fn the_screen_clears_at_the_fill_share() {
 fn no_pipe_is_in_the_marker_colour() {
     // Given:
     let area = Rect::new(0, 0, 240, 20);
-    for seed in 0..32 {
-        let mut scene = Pipes::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
+    for (name, palette) in theme::THEMES {
+        for seed in 0..32 {
+            let mut scene = Pipes::new(Rng::seed_from_u64(seed), palette);
 
-        // When:
-        for _ in 0..50 {
-            scene.tick(area);
+            // When:
+            for _ in 0..50 {
+                scene.tick(area);
+            }
+
+            // Then:
+            let buffer = render(&scene, area);
+            let marked = buffer
+                .area
+                .positions()
+                .find(|&p| buffer[p].fg == palette.marker());
+            assert_eq!(
+                marked, None,
+                "{name} seed {seed} drew a pipe in the marker colour"
+            );
         }
-
-        // Then:
-        let buffer = render(&scene, area);
-        let marked = buffer
-            .area
-            .positions()
-            .find(|&p| buffer[p].fg == theme::ROSE_PINE.marker());
-        assert_eq!(marked, None, "seed {seed} drew a pipe in the marker colour");
     }
 }

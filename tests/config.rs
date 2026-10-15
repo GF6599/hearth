@@ -9,10 +9,12 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::scene::SceneKind;
+use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
+use hearth::theme::{self, Palette};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 60, 6);
 
@@ -118,7 +120,7 @@ fn the_command_line_comes_before_the_file() {
 
 /// Given: files with a word for a speed, a speed between two steps, a
 /// typing speed of zero, a key no scene has, a scene that does not exist,
-/// and text that is not TOML.
+/// a theme that does not exist, and text that is not TOML.
 /// When: each loads.
 /// Then: each fails with a message that names the file and, where there
 /// is one, the key.
@@ -130,6 +132,7 @@ fn a_bad_value_names_the_file_and_the_key() {
         ("zero", "[speed]\ntyping = 0\n", "speed.typing"),
         ("unknown", "[speed]\nfyre = 2\n", "speed.fyre"),
         ("scene", "scene = \"nope\"\n", "scene"),
+        ("theme", "theme = \"nope\"\n", "theme"),
         ("broken", "[speed\n", ""),
     ];
     for (name, text, key) in cases {
@@ -304,5 +307,68 @@ fn the_picker_shows_each_scene_at_its_saved_speed() {
             rows.iter().any(|row| row == expected),
             "{expected}: {rows:#?}"
         );
+    }
+}
+
+fn colours(palette: &Palette) -> [Color; 12] {
+    [
+        palette.base,
+        palette.surface,
+        palette.overlay,
+        palette.muted,
+        palette.subtle,
+        palette.text,
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.pine,
+        palette.foam,
+        palette.iris,
+    ]
+}
+
+/// Given: a file that sets the theme to Rose Pine Dawn, which shares no
+/// colour with Rose Pine.
+/// When: hearth starts the picker, and then each scene, and runs a while.
+/// Then: no cell draws in a Rose Pine colour, and no glyph and no
+/// background is left in the terminal's own colour.
+///
+/// Why it matters: one surface that keeps the old colours, or the
+/// terminal's, draws dark on a light theme and reads as broken.
+#[test]
+fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
+    // Given:
+    let path = config_file("theme", Some("theme = \"rose-pine-dawn\"\n"));
+    let config = Config::load(&path).unwrap();
+    let area = Rect::new(0, 0, 100, 30);
+    let main = colours(&theme::ROSE_PINE);
+
+    let mut starts = vec![vec!["hearth"]];
+    starts.extend(ALL.iter().map(|kind| vec!["hearth", kind.name()]));
+    for args in starts {
+        // When:
+        let mut app = app(&args, &config);
+        for _ in 0..40 {
+            app.tick(area);
+        }
+        let mut buffer = Buffer::empty(area);
+        app.render(area, &mut buffer);
+
+        // Then:
+        for position in area.positions() {
+            let cell = &buffer[position];
+            let at = format!("{args:?} at {position:?}");
+            assert!(!main.contains(&cell.fg), "Rose Pine fg {:?} {at}", cell.fg);
+            assert!(!main.contains(&cell.bg), "Rose Pine bg {:?} {at}", cell.bg);
+            assert_ne!(cell.bg, Color::Reset, "terminal bg {at}");
+            if !cell.symbol().trim().is_empty() {
+                assert_ne!(
+                    cell.fg,
+                    Color::Reset,
+                    "terminal fg on {:?} {at}",
+                    cell.symbol()
+                );
+            }
+        }
     }
 }
