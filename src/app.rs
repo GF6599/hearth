@@ -8,7 +8,7 @@ use ratatui::widgets::Widget;
 
 use crate::config::{self, Config};
 use crate::corpus::Corpus;
-use crate::picker::Picker;
+use crate::picker::{Entry, Picker};
 use crate::scene::{ALL, QUARTERS_PER_TICK, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
 use crate::theme;
@@ -134,9 +134,15 @@ impl App {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         match self.mode {
             Mode::Picking => {
-                let labels: Vec<&str> = ALL.iter().map(|kind| kind.name()).collect();
+                let entries: Vec<Entry> = ALL
+                    .iter()
+                    .map(|kind| Entry {
+                        name: kind.name(),
+                        summary: kind.summary(),
+                    })
+                    .collect();
                 Picker {
-                    labels: &labels,
+                    entries: &entries,
                     selected: self.selected,
                 }
                 .render(area, buf);

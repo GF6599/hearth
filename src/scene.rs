@@ -138,6 +138,21 @@ impl SceneKind {
         }
     }
 
+    /// One line for the picker. The README's scene table says the same at
+    /// length.
+    pub fn summary(self) -> &'static str {
+        match self {
+            SceneKind::Noise => "random glyphs over the whole screen",
+            SceneKind::Matrix => "katakana rain that fades from foam to pine",
+            SceneKind::Fire => "the doom fire, rising in half blocks",
+            SceneKind::Life => "Conway's game of life on a torus",
+            SceneKind::Pipes => "pipes that walk and turn in box runes",
+            SceneKind::Bonsai => "a bonsai tree that grows from a pot",
+            SceneKind::Aquarium => "fish, bubbles and swaying seaweed",
+            SceneKind::Typing => "functions typed from a git repository",
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<SceneKind> {
         ALL.iter().copied().find(|kind| kind.name() == name)
     }
