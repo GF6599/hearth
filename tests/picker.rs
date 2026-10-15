@@ -19,11 +19,13 @@ const ENTRIES: &[Entry] = &[
         name: "noise",
         summary: "random glyphs",
         speed: "1×",
+        credit: None,
     },
     Entry {
         name: "matrix",
         summary: "katakana rain",
         speed: "2×",
+        credit: Some("after cmatrix by Chris Allegretta"),
     },
 ];
 
@@ -627,4 +629,95 @@ fn the_list_frame_stays_whole_at_every_height() {
             assert_eq!(buffer[(x + 1, bottom)].symbol(), "─", "{width}x{height}");
         }
     }
+}
+
+/// The bottom rule of the preview pane, from corner to corner.
+fn pane_bottom(buffer: &Buffer, inner: Rect) -> String {
+    (inner.left() - 1..=inner.right())
+        .map(|x| buffer[(x, inner.bottom())].symbol())
+        .collect()
+}
+
+/// Given: the picker marking a scene with a credit, at widths from 40 to
+/// 160 columns.
+/// When: it renders at each.
+/// Then: wherever the preview pane shows, its bottom rule holds the whole
+/// credit, in the subtle colour, or none of it, and at 120 columns it holds
+/// the credit.
+///
+/// Why it matters: a credit cut at the corner names a work or a person
+/// wrongly, and a credit that breaks the rule leaves a gap in the frame.
+#[test]
+fn the_preview_rule_holds_the_whole_credit_or_none() {
+    let credit = ENTRIES[1].credit.unwrap();
+    for width in 40..=160 {
+        // Given, when:
+        let buffer = render(1, width, 20);
+        let Some(inner) = pane_inner(&buffer) else {
+            continue;
+        };
+
+        // Then:
+        let bottom = pane_bottom(&buffer, inner);
+        let cut = format!("─ {credit} ");
+        let shown = bottom.contains(&cut);
+        let rule = bottom.replacen(&cut, "", 1);
+        assert!(
+            rule.starts_with('└') && rule.ends_with('┘'),
+            "no corners at width {width}: {bottom:?}"
+        );
+        assert!(
+            rule.trim_matches(|c| c == '└' || c == '┘')
+                .chars()
+                .all(|c| c == '─'),
+            "part of the credit at width {width}: {bottom:?}"
+        );
+        if shown {
+            let x = inner.left() + 2;
+            assert_eq!(buffer[(x, inner.bottom())].symbol(), "a", "{width}");
+            assert_eq!(buffer[(x, inner.bottom())].fg, theme::SUBTLE, "{width}");
+        }
+        if width == 120 {
+            assert!(shown, "{bottom:?}");
+        }
+    }
+}
+
+/// Given: the picker in a wide terminal.
+/// When: the mark moves down the list, one scene at a time.
+/// Then: the preview's bottom rule holds the marked scene's credit, the
+/// typing scene credits gittype, and a scene with no credit has a plain
+/// rule.
+///
+/// Why it matters: each scene reuses an idea from another program or
+/// person, and the picker is where a user meets the scene first.
+#[test]
+fn the_preview_credits_the_marked_scene() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+
+    for &kind in ALL {
+        // When:
+        select(&mut app, kind);
+
+        // Then:
+        let shown = app_frame(&app, WIDE);
+        let inner = pane_inner(&shown).unwrap_or_else(|| panic!("no pane for {kind:?}"));
+        let bottom = pane_bottom(&shown, inner);
+        match kind.credit() {
+            Some(credit) => assert!(bottom.contains(&format!("─ {credit} ")), "{bottom:?}"),
+            None => assert!(
+                bottom
+                    .trim_matches(|c| c == '└' || c == '┘')
+                    .chars()
+                    .all(|c| c == '─'),
+                "{kind:?}: {bottom:?}"
+            ),
+        }
+    }
+    assert!(
+        SceneKind::Typing
+            .credit()
+            .is_some_and(|credit| credit.contains("gittype"))
+    );
 }
