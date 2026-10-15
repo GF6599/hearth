@@ -13,37 +13,25 @@ const MAX_HEAT: u16 = 360;
 
 pub const LEVELS: u16 = 36;
 
-const STOPS: [Color; 4] = [theme::BASE, theme::LOVE, theme::GOLD, theme::TEXT];
+/// Palette colours only, from cold to hot. A blend between two stops would
+/// make a colour that Rose Pine does not have.
+const STOPS: [Color; 7] = [
+    theme::BASE,
+    theme::OVERLAY,
+    theme::MUTED,
+    theme::LOVE,
+    theme::ROSE,
+    theme::GOLD,
+    theme::TEXT,
+];
 
 /// Draws a cell as two heat rows: the foreground is the upper one and the
 /// background the lower one.
 const HALF_BLOCK: char = '▀';
 
 pub fn color(level: u16) -> Color {
-    let level = level.min(LEVELS);
-    let segments = u16::try_from(STOPS.len() - 1).unwrap_or(1);
-    let span = LEVELS / segments;
-    let index = (level / span).min(segments - 1);
-    let within = level - index * span;
-    mix(
-        STOPS[usize::from(index)],
-        STOPS[usize::from(index + 1)],
-        within,
-        span,
-    )
-}
-
-fn mix(from: Color, to: Color, num: u16, den: u16) -> Color {
-    let (Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) = (from, to) else {
-        return to;
-    };
-    let channel = |a: u8, b: u8| {
-        let a = i32::from(a);
-        let b = i32::from(b);
-        let blended = a + (b - a) * i32::from(num) / i32::from(den);
-        u8::try_from(blended.clamp(0, 255)).unwrap_or(u8::MAX)
-    };
-    Color::Rgb(channel(r0, r1), channel(g0, g1), channel(b0, b1))
+    let level = usize::from(level.min(LEVELS));
+    STOPS[level * STOPS.len() / (usize::from(LEVELS) + 1)]
 }
 
 fn level(heat: u16) -> u16 {
