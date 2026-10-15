@@ -6,16 +6,16 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 
 ## Scenes
 
-| Scene | What it draws |
-|---|---|
-| `noise` | Random glyphs over the whole terminal, a placeholder that proves the loop |
-| `matrix` | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
-| `fire` | The doom fire, in half blocks: heat rises from a white-hot base through gold, rose, love and a grey smoke and dies into the background, in Rose Pine colours only, dithered where one meets the next |
-| `life` | Conway's game of life on a torus, newborn cells in rose and settled ones in iris, reseeded when the board goes still |
-| `pipes` | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
-| `bonsai` | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
-| `aquarium` | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
-| `typing` | Types one function at a time from a random file of a git repository, the way a person would, with a cursor and a pause at each line, at a speed you set, coloured by the grammar of each file's language, in a centred frame with line numbers, under a breadcrumb of the file's path and function and over a status line of the language, the cursor's line and column, and the speed, between a file tree open to the current file and a minimap of the whole file |
+| Scene | After | What it draws |
+|---|---|---|
+| `noise` | | Random glyphs over the whole terminal, a placeholder that proves the loop |
+| `matrix` | [cmatrix](https://github.com/abishekvashok/cmatrix) by Chris Allegretta | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
+| `fire` | [the PSX Doom fire](https://fabiensanglard.net/doom_fire_psx/), via Fabien Sanglard | The doom fire, in half blocks: heat rises from a white-hot base through gold, rose, love and a grey smoke and dies into the background, in Rose Pine colours only, dithered where one meets the next |
+| `life` | [John Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life) | Conway's game of life on a torus, newborn cells in rose and settled ones in iris, reseeded when the board goes still |
+| `pipes` | [pipes.sh](https://github.com/pipeseroni/pipes.sh) by Matthew Simpson | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
+| `bonsai` | [cbonsai](https://gitlab.com/jallbrit/cbonsai) by John Allbritten | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
+| `aquarium` | [asciiquarium](https://robobunny.com/projects/asciiquarium/html/) by Kirk Baucom | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
+| `typing` | [gittype](https://github.com/unhappychoice/gittype) by Yuji Ueki | Types one function at a time from a random file of a git repository, the way a person would, with a cursor and a pause at each line, at a speed you set, coloured by the grammar of each file's language, in a centred frame with line numbers, under a breadcrumb of the file's path and function and over a status line of the language, the cursor's line and column, and the speed, between a file tree open to the current file and a minimap of the whole file |
 
 `hearth --help` lists every scene the build carries.
 
@@ -78,7 +78,7 @@ A scene or `--repo` on the command line comes before the file. `+` and `-` save 
 
 ### Picker
 
-The picker lists each scene with a one-line summary and the speed it starts at, under the `{hearth}` mark. The marked scene runs in a pane beside the list, at its own speed, from its first frame. A narrow terminal drops the pane and shows the mark as the braced word. A short terminal drops the mark, and then the summaries, so every scene stays in the list.
+The picker lists each scene with a one-line summary and the speed it starts at, under the `{hearth}` mark. The marked scene runs in a pane beside the list, at its own speed, from its first frame. The pane's bottom rule names the work and the person whose idea the scene reuses, whole or not at all. A narrow terminal drops the pane and shows the mark as the braced word. A short terminal drops the mark, and then the summaries, so every scene stays in the list.
 
 | Key | Action |
 |---|---|
