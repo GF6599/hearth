@@ -28,3 +28,6 @@ pub const BORDER: BorderType = BorderType::Plain;
 /// A title is cut into the top rule as `┌─ title ─…`, with the lead dash
 /// and the gap after the label as part of the text.
 pub const PICKER_TITLE: &str = "─ scenes ";
+
+/// The picker's keys, cut into its bottom rule the same way.
+pub const PICKER_HINT: &str = "─ ↵ start  j/k move  q quit ";

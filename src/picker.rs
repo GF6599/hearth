@@ -39,9 +39,12 @@ impl Picker<'_> {
             })
             .max();
         let content = widest.unwrap_or(0);
-        let title = theme::PICKER_TITLE.chars().count();
+        let rules = theme::PICKER_TITLE
+            .chars()
+            .count()
+            .max(theme::PICKER_HINT.chars().count());
         let rows = self.entries.len() * if summaries { 2 } else { 1 };
-        let width = u16::try_from(content.max(title) + 2).unwrap_or(u16::MAX);
+        let width = u16::try_from(content.max(rules) + 2).unwrap_or(u16::MAX);
         let height = u16::try_from(rows + 2).unwrap_or(u16::MAX);
         let width = width.min(area.width);
         let height = height.min(area.height);
@@ -59,12 +62,21 @@ impl Widget for Picker<'_> {
         buf.set_style(area, Style::default().bg(theme::BASE));
         let summaries = self.has_summaries(area);
         let frame = self.frame(area, summaries);
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
             .border_style(Style::default().fg(theme::MUTED))
             .style(Style::default().bg(theme::SURFACE))
             .title(theme::PICKER_TITLE);
+        // A hint cut at the corner names keys that do not exist, so it
+        // shows whole or not at all.
+        if usize::from(frame.width) >= theme::PICKER_HINT.chars().count() + 2 {
+            let (lead, keys) = theme::PICKER_HINT.split_at("─ ".len());
+            block = block.title_bottom(Line::from(vec![
+                Span::styled(lead, Style::default().fg(theme::MUTED)),
+                Span::styled(keys, Style::default().fg(theme::SUBTLE)),
+            ]));
+        }
         let inner = block.inner(frame);
         block.render(frame, buf);
 
