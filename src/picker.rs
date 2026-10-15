@@ -73,34 +73,46 @@ impl Picker<'_> {
         self.body(area)
     }
 
+    /// Beside a pane the list starts on the pane's top row, so the two
+    /// frames read as one band, and the list takes its summaries from the
+    /// band's height rather than the area's. Alone it sits in the middle.
     fn body(&self, area: Rect) -> Layout {
-        let summaries = self.has_summaries(area);
-        let preview = self.preview_in(area);
-        let list_area = match preview {
-            Some(_) => Rect::new(area.x, area.y, self.list_width(area), area.height),
-            None => area,
-        };
-        let mut list = self.frame(list_area, summaries);
-        // Beside a pane the list starts on the pane's top row, so the two
-        // frames read as one band.
-        if let Some(inner) = preview {
-            list.y = inner.y - 1;
+        let band = Rect::new(
+            area.x,
+            area.y + 1,
+            area.width,
+            area.height.saturating_sub(2),
+        );
+        if let Some(preview) = self.preview_in(band) {
+            let summaries = self.has_summaries(band);
+            let column = Rect::new(band.x, band.y, self.list_width(band), band.height);
+            let list = Rect {
+                y: band.y,
+                ..self.frame(column, summaries)
+            };
+            return Layout {
+                mark: None,
+                list,
+                summaries,
+                preview: Some(preview),
+            };
         }
+        let summaries = self.has_summaries(area);
         Layout {
             mark: None,
-            list,
+            list: self.frame(area, summaries),
             summaries,
-            preview,
+            preview: None,
         }
     }
 
-    fn preview_in(&self, area: Rect) -> Option<Rect> {
-        let list = self.list_width(area);
+    fn preview_in(&self, band: Rect) -> Option<Rect> {
+        let list = self.list_width(band);
         let pane = Rect::new(
-            area.x + list,
-            area.y + 1,
-            area.width.saturating_sub(list + GAP),
-            area.height.saturating_sub(2),
+            band.x + list,
+            band.y,
+            band.width.saturating_sub(list + GAP),
+            band.height,
         );
         let inner = Rect::new(
             pane.x + 1,
