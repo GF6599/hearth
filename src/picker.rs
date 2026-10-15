@@ -24,14 +24,14 @@ pub struct Entry<'a> {
 
 /// The `[ ]` pair is drawn on every row and only coloured on the current
 /// one, so the labels stay in one column as the selection moves.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct Picker<'a> {
     pub entries: &'a [Entry<'a>],
     pub selected: usize,
 }
 
 /// Where each part of the picker goes in one area.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct Layout {
     mark: Option<(Mark, u16, u16)>,
     list: Rect,
