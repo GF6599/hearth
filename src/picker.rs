@@ -4,6 +4,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
+use crate::mark::Mark;
 use crate::theme;
 
 /// The least inside of the preview pane. A scene squeezed below it reads
@@ -29,13 +30,71 @@ pub struct Picker<'a> {
     pub selected: usize,
 }
 
+/// Where each part of the picker goes in one area.
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    mark: Option<(Mark, u16, u16)>,
+    list: Rect,
+    summaries: bool,
+    preview: Option<Rect>,
+}
+
 impl Picker<'_> {
-    /// A summary takes a row of its own, so on an area too short for two
-    /// rows a scene the summaries go and every name stays in the list.
     /// The inside of the pane to the right of the list, or `None` when the
     /// area leaves it too small. `App` ticks the preview in the same
     /// rectangle it draws it in.
     pub fn preview_area(&self, area: Rect) -> Option<Rect> {
+        self.layout(area).preview
+    }
+
+    /// The mark takes rows only where the list keeps every summary below
+    /// it, and sits on the left edge of the content under it. It falls
+    /// back to the word, and then to nothing.
+    fn layout(&self, area: Rect) -> Layout {
+        let with_summaries = self.entries.len() * 2 + 2;
+        for mark in [Mark::Art, Mark::Word] {
+            let rows = mark.height() + 1;
+            if usize::from(area.height) < usize::from(rows) + with_summaries + 2 {
+                continue;
+            }
+            let body = Rect::new(area.x, area.y + rows, area.width, area.height - rows);
+            let layout = self.body(body);
+            if layout.list.x + mark.width() > area.right() {
+                continue;
+            }
+            let top = layout
+                .preview
+                .map_or(layout.list.y, |inner| layout.list.y.min(inner.y - 1));
+            return Layout {
+                mark: Some((mark, layout.list.x, top - rows)),
+                ..layout
+            };
+        }
+        self.body(area)
+    }
+
+    fn body(&self, area: Rect) -> Layout {
+        let summaries = self.has_summaries(area);
+        let preview = self.preview_in(area);
+        let list_area = match preview {
+            Some(_) => Rect::new(area.x, area.y, self.list_width(area), area.height),
+            None => area,
+        };
+        let mut list = self.frame(list_area, summaries);
+        // Beside a pane the list starts on the pane's top row, so the two
+        // frames read as one band.
+        if let Some(inner) = preview {
+            list.y = inner.y - 1;
+        }
+        Layout {
+            mark: None,
+            list,
+            summaries,
+            preview,
+        }
+    }
+
+    fn preview_in(&self, area: Rect) -> Option<Rect> {
         let list = self.list_width(area);
         let pane = Rect::new(
             area.x + list,
@@ -57,6 +116,8 @@ impl Picker<'_> {
         self.frame(area, self.has_summaries(area)).width + 2 * GAP
     }
 
+    /// A summary takes a row of its own, so on an area too short for two
+    /// rows a scene the summaries go and every name stays in the list.
     fn has_summaries(&self, area: Rect) -> bool {
         self.entries.len() * 2 + 2 <= usize::from(area.height)
     }
@@ -93,19 +154,22 @@ impl Picker<'_> {
 impl Widget for Picker<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         buf.set_style(area, Style::default().bg(theme::BASE));
-        let preview = self.preview_area(area);
-        let summaries = self.has_summaries(area);
-        let list_area = match preview {
-            Some(inner) => {
-                pane().render(
-                    Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2),
-                    buf,
-                );
-                Rect::new(area.x, area.y, self.list_width(area), area.height)
-            }
-            None => area,
-        };
-        let frame = self.frame(list_area, summaries);
+        let Layout {
+            mark,
+            list: frame,
+            summaries,
+            preview,
+        } = self.layout(area);
+        if let Some((mark, x, y)) = mark {
+            let at = Rect::new(x, y, mark.width(), mark.height());
+            Paragraph::new(mark.lines()).render(at.intersection(area), buf);
+        }
+        if let Some(inner) = preview {
+            pane().render(
+                Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2),
+                buf,
+            );
+        }
         let mut block = Block::default()
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
