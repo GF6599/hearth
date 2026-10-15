@@ -6,7 +6,7 @@ use ratatui::widgets::BorderType;
 
 /// The roles of a Rose Pine variant. Every surface takes its colours
 /// from one of these, so a theme is one value.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Palette {
     pub base: Color,
     pub surface: Color,
