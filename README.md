@@ -78,6 +78,8 @@ A scene or `--repo` on the command line comes before the file. `+` and `-` save 
 
 ### Picker
 
+The picker lists each scene with a one-line summary and the speed it starts at, under the `{hearth}` mark. The marked scene runs in a pane beside the list, at its own speed, from its first frame. A narrow terminal drops the pane and shows the mark as the braced word. A short terminal drops the mark, and then the summaries, so every scene stays in the list.
+
 | Key | Action |
 |---|---|
 | `j` / `k` | Move down and up the list, also `Down` / `Up` |
