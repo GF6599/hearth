@@ -586,3 +586,29 @@ fn a_short_terminal_gives_up_the_mark_before_a_summary() {
         "no height shows the summaries with no mark"
     );
 }
+
+/// Given: the picker 60 and 120 columns wide, from 10 to 40 rows high.
+/// When: it renders at each size.
+/// Then: the list frame's bottom-left corner is in the area, in the
+/// column of its top-left corner, and a rule runs from it.
+///
+/// Why it matters: a list one row taller than its room is clipped, so its
+/// bottom rule lands on the last summary and the key hint is lost.
+#[test]
+fn the_list_frame_stays_whole_at_every_height() {
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+    for width in [60, 120] {
+        for height in 10..=40 {
+            // Given, when:
+            let buffer = app_frame(&app, Rect::new(0, 0, width, height));
+
+            // Then:
+            let (x, y) = list_corner(&buffer);
+            let bottom = (y + 1..height)
+                .find(|&b| buffer[(x, b)].symbol() != "│")
+                .unwrap_or_else(|| panic!("no bottom rule at {width}x{height}"));
+            assert_eq!(buffer[(x, bottom)].symbol(), "└", "{width}x{height}");
+            assert_eq!(buffer[(x + 1, bottom)].symbol(), "─", "{width}x{height}");
+        }
+    }
+}
