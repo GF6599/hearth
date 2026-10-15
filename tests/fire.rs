@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use hearth::scene::{Rng, Scene};
-use hearth::scenes::fire::{self, Fire, LEVELS};
+use hearth::scenes::fire::{self, Fire, MAX_HEAT};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -72,21 +72,58 @@ fn bands(buffer: &Buffer, area: Rect) -> Vec<Vec<usize>> {
     rows
 }
 
+/// The dither pattern repeats every four pixels in each direction.
+const TILE: usize = 4;
+
+fn tile() -> impl Iterator<Item = (usize, usize)> {
+    (0..TILE).flat_map(|row| (0..TILE).map(move |x| (x, row)))
+}
+
 /// Given: the ramp.
-/// When: each heat level from none to full is read.
-/// Then: the colours climb through base, overlay, muted, love, rose, gold
-/// and text, in that order, with each stop shown.
+/// When: each heat from none to full is read at each pixel of a tile.
+/// Then: at every pixel the colours climb through base, overlay, muted,
+/// love, rose, gold and text, in that order, with each stop shown.
 ///
 /// Why it matters: a blend between two stops makes a colour that Rose Pine
 /// does not have, and a skipped stop leaves a jump in the flame.
 #[test]
 fn the_ramp_climbs_through_the_seven_stops() {
-    // When:
-    let mut shown: Vec<Color> = (0..=LEVELS).map(fire::color).collect();
-    shown.dedup();
+    for (x, row) in tile() {
+        // When:
+        let mut shown: Vec<Color> = (0..=MAX_HEAT)
+            .map(|heat| fire::color(heat, x, row))
+            .collect();
+        shown.dedup();
 
-    // Then:
-    assert_eq!(shown, RAMP);
+        // Then:
+        assert_eq!(shown, RAMP, "pixel ({x}, {row})");
+    }
+}
+
+/// Given: the ramp.
+/// When: each heat from none to full is drawn over one tile.
+/// Then: the tile holds at most two neighbouring stops, and the sum of its
+/// stops rises one step at a time from all base to all text.
+///
+/// Why it matters: this is the dither. A tile that jumps from one stop to
+/// the next shows the hard bands that the dither exists to hide.
+#[test]
+fn a_tile_shades_from_each_stop_to_the_next() {
+    let mut shades = Vec::new();
+    for heat in 0..=MAX_HEAT {
+        // When:
+        let tile: Vec<usize> = tile()
+            .map(|(x, row)| band_of(fire::color(heat, x, row)))
+            .collect();
+
+        // Then:
+        let (low, high) = (tile.iter().min().unwrap(), tile.iter().max().unwrap());
+        assert!(high - low <= 1, "heat {heat}: {tile:?}");
+        shades.push(tile.iter().sum::<usize>());
+    }
+    shades.dedup();
+    let every_step: Vec<usize> = (0..=FULL * TILE * TILE).collect();
+    assert_eq!(shades, every_step);
 }
 
 /// Given: a scene on a forty by twenty area.
@@ -140,8 +177,9 @@ fn the_bottom_row_stays_at_full_heat() {
 
 /// Given: a scene on a sixteen by eight area.
 /// When: it ticks forty times, with a render after each.
-/// Then: every cell's heat is at most the hottest of the three cells below
-/// it on the frame before, and a cell above three cold cells is cold.
+/// Then: every pixel's stop is at most one above the hottest of the three
+/// pixels below it on the frame before, which is as far as the dither can
+/// lift a pixel.
 ///
 /// Why it matters: heat that appears from nowhere, or climbs, reads as
 /// sparks in the sky instead of a fire.
@@ -161,14 +199,14 @@ fn heat_only_comes_from_below() {
         // Then:
         for (y, row) in current.iter().enumerate().take(current.len() - 1) {
             let below = &previous[y + 1];
-            for (x, &heat) in row.iter().enumerate() {
+            for (x, &band) in row.iter().enumerate() {
                 let hottest_below = (x.saturating_sub(1)..=(x + 1).min(below.len() - 1))
                     .map(|sx| below[sx])
                     .max()
                     .unwrap();
                 assert!(
-                    heat <= hottest_below,
-                    "tick {tick}: heat {heat} at ({x}, {y}) above at most {hottest_below}"
+                    band <= hottest_below + 1,
+                    "tick {tick}: stop {band} at ({x}, {y}) above at most {hottest_below}"
                 );
             }
         }
