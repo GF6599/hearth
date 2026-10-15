@@ -5,6 +5,7 @@ use std::sync::Arc;
 use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
+use hearth::mark;
 use hearth::picker::{Entry, Picker};
 use hearth::scene::{ALL, Rate, SceneKind};
 use hearth::theme;
@@ -331,24 +332,23 @@ fn app_frame(app: &App, area: Rect) -> Buffer {
     buffer
 }
 
-/// The inside of the top-most frame right of the list, which is the
-/// preview pane when there is one. A scene in the pane can draw frames of
-/// its own, and each starts lower than the pane's top rule.
+/// The inside of the top-most frame whose top rule is a plain run of
+/// `─`, which is the preview pane when there is one. The list's rule has
+/// its title cut in, the mark's braces have no rule, and a scene in the
+/// pane draws its own frames lower than the pane's top rule.
 fn pane_inner(buffer: &Buffer) -> Option<Rect> {
     let area = buffer.area;
-    let corners: Vec<(u16, u16)> = (0..area.height)
+    let symbol = |x: u16, y: u16| buffer[(x, y)].symbol();
+    let boxes = (0..area.height)
         .flat_map(|y| (0..area.width).map(move |x| (x, y)))
-        .filter(|&(x, y)| buffer[(x, y)].symbol() == "┌")
-        .collect();
-    if corners.len() < 2 {
-        return None;
-    }
-    let &(x, y) = corners
-        .iter()
-        .min_by_key(|&&(x, y)| (y, std::cmp::Reverse(x)))?;
-    let right = (x + 1..area.width).find(|&r| buffer[(r, y)].symbol() == "┐")?;
-    let bottom = (y + 1..area.height).find(|&b| buffer[(x, b)].symbol() == "└")?;
-    Some(Rect::new(x + 1, y + 1, right - x - 1, bottom - y - 1))
+        .filter(|&(x, y)| symbol(x, y) == "┌")
+        .filter_map(|(x, y)| {
+            let right = (x + 1..area.width).find(|&r| symbol(r, y) != "─")?;
+            let bottom = (y + 1..area.height).find(|&b| symbol(x, b) != "│")?;
+            (right > x + 1 && symbol(right, y) == "┐" && symbol(x, bottom) == "└")
+                .then(|| Rect::new(x + 1, y + 1, right - x - 1, bottom - y - 1))
+        });
+    boxes.min_by_key(|inner| (inner.y, std::cmp::Reverse(inner.x)))
 }
 
 /// What `kind` draws in `inner` after `ticks` ticks when it runs alone.
@@ -463,7 +463,7 @@ fn a_narrow_terminal_shows_the_list_alone() {
     assert_eq!(pane_inner(&narrow), None);
     let top = (0..30)
         .map(|y| row_text(&narrow, y))
-        .find(|row| row.contains('┌'))
+        .find(|row| row.contains(theme::PICKER_TITLE))
         .unwrap();
     let left = top.chars().take_while(|c| *c == ' ').count();
     let right = top.chars().rev().take_while(|c| *c == ' ').count();
@@ -479,4 +479,110 @@ fn a_narrow_terminal_shows_the_list_alone() {
         .min()
         .unwrap();
     assert!(usize::from(inner.x) > list_right + 1, "pane over the list");
+}
+
+/// The column and row of the list frame's top-left corner.
+fn list_corner(buffer: &Buffer) -> (u16, u16) {
+    let lead = format!("┌{}", theme::PICKER_TITLE);
+    (0..buffer.area.height)
+        .find_map(|y| {
+            let row = row_text(buffer, y);
+            row.find(&lead)
+                .map(|byte| (u16::try_from(row[..byte].chars().count()).unwrap(), y))
+        })
+        .expect("no list frame")
+}
+
+fn row_of(buffer: &Buffer, text: &str) -> Option<u16> {
+    (0..buffer.area.height).find(|&y| row_text(buffer, y).contains(text))
+}
+
+/// Given: the picker at 120 by 30, with the preview, and at 60 by 30,
+/// without it.
+/// When: each renders.
+/// Then: the art rows read in order from the list frame's left column,
+/// braces first and the art in iris, and every art row is above the list
+/// and the pane.
+///
+/// Why it matters: a mark that floats off the content column reads as a
+/// separate thing, and one that overlaps the list hides a scene.
+#[test]
+fn the_mark_sits_above_the_content_at_its_left_edge() {
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+    for area in [WIDE, Rect::new(0, 0, 60, 30)] {
+        // Given, when:
+        let buffer = app_frame(&app, area);
+
+        // Then:
+        let (list_x, list_y) = list_corner(&buffer);
+        let first = row_of(&buffer, mark::ART[0]).unwrap_or_else(|| panic!("no art at {area}"));
+        for (offset, line) in (0..).zip(mark::ART) {
+            let y = first + offset;
+            assert!(row_text(&buffer, y).contains(line), "{area}: row {offset}");
+        }
+        assert_eq!(buffer[(list_x, first)].symbol(), "╭", "{area}");
+        assert_eq!(buffer[(list_x + 2, first)].fg, theme::MARKED, "{area}");
+        let last = first + u16::try_from(mark::ART.len()).unwrap() - 1;
+        assert!(last < list_y, "{area}: art over the list");
+        if let Some(inner) = pane_inner(&buffer) {
+            assert!(last < inner.y - 1, "{area}: art over the pane");
+        }
+    }
+}
+
+/// Given: the picker 52 columns wide, too narrow for the art.
+/// When: it renders.
+/// Then: the braced word shows from the list frame's left column, and no
+/// art row shows.
+///
+/// Why it matters: block art cut at the edge shreds into fragments that
+/// read as noise, not as a name.
+#[test]
+fn a_narrow_terminal_shows_the_braced_word() {
+    // Given, when:
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+    let buffer = app_frame(&app, Rect::new(0, 0, 52, 30));
+
+    // Then:
+    let (list_x, _) = list_corner(&buffer);
+    let y = row_of(&buffer, mark::WORD).expect("no braced word");
+    assert_eq!(buffer[(list_x, y)].symbol(), "{");
+    assert_eq!(row_of(&buffer, mark::ART[0]), None);
+}
+
+/// Given: terminal heights from 4 to 40 rows, 120 columns wide.
+/// When: the picker renders at each.
+/// Then: a height that shows the art or the word shows every summary too,
+/// some height shows the summaries with no mark, and at 30 rows the art
+/// shows.
+///
+/// Why it matters: the mark is the brand and the summaries help choose a
+/// scene, so a short terminal gives up the brand first.
+#[test]
+fn a_short_terminal_gives_up_the_mark_before_a_summary() {
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+    let mut summaries_alone = false;
+    for height in 4..=40 {
+        // Given, when:
+        let buffer = app_frame(&app, Rect::new(0, 0, 120, height));
+
+        // Then:
+        let art = row_of(&buffer, mark::ART[0]).is_some();
+        let word = row_of(&buffer, mark::WORD).is_some();
+        let summaries = ALL
+            .iter()
+            .all(|kind| row_of(&buffer, kind.summary()).is_some());
+        assert!(
+            !(art || word) || summaries,
+            "a mark without summaries at {height}"
+        );
+        summaries_alone |= summaries && !art && !word;
+        if height == 30 {
+            assert!(art, "no art at 30 rows");
+        }
+    }
+    assert!(
+        summaries_alone,
+        "no height shows the summaries with no mark"
+    );
 }
