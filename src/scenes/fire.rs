@@ -9,9 +9,7 @@ use crate::theme;
 /// Heat is kept finer than the colour steps, so the decay per row can be
 /// small on a tall terminal and large on a short one, and the flames reach
 /// about the same share of either.
-const MAX_HEAT: u16 = 360;
-
-pub const LEVELS: u16 = 36;
+pub const MAX_HEAT: u16 = 360;
 
 /// Palette colours only, from cold to hot. A blend between two stops would
 /// make a colour that Rose Pine does not have.
@@ -29,13 +27,19 @@ const STOPS: [Color; 7] = [
 /// background the lower one.
 const HALF_BLOCK: char = '▀';
 
-pub fn color(level: u16) -> Color {
-    let level = usize::from(level.min(LEVELS));
-    STOPS[level * STOPS.len() / (usize::from(LEVELS) + 1)]
-}
+/// A 4x4 Bayer matrix. An ordered dither, not a random one, so a heat that
+/// holds still draws a pattern that holds still.
+const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 
-fn level(heat: u16) -> u16 {
-    heat * LEVELS / MAX_HEAT
+const SHADES: usize = 16;
+
+/// The stop for one pixel. Between two stops, the share of pixels that take
+/// the hotter one follows how far the heat is from the cooler one.
+pub fn color(heat: u16, x: usize, row: usize) -> Color {
+    let heat = usize::from(heat.min(MAX_HEAT));
+    let shade = heat * (STOPS.len() - 1) * SHADES / usize::from(MAX_HEAT);
+    let hotter = shade % SHADES > BAYER[row % 4][x % 4];
+    STOPS[shade / SHADES + usize::from(hotter)]
 }
 
 #[derive(Debug)]
@@ -111,8 +115,8 @@ impl Scene for Fire {
                 let lower_heat = self.heat[lower * self.width + column];
                 buf[(area.x + x, area.y + y)]
                     .set_char(HALF_BLOCK)
-                    .set_fg(color(level(upper_heat)))
-                    .set_bg(color(level(lower_heat)));
+                    .set_fg(color(upper_heat, column, upper))
+                    .set_bg(color(lower_heat, column, lower));
             }
         }
     }
