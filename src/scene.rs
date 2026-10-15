@@ -182,7 +182,7 @@ impl SceneKind {
     ) -> Box<dyn Scene> {
         let rng = Rng::seed_from_u64(seed);
         match self {
-            SceneKind::Noise => Box::new(Noise::new(rng)),
+            SceneKind::Noise => Box::new(Noise::new(rng, palette)),
             SceneKind::Matrix => Box::new(Matrix::new(rng, palette)),
             SceneKind::Fire => Box::new(Fire::new(rng, palette)),
             SceneKind::Life => Box::new(Life::new(rng, palette)),

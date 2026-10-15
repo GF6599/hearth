@@ -342,6 +342,11 @@ impl Pane {
         self.rebuild(corpus, speed);
     }
 
+    pub fn repaint(&mut self, palette: &'static Palette, corpus: &Arc<Corpus>, speed: Speed) {
+        self.palette = palette;
+        self.rebuild(corpus, speed);
+    }
+
     pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed) {
         self.credit = 0;
         self.scene = self.kind.build(self.seed, self.palette, corpus, speed);

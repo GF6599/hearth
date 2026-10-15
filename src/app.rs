@@ -111,10 +111,24 @@ impl App {
                 *rate = *saved;
             }
         }
+        if let Some(palette) = config.theme {
+            self = self.with_palette(palette);
+        }
         match config.typing {
             Some(speed) => self.with_speed(speed),
             None => self,
         }
+    }
+
+    fn with_palette(mut self, palette: &'static Palette) -> Self {
+        self.palette = palette;
+        for pane in self.panes.iter_mut() {
+            pane.repaint(palette, &self.corpus, self.speed);
+        }
+        if self.mode == Mode::Picking {
+            self.build_preview();
+        }
+        self
     }
 
     pub fn saving_to(mut self, path: PathBuf) -> Self {

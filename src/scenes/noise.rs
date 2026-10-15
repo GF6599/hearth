@@ -3,12 +3,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use crate::scene::{Rng, Scene};
+use crate::theme::Palette;
 
 /// Static. It exists to prove the loop, the seed and the keys with nothing
 /// to draw.
 #[derive(Debug)]
 pub struct Noise {
     rng: Rng,
+    palette: &'static Palette,
     width: u16,
     cells: Vec<char>,
 }
@@ -16,9 +18,10 @@ pub struct Noise {
 const GLYPHS: &[char] = &[' ', ' ', ' ', '.', ':', '-', '=', '+', '*'];
 
 impl Noise {
-    pub fn new(rng: Rng) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
         Self {
             rng,
+            palette,
             width: 0,
             cells: Vec::new(),
         }
@@ -46,7 +49,9 @@ impl Scene for Noise {
             if x >= area.width || y >= area.height {
                 continue;
             }
-            buf[(area.x + x, area.y + y)].set_char(*glyph);
+            buf[(area.x + x, area.y + y)]
+                .set_char(*glyph)
+                .set_fg(self.palette.text);
         }
     }
 }

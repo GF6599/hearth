@@ -1,5 +1,5 @@
 //! The preferences a user keeps between runs: the scene to start, the
-//! repository to type, and the speed of each scene.
+//! repository to type, the colour theme, and the speed of each scene.
 
 use std::fs;
 use std::io::{self, Write};
@@ -9,11 +9,13 @@ use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::typing::Speed;
+use crate::theme::{self, Palette};
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub scene: Option<SceneKind>,
     pub repo: Option<String>,
+    pub theme: Option<&'static Palette>,
     pub typing: Option<Speed>,
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
@@ -65,10 +67,18 @@ impl Config {
                         .ok_or_else(|| fail("repo must be a string".into()))?;
                     config.repo = Some(repo.to_string());
                 }
+                "theme" => {
+                    let palette = item.as_str().and_then(theme::by_name);
+                    config.theme = Some(palette.ok_or_else(|| {
+                        let names: Vec<&str> =
+                            theme::THEMES.iter().map(|(name, _)| *name).collect();
+                        fail(format!("theme must be one of {}", names.join(", ")))
+                    })?);
+                }
                 "speed" => config.read_speeds(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo and speed"
+                        "{other} is not a setting. The settings are scene, repo, theme and speed"
                     )));
                 }
             }
