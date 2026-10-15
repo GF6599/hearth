@@ -266,3 +266,43 @@ fn a_save_through_a_symlink_keeps_the_link() {
     let saved = Config::load(&real).unwrap();
     assert!(app_with(&saved, "fire").contains("3×"));
 }
+
+/// Given: a file that sets fire to 2 and typing to 80.
+/// When: hearth starts with no scene and the picker renders.
+/// Then: the fire row reads `fire 2×`, the typing row `typing 80 cps`, and
+/// the life row `life 1×`.
+///
+/// Why it matters: a picker that shows the default speed for a scene the
+/// user slowed down tells them the wrong thing about what Enter starts.
+#[test]
+fn the_picker_shows_each_scene_at_its_saved_speed() {
+    // Given:
+    let path = config_file("picker", Some("[speed]\nfire = 2.0\ntyping = 80\n"));
+    let config = Config::load(&path).unwrap();
+    let app = app(&["hearth"], &config);
+
+    // When:
+    let area = Rect::new(0, 0, 100, 30);
+    let mut buffer = Buffer::empty(area);
+    app.render(area, &mut buffer);
+    let rows: Vec<String> = (0..area.height)
+        .map(|y| {
+            let row: String = (0..area.width)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            row.split_whitespace()
+                .filter(|word| *word != "│")
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace(['[', ']'], "")
+        })
+        .collect();
+
+    // Then:
+    for expected in ["fire 2×", "typing 80 cps", "life 1×"] {
+        assert!(
+            rows.iter().any(|row| row == expected),
+            "{expected}: {rows:#?}"
+        );
+    }
+}

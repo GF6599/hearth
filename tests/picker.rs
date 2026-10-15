@@ -15,10 +15,12 @@ const ENTRIES: &[Entry] = &[
     Entry {
         name: "noise",
         summary: "random glyphs",
+        speed: "1×",
     },
     Entry {
         name: "matrix",
         summary: "katakana rain",
+        speed: "2×",
     },
 ];
 
@@ -220,4 +222,59 @@ fn the_app_lists_every_scene_with_its_summary() {
             .unwrap_or_else(|| panic!("no row for {}: {rows:#?}", kind.name()));
         assert_eq!(rows[at + 1], kind.summary(), "{rows:#?}");
     }
+}
+
+/// Given: a picker with room for every name and its speed.
+/// When: it renders.
+/// Then: each speed is on its name's row, in the subtle colour, with one
+/// blank cell between its last character and the right border.
+#[test]
+fn each_speed_sits_at_the_right_of_its_name_row() {
+    // Given, when:
+    let buffer = render(1, 40, 10);
+
+    // Then:
+    for entry in ENTRIES {
+        let (_, name_y) = locate(&buffer, entry.name);
+        let (x, y) = locate(&buffer, entry.speed);
+        let after = x + u16::try_from(entry.speed.chars().count()).unwrap();
+        assert_eq!(y, name_y, "{}", entry.name);
+        assert_eq!(buffer[(x, y)].fg, theme::SUBTLE);
+        assert_eq!(buffer[(after, y)].symbol(), " ");
+        assert_eq!(buffer[(after + 1, y)].symbol(), "│");
+    }
+}
+
+/// Given: terminal widths from 6 to 40 columns.
+/// When: the picker renders at each.
+/// Then: a row that shows a speed shows its whole name, there is a width
+/// where the whole name shows with no speed, and at 40 the speed shows.
+///
+/// Why it matters: a speed beside a cut name tells the user how fast a
+/// scene runs and not which scene it is.
+#[test]
+fn the_speed_goes_before_the_name_is_cut() {
+    let entry = ENTRIES[1];
+    let mut name_alone = false;
+    for width in 6..=40 {
+        // Given, when:
+        let buffer = render(1, width, 10);
+        let row = (0..10)
+            .map(|y| row_text(&buffer, y))
+            .find(|row| row.contains('['))
+            .unwrap_or_else(|| panic!("no marked row at width {width}"));
+
+        // Then:
+        let whole = row.contains(&format!("[{}]", entry.name));
+        let speed = row.contains(entry.speed);
+        assert!(
+            !speed || whole,
+            "speed beside a cut name at {width}: {row:?}"
+        );
+        name_alone |= whole && !speed;
+        if width == 40 {
+            assert!(speed, "{row:?}");
+        }
+    }
+    assert!(name_alone, "no width shows the name without its speed");
 }
