@@ -229,7 +229,9 @@ impl App {
     fn change_speed(&mut self, speed: fn(Speed) -> Speed, rate: fn(Rate) -> Rate) {
         let saved = if self.panes.focused().kind == SceneKind::Typing {
             self.speed = speed(self.speed);
-            self.panes.focused_mut().set_speed(self.speed);
+            for pane in self.panes.iter_mut() {
+                pane.set_speed(self.speed);
+            }
             self.save(Value::from(i64::from(self.speed.cps())))
         } else {
             let slot = self.slot();
