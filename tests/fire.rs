@@ -1,7 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::HashMap;
-
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::fire::{self, Fire, LEVELS};
 use hearth::theme;
@@ -20,34 +18,53 @@ fn render(scene: &Fire, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The heat level behind each colour of the ramp, which must be distinct
-/// for the read-back below to be exact.
-fn level_of_colour() -> HashMap<Color, u16> {
-    let mut map = HashMap::new();
-    for level in 0..=LEVELS {
-        let colour = fire::color(level);
-        assert!(
-            map.insert(colour, level).is_none(),
-            "two levels share {colour:?}"
-        );
-    }
-    map
+/// The agreed ramp, from no heat to full heat.
+const RAMP: [Color; 7] = [
+    theme::BASE,
+    theme::OVERLAY,
+    theme::MUTED,
+    theme::LOVE,
+    theme::ROSE,
+    theme::GOLD,
+    theme::TEXT,
+];
+
+const FULL: usize = RAMP.len() - 1;
+
+const PALETTE: [Color; 12] = [
+    theme::BASE,
+    theme::SURFACE,
+    theme::OVERLAY,
+    theme::MUTED,
+    theme::SUBTLE,
+    theme::TEXT,
+    theme::LOVE,
+    theme::GOLD,
+    theme::ROSE,
+    theme::PINE,
+    theme::FOAM,
+    theme::IRIS,
+];
+
+fn band_of(colour: Color) -> usize {
+    RAMP.iter()
+        .position(|stop| *stop == colour)
+        .unwrap_or_else(|| panic!("{colour:?} is not on the ramp"))
 }
 
-/// The heat grid read back from a render: the foreground of a cell is the
-/// upper heat row and the background the lower one, so the grid has twice
-/// the rows of the area.
-fn levels(buffer: &Buffer, area: Rect) -> Vec<Vec<u16>> {
-    let map = level_of_colour();
+/// The heat grid read back from a render as bands of the ramp: the
+/// foreground of a cell is the upper heat row and the background the lower
+/// one, so the grid has twice the rows of the area.
+fn bands(buffer: &Buffer, area: Rect) -> Vec<Vec<usize>> {
     let mut rows = Vec::with_capacity(usize::from(area.height) * 2);
     for y in area.rows() {
-        let upper: Vec<u16> = y
+        let upper: Vec<usize> = y
             .columns()
-            .map(|cell| map[&buffer[(cell.x, cell.y)].fg])
+            .map(|cell| band_of(buffer[(cell.x, cell.y)].fg))
             .collect();
-        let lower: Vec<u16> = y
+        let lower: Vec<usize> = y
             .columns()
-            .map(|cell| map[&buffer[(cell.x, cell.y)].bg])
+            .map(|cell| band_of(buffer[(cell.x, cell.y)].bg))
             .collect();
         rows.push(upper);
         rows.push(lower);
@@ -56,12 +73,47 @@ fn levels(buffer: &Buffer, area: Rect) -> Vec<Vec<u16>> {
 }
 
 /// Given: the ramp.
-/// When: its two ends are read.
-/// Then: no heat is the base colour and full heat is the text colour.
+/// When: each heat level from none to full is read.
+/// Then: the colours climb through base, overlay, muted, love, rose, gold
+/// and text, in that order, with each stop shown.
+///
+/// Why it matters: a blend between two stops makes a colour that Rose Pine
+/// does not have, and a skipped stop leaves a jump in the flame.
 #[test]
-fn the_ramp_runs_from_base_to_text() {
-    assert_eq!(fire::color(0), theme::BASE);
-    assert_eq!(fire::color(LEVELS), theme::TEXT);
+fn the_ramp_climbs_through_the_seven_stops() {
+    // When:
+    let mut shown: Vec<Color> = (0..=LEVELS).map(fire::color).collect();
+    shown.dedup();
+
+    // Then:
+    assert_eq!(shown, RAMP);
+}
+
+/// Given: a scene on a forty by twenty area.
+/// When: it ticks thirty times and renders.
+/// Then: every cell's foreground and background is a Rose Pine colour.
+///
+/// Why it matters: one colour outside the palette reads as a fault on a
+/// surface where every other cell is Rose Pine.
+#[test]
+fn every_cell_is_a_rose_pine_colour() {
+    // Given:
+    let area = Rect::new(0, 0, 40, 20);
+    let mut scene = scene(7);
+
+    // When:
+    for _ in 0..30 {
+        scene.tick(area);
+    }
+    let buffer = render(&scene, area, area);
+
+    // Then:
+    for position in area.positions() {
+        let cell = &buffer[position];
+        for colour in [cell.fg, cell.bg] {
+            assert!(PALETTE.contains(&colour), "{colour:?} at {position:?}");
+        }
+    }
 }
 
 /// Given: a scene on a twelve by six area.
@@ -77,10 +129,10 @@ fn the_bottom_row_stays_at_full_heat() {
     let mut scene = scene(7);
     for tick in 0..20 {
         scene.tick(area);
-        let grid = levels(&render(&scene, area, area), area);
+        let grid = bands(&render(&scene, area, area), area);
         let bottom = grid.last().unwrap();
         assert!(
-            bottom.iter().all(|&level| level == LEVELS),
+            bottom.iter().all(|&band| band == FULL),
             "tick {tick}: bottom row {bottom:?}"
         );
     }
@@ -99,12 +151,12 @@ fn heat_only_comes_from_below() {
     let area = Rect::new(0, 0, 16, 8);
     let mut scene = scene(7);
     scene.tick(area);
-    let mut previous = levels(&render(&scene, area, area), area);
+    let mut previous = bands(&render(&scene, area, area), area);
 
     // When:
     for tick in 0..40 {
         scene.tick(area);
-        let current = levels(&render(&scene, area, area), area);
+        let current = bands(&render(&scene, area, area), area);
 
         // Then:
         for (y, row) in current.iter().enumerate().take(current.len() - 1) {
@@ -152,8 +204,8 @@ fn a_smaller_area_drops_the_old_buffer() {
                 assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
             }
         }
-        if let Some(bottom) = levels(&buffer, area).last() {
-            assert!(bottom.iter().all(|&level| level == LEVELS), "{bottom:?}");
+        if let Some(bottom) = bands(&buffer, area).last() {
+            assert!(bottom.iter().all(|&band| band == FULL), "{bottom:?}");
         }
     }
 }
