@@ -45,6 +45,9 @@ pub struct App {
     preview_credit: u32,
     mode: Mode,
     selected: usize,
+    /// The focused pane came from a split and its picker has not started
+    /// a scene yet, so Esc closes it.
+    fresh: bool,
     pub should_quit: bool,
 }
 
@@ -75,6 +78,7 @@ impl App {
             preview_credit: 0,
             mode: Mode::Running,
             selected: slot_of(kind),
+            fresh: false,
             should_quit: false,
         }
     }
@@ -290,7 +294,23 @@ impl App {
         let pane = Pane::new(kind, seed, &self.corpus, self.speed);
         self.panes.split(split, pane);
         self.selected = slot_of(kind);
+        self.fresh = true;
         self.open_picker();
+    }
+
+    pub fn close_pane(&mut self) {
+        self.panes.close();
+    }
+
+    /// Esc in the picker of a new pane takes the split back. In any other
+    /// picker it does nothing.
+    pub fn cancel_picker(&mut self) {
+        if self.fresh {
+            self.fresh = false;
+            self.mode = Mode::Running;
+            self.preview = None;
+            self.panes.close();
+        }
     }
 
     pub fn start_selected(&mut self) {
@@ -298,6 +318,7 @@ impl App {
     }
 
     fn switch_to(&mut self, kind: SceneKind) {
+        self.fresh = false;
         self.panes.focused_mut().kind = kind;
         self.selected = slot_of(kind);
         self.mode = Mode::Running;

@@ -137,6 +137,18 @@ impl Panes {
         self.focus = new;
     }
 
+    /// The sibling of the focused pane takes the area of their split and
+    /// the focus. The last pane does not close.
+    pub fn close(&mut self) {
+        let gone = self.focus;
+        let Some(sibling) = self.tree.remove(gone) else {
+            return;
+        };
+        self.tree.renumber(gone);
+        self.panes.remove(gone);
+        self.focus = if sibling > gone { sibling - 1 } else { sibling };
+    }
+
     pub fn layout(&self, area: Rect) -> Layout {
         let mut layout = Layout {
             panes: vec![Rect::default(); self.panes.len()],
@@ -156,6 +168,44 @@ impl Node {
                 Some(leaf) => Some(leaf),
                 None => second.leaf_mut(index),
             },
+        }
+    }
+
+    /// Replaces the split that holds the leaf with the leaf's sibling, and
+    /// answers the first pane of that sibling.
+    fn remove(&mut self, index: usize) -> Option<usize> {
+        let Node::Split(_, first, second) = self else {
+            return None;
+        };
+        let kept = match (&**first, &**second) {
+            (Node::Leaf(leaf), _) if *leaf == index => {
+                std::mem::replace(&mut **second, Node::Leaf(0))
+            }
+            (_, Node::Leaf(leaf)) if *leaf == index => {
+                std::mem::replace(&mut **first, Node::Leaf(0))
+            }
+            _ => return first.remove(index).or_else(|| second.remove(index)),
+        };
+        *self = kept;
+        Some(self.first_leaf())
+    }
+
+    fn first_leaf(&self) -> usize {
+        match self {
+            Node::Leaf(index) => *index,
+            Node::Split(_, first, _) => first.first_leaf(),
+        }
+    }
+
+    /// Closes the gap that a removed pane leaves in `Panes::panes`.
+    fn renumber(&mut self, gone: usize) {
+        match self {
+            Node::Leaf(index) if *index > gone => *index -= 1,
+            Node::Leaf(_) => {}
+            Node::Split(_, first, second) => {
+                first.renumber(gone);
+                second.renumber(gone);
+            }
         }
     }
 

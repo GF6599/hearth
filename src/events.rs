@@ -69,6 +69,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('j') | KeyCode::Down => app.select_next(),
             KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
             KeyCode::Enter => app.start_selected(),
+            KeyCode::Esc => app.cancel_picker(),
             _ => {}
         }
     } else {
@@ -85,6 +86,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('k') | KeyCode::Up => app.move_focus(Direction::Up),
             KeyCode::Char('l') | KeyCode::Right => app.move_focus(Direction::Right),
             KeyCode::Char('s') => app.split_below(),
+            KeyCode::Char('x') => app.close_pane(),
             _ => {}
         }
     }
