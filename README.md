@@ -84,6 +84,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 |---|---|
 | `j` / `k` | Move down and up the list, also `Down` / `Up` |
 | `Enter` | Start the marked scene |
+| `Esc` | Close the pane, when a split just opened it |
 | `q` / `Ctrl-c` | Quit |
 
 ### Scene
@@ -94,7 +95,14 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 | `r` | Restart the scene with a new seed |
 | `+` / `-` | Run the scene on screen faster or slower |
 | `Esc` | Back to the picker |
+| `v` / `s` | Split the pane side by side or stacked |
+| `x` | Close the pane |
+| `h` `j` `k` `l` | Move to the pane on that side, also the arrows |
 | `q` / `Ctrl-c` | Quit |
+
+### Panes
+
+The screen splits the way i3 does. `v` or `s` cuts the focused pane in two, and the new half opens the picker, with the scene after the focused one marked. `Esc` in that picker takes the split back. A thin rule separates the panes, and gold marks at two corners show the focused one. `Tab`, `r`, `+`, `-` and `Esc` act on the focused pane only, and every other pane runs on. `x` gives a pane's area to the other half of its split. The last pane stays. Each split stays at half and half when the terminal changes size.
 
 ## Development
 
