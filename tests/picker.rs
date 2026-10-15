@@ -3,13 +3,15 @@
 use std::sync::Arc;
 
 use hearth::app::App;
+use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::picker::{Entry, Picker};
-use hearth::scene::ALL;
+use hearth::scene::{ALL, Rate, SceneKind};
 use hearth::theme;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 
 const ENTRIES: &[Entry] = &[
     Entry {
@@ -319,4 +321,157 @@ fn the_bottom_rule_holds_the_whole_hint_or_none() {
             assert!(shown, "{bottom:?}");
         }
     }
+}
+
+const WIDE: Rect = Rect::new(0, 0, 120, 30);
+
+fn app_frame(app: &App, area: Rect) -> Buffer {
+    let mut buffer = Buffer::empty(area);
+    app.render(area, &mut buffer);
+    buffer
+}
+
+/// The inside of the right-most frame, which is the preview pane when
+/// there is one.
+fn pane_inner(buffer: &Buffer) -> Option<Rect> {
+    let area = buffer.area;
+    let corners: Vec<(u16, u16)> = (0..area.height)
+        .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| buffer[(x, y)].symbol() == "┌")
+        .collect();
+    if corners.len() < 2 {
+        return None;
+    }
+    let &(x, y) = corners.iter().max_by_key(|(x, _)| *x)?;
+    let right = (x + 1..area.width).find(|&r| buffer[(r, y)].symbol() == "┐")?;
+    let bottom = (y + 1..area.height).find(|&b| buffer[(x, b)].symbol() == "└")?;
+    Some(Rect::new(x + 1, y + 1, right - x - 1, bottom - y - 1))
+}
+
+/// What `kind` draws in `inner` after `ticks` ticks when it runs alone.
+fn alone(kind: SceneKind, ticks: usize, inner: Rect) -> Buffer {
+    let mut app = App::new(kind, 7, Arc::new(Corpus::embedded()));
+    for _ in 0..ticks {
+        app.tick(inner);
+    }
+    app_frame(&app, WIDE)
+}
+
+fn assert_same_inside(shown: &Buffer, expected: &Buffer, inner: Rect, what: &str) {
+    for y in inner.top()..inner.bottom() {
+        for x in inner.left()..inner.right() {
+            assert_eq!(shown[(x, y)], expected[(x, y)], "{what} at ({x}, {y})");
+        }
+    }
+}
+
+/// Given: the picker in a wide terminal, ticked three times on noise.
+/// When: the mark moves to matrix, and later to typing, and the app ticks
+/// five times after each move.
+/// Then: the pane right of the list holds what that scene draws alone
+/// after five ticks in a rectangle the pane's size.
+///
+/// Why it matters: a preview that is not rebuilt on a move shows the last
+/// scene under the new name, and one that differs from the scene alone
+/// shows the user something Enter does not start.
+#[test]
+fn the_pane_runs_the_marked_scene_from_the_start() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    for _ in 0..3 {
+        app.tick(WIDE);
+    }
+
+    for kind in [SceneKind::Matrix, SceneKind::Typing] {
+        // When:
+        while ALL[app_selected(&app)] != kind {
+            app.select_next();
+        }
+        for _ in 0..5 {
+            app.tick(WIDE);
+        }
+
+        // Then:
+        let shown = app_frame(&app, WIDE);
+        let inner = pane_inner(&shown).unwrap_or_else(|| panic!("no pane for {kind:?}"));
+        assert_same_inside(&shown, &alone(kind, 5, inner), inner, kind.name());
+    }
+}
+
+/// The index of the marked row, read from the screen.
+fn app_selected(app: &App) -> usize {
+    let buffer = app_frame(app, WIDE);
+    let marked = (0..WIDE.height)
+        .find(|&y| row_text(&buffer, y).contains('['))
+        .unwrap();
+    let rows = bare_rows(&buffer);
+    let name = rows[usize::from(marked)].split_whitespace().next().unwrap();
+    ALL.iter().position(|kind| kind.name() == name).unwrap()
+}
+
+/// Given: a config that sets fire to 2×, and the picker marking fire.
+/// When: the app ticks five times.
+/// Then: the pane holds what fire draws alone after ten ticks.
+///
+/// Why it matters: a preview at the normal speed shows a scene slower than
+/// the one Enter starts.
+#[test]
+fn the_pane_runs_the_scene_at_its_own_speed() {
+    // Given:
+    let mut config = Config::default();
+    let fire = ALL
+        .iter()
+        .position(|kind| *kind == SceneKind::Fire)
+        .unwrap();
+    config.rates[fire] = Rate::from_times(2.0);
+    let mut app = App::picker(7, Arc::new(Corpus::embedded())).with_config(&config);
+    while app_selected(&app) != fire {
+        app.select_next();
+    }
+
+    // When:
+    for _ in 0..5 {
+        app.tick(WIDE);
+    }
+
+    // Then:
+    let shown = app_frame(&app, WIDE);
+    let inner = pane_inner(&shown).unwrap();
+    assert_same_inside(&shown, &alone(SceneKind::Fire, 10, inner), inner, "fire");
+}
+
+/// Given: the picker in a terminal 60 columns wide, and one 120 wide.
+/// When: each renders.
+/// Then: the narrow one has no pane and its list sits in the middle, and
+/// the wide one has a pane clear of the list.
+///
+/// Why it matters: a pane squeezed into a narrow terminal cuts the list or
+/// shows a scene too small to read.
+#[test]
+fn a_narrow_terminal_shows_the_list_alone() {
+    // Given, when:
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+    let narrow = app_frame(&app, Rect::new(0, 0, 60, 30));
+    let wide = app_frame(&app, WIDE);
+
+    // Then:
+    assert_eq!(pane_inner(&narrow), None);
+    let top = (0..30)
+        .map(|y| row_text(&narrow, y))
+        .find(|row| row.contains('┌'))
+        .unwrap();
+    let left = top.chars().take_while(|c| *c == ' ').count();
+    let right = top.chars().rev().take_while(|c| *c == ' ').count();
+    assert!(left.abs_diff(right) <= 1, "{top:?}");
+
+    let inner = pane_inner(&wide).unwrap();
+    let list_right = (0..30)
+        .filter_map(|y| {
+            row_text(&wide, y)
+                .find('┐')
+                .map(|byte| row_text(&wide, y)[..byte].chars().count())
+        })
+        .min()
+        .unwrap();
+    assert!(usize::from(inner.x) > list_right + 1, "pane over the list");
 }
