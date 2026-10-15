@@ -10,6 +10,19 @@ use crate::scenes::typing::Speed;
 use crate::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// Every split is 1:1, so the panes keep their places relative to each
+/// other on any screen. The focus moves on this plane, because a key
+/// arrives with no frame size.
+const PLANE: Rect = Rect::new(0, 0, 1 << 15, 1 << 15);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Split {
     Beside,
     Below,
@@ -50,6 +63,47 @@ impl Panes {
 
     pub fn focus(&self) -> usize {
         self.focus
+    }
+
+    pub fn is_split(&self) -> bool {
+        self.panes.len() > 1
+    }
+
+    /// The nearest pane on that side that shares a row or a column with
+    /// the focused one, and of two at the same distance, the one across
+    /// from its middle. At an edge the focus stays.
+    pub fn move_focus(&mut self, direction: Direction) {
+        let panes = self.layout(PLANE).panes;
+        let from = panes[self.focus];
+        let middle = Position::new(from.x + from.width / 2, from.y + from.height / 2);
+        let beside = |to: &Rect| from.top() < to.bottom() && to.top() < from.bottom();
+        let above = |to: &Rect| from.left() < to.right() && to.left() < from.right();
+        let gap = |to: &Rect| match direction {
+            Direction::Left => {
+                (to.right() <= from.left() && beside(to)).then(|| from.left() - to.right())
+            }
+            Direction::Right => {
+                (from.right() <= to.left() && beside(to)).then(|| to.left() - from.right())
+            }
+            Direction::Up => {
+                (to.bottom() <= from.top() && above(to)).then(|| from.top() - to.bottom())
+            }
+            Direction::Down => {
+                (from.bottom() <= to.top() && above(to)).then(|| to.top() - from.bottom())
+            }
+        };
+        let across = |to: &Rect| match direction {
+            Direction::Left | Direction::Right => (to.top()..to.bottom()).contains(&middle.y),
+            Direction::Up | Direction::Down => (to.left()..to.right()).contains(&middle.x),
+        };
+        let nearest = panes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, to)| Some((index, gap(to)?, !across(to))))
+            .min_by_key(|&(_, gap, off)| (gap, off));
+        if let Some((index, _, _)) = nearest {
+            self.focus = index;
+        }
     }
 
     pub fn focused(&self) -> &Pane {
@@ -140,6 +194,21 @@ fn halves(split: Split, area: Rect) -> (Rect, Rect, Rect) {
             Rect::new(area.x, area.y + first + rule, area.width, second),
         ),
     }
+}
+
+/// Gold corner marks, the region form of the `[ ]` marker, so the frame
+/// around the pane keeps its colour.
+pub fn render_focus(pane: Rect, buf: &mut Buffer) {
+    if pane.is_empty() {
+        return;
+    }
+    let gold = Style::default().fg(theme::MARKER);
+    buf[(pane.left(), pane.top())]
+        .set_symbol(theme::RULE.top_left)
+        .set_style(gold);
+    buf[(pane.right() - 1, pane.bottom() - 1)]
+        .set_symbol(theme::RULE.bottom_right)
+        .set_style(gold);
 }
 
 /// A rule cell joins any rule that ends against its side, so two rules

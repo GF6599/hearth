@@ -3,6 +3,7 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::App;
+use crate::pane::Direction;
 
 /// The terminal is the only implementation that ships. The seam exists
 /// because `event::poll` needs a live terminal, which a test has not got.
@@ -79,6 +80,10 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Tab => app.next_scene(),
             KeyCode::Esc => app.open_picker(),
             KeyCode::Char('v') => app.split_beside(),
+            KeyCode::Char('h') | KeyCode::Left => app.move_focus(Direction::Left),
+            KeyCode::Char('j') | KeyCode::Down => app.move_focus(Direction::Down),
+            KeyCode::Char('k') | KeyCode::Up => app.move_focus(Direction::Up),
+            KeyCode::Char('l') | KeyCode::Right => app.move_focus(Direction::Right),
             KeyCode::Char('s') => app.split_below(),
             _ => {}
         }

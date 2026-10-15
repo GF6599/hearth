@@ -8,7 +8,7 @@ use ratatui::widgets::Widget;
 
 use crate::config::{self, Config};
 use crate::corpus::Corpus;
-use crate::pane::{self, Pane, Panes, Split, advance};
+use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::scene::{ALL, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
@@ -172,8 +172,12 @@ impl App {
             }
         }
         pane::render_rules(&layout.rules, buf);
+        let focused = layout.panes[self.panes.focus()];
+        if self.panes.is_split() {
+            pane::render_focus(focused, buf);
+        }
         if picking.is_none() && self.notice > 0 {
-            self.render_notice(area, buf);
+            self.render_notice(focused, buf);
         }
     }
 
@@ -263,6 +267,10 @@ impl App {
         let kind = ALL[self.selected];
         self.preview = Some(kind.build(self.panes.focused().seed, &self.corpus, self.speed));
         self.preview_credit = 0;
+    }
+
+    pub fn move_focus(&mut self, direction: Direction) {
+        self.panes.move_focus(direction);
     }
 
     pub fn split_beside(&mut self) {
