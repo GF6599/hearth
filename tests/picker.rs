@@ -35,6 +35,7 @@ fn render(selected: usize, width: u16, height: u16) -> Buffer {
         .draw(|f| {
             f.render_widget(
                 Picker {
+                    palette: &theme::ROSE_PINE,
                     entries: ENTRIES,
                     selected,
                 },

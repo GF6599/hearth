@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::mark::Mark;
-use crate::theme;
+use crate::theme::{self, Palette};
 
 /// The least inside of the preview pane. A scene squeezed below it reads
 /// as noise, so the pane goes and the list keeps the whole area.
@@ -27,6 +27,7 @@ pub struct Entry<'a> {
 /// one, so the labels stay in one column as the selection moves.
 #[derive(Debug)]
 pub struct Picker<'a> {
+    pub palette: &'a Palette,
     pub entries: &'a [Entry<'a>],
     pub selected: usize,
 }
@@ -166,7 +167,7 @@ impl Picker<'_> {
 
 impl Widget for Picker<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(theme::BASE));
+        buf.set_style(area, Style::default().bg(self.palette.base));
         let Layout {
             mark,
             list: frame,
@@ -175,7 +176,7 @@ impl Widget for Picker<'_> {
         } = self.layout(area);
         if let Some((mark, x, y)) = mark {
             let at = Rect::new(x, y, mark.width(), mark.height());
-            Paragraph::new(mark.lines()).render(at.intersection(area), buf);
+            Paragraph::new(mark.lines(self.palette)).render(at.intersection(area), buf);
         }
         if let Some(inner) = preview {
             let area = Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2);
@@ -184,30 +185,39 @@ impl Widget for Picker<'_> {
                 .get(self.selected)
                 .and_then(|entry| entry.credit);
             match credit {
-                Some(credit) => cut_bottom(pane(), area.width, &format!("─ {credit} ")),
-                None => pane(),
+                Some(credit) => cut_bottom(
+                    pane(self.palette),
+                    area.width,
+                    &format!("─ {credit} "),
+                    self.palette,
+                ),
+                None => pane(self.palette),
             }
             .render(area, buf);
         }
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
-            .border_style(Style::default().fg(theme::MUTED))
-            .style(Style::default().bg(theme::SURFACE))
+            .border_style(Style::default().fg(self.palette.muted))
+            .style(Style::default().bg(self.palette.surface))
             .title(theme::PICKER_TITLE);
-        let block = cut_bottom(block, frame.width, theme::PICKER_HINT);
+        let block = cut_bottom(block, frame.width, theme::PICKER_HINT, self.palette);
         let inner = block.inner(frame);
         block.render(frame, buf);
 
         let inner_width = usize::from(inner.width);
         let text_width = inner_width.saturating_sub(2);
         let clip = |text: &str| text.chars().take(text_width).collect::<String>();
-        let marker = Style::default().fg(theme::MARKER);
+        let marker = Style::default().fg(self.palette.marker());
         let mut rows = Vec::new();
         for (index, entry) in self.entries.iter().enumerate() {
             let current = index == self.selected;
             let (open, close) = if current { ("[", "]") } else { (" ", " ") };
-            let name_style = Style::default().fg(if current { theme::MARKED } else { theme::TEXT });
+            let name_style = Style::default().fg(if current {
+                self.palette.marked()
+            } else {
+                self.palette.text
+            });
             let mut row = vec![
                 Span::styled(open, marker),
                 Span::styled(clip(entry.name), name_style),
@@ -217,14 +227,17 @@ impl Widget for Picker<'_> {
                 row.push(Span::raw(" ".repeat(gap + 1)));
                 row.push(Span::styled(
                     entry.speed,
-                    Style::default().fg(theme::SUBTLE),
+                    Style::default().fg(self.palette.subtle),
                 ));
             }
             rows.push(Line::from(row));
             if summaries {
                 rows.push(Line::from(vec![
                     Span::raw(" "),
-                    Span::styled(clip(entry.summary), Style::default().fg(theme::SUBTLE)),
+                    Span::styled(
+                        clip(entry.summary),
+                        Style::default().fg(self.palette.subtle),
+                    ),
                 ]));
             }
         }
@@ -244,21 +257,21 @@ fn name_row(entry: &Entry) -> usize {
 /// `width` cells wide, in the hint's colours. A label cut at the corner
 /// names a key or a person that does not exist, so it shows whole or not
 /// at all.
-fn cut_bottom(block: Block<'static>, width: u16, label: &str) -> Block<'static> {
+fn cut_bottom(block: Block<'static>, width: u16, label: &str, palette: &Palette) -> Block<'static> {
     if usize::from(width) < label.chars().count() + 2 {
         return block;
     }
     let (lead, text) = label.split_at("─ ".len());
     block.title_bottom(Line::from(vec![
-        Span::styled(lead.to_owned(), Style::default().fg(theme::MUTED)),
-        Span::styled(text.to_owned(), Style::default().fg(theme::SUBTLE)),
+        Span::styled(lead.to_owned(), Style::default().fg(palette.muted)),
+        Span::styled(text.to_owned(), Style::default().fg(palette.subtle)),
     ]))
 }
 
-fn pane() -> Block<'static> {
+fn pane(palette: &Palette) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(theme::BORDER)
-        .border_style(Style::default().fg(theme::MUTED))
-        .style(Style::default().bg(theme::BASE))
+        .border_style(Style::default().fg(palette.muted))
+        .style(Style::default().bg(palette.base))
 }

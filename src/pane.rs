@@ -7,7 +7,7 @@ use ratatui::style::Style;
 use crate::corpus::Corpus;
 use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
-use crate::theme;
+use crate::theme::{self, Palette};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -248,11 +248,11 @@ fn halves(split: Split, area: Rect) -> (Rect, Rect, Rect) {
 
 /// Gold corner marks, the region form of the `[ ]` marker, so the frame
 /// around the pane keeps its colour.
-pub fn render_focus(pane: Rect, buf: &mut Buffer) {
+pub fn render_focus(pane: Rect, palette: &Palette, buf: &mut Buffer) {
     if pane.is_empty() {
         return;
     }
-    let gold = Style::default().fg(theme::MARKER);
+    let gold = Style::default().fg(palette.marker());
     buf[(pane.left(), pane.top())]
         .set_symbol(theme::RULE.top_left)
         .set_style(gold);
@@ -263,14 +263,14 @@ pub fn render_focus(pane: Rect, buf: &mut Buffer) {
 
 /// A rule cell joins any rule that ends against its side, so two rules
 /// meet in a tee and do not read as two frames drawn over each other.
-pub fn render_rules(rules: &[(Split, Rect)], buf: &mut Buffer) {
+pub fn render_rules(rules: &[(Split, Rect)], palette: &Palette, buf: &mut Buffer) {
     let on_rule = |x: Option<u16>, y: Option<u16>| match (x, y) {
         (Some(x), Some(y)) => rules
             .iter()
             .any(|(_, rule)| rule.contains(Position::new(x, y))),
         _ => false,
     };
-    let style = Style::default().fg(theme::MUTED).bg(theme::BASE);
+    let style = Style::default().fg(palette.muted).bg(palette.base);
     for (split, rule) in rules {
         for Position { x, y } in rule.positions() {
             let symbol = match split {

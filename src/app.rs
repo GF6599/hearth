@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
 use crate::config::{self, Config};
@@ -12,12 +12,11 @@ use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::scene::{ALL, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
-use crate::theme;
+use crate::theme::{self, Palette};
 use toml_edit::Value;
 
 /// Frames a changed speed stays on screen, about one second.
 const NOTICE_TICKS: u32 = 16;
-const NOTICE_COLOUR: Color = theme::SUBTLE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -26,6 +25,7 @@ enum Mode {
 }
 
 pub struct App {
+    palette: &'static Palette,
     panes: Panes,
     corpus: Arc<Corpus>,
     speed: Speed,
@@ -67,6 +67,7 @@ impl std::fmt::Debug for App {
 impl App {
     pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
         Self {
+            palette: &theme::ROSE_PINE,
             panes: Panes::new(Pane::new(kind, seed, &corpus, Speed::DEFAULT)),
             corpus,
             speed: Speed::DEFAULT,
@@ -154,13 +155,14 @@ impl App {
             })
             .collect();
         f(Picker {
+            palette: self.palette,
             entries: &entries,
             selected: self.selected,
         })
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(theme::BASE));
+        buf.set_style(area, Style::default().bg(self.palette.base));
         let layout = self.panes.layout(area);
         let picking = self.is_picking().then(|| self.panes.focus());
         for (index, (pane, inside)) in self.panes.iter().zip(&layout.panes).enumerate() {
@@ -176,10 +178,10 @@ impl App {
                 pane.render(*inside, buf);
             }
         }
-        pane::render_rules(&layout.rules, buf);
+        pane::render_rules(&layout.rules, self.palette, buf);
         let focused = layout.panes[self.panes.focus()];
         if self.panes.is_split() {
-            pane::render_focus(focused, buf);
+            pane::render_focus(focused, self.palette, buf);
         }
         if picking.is_none() && self.notice > 0 {
             self.render_notice(focused, buf);
@@ -195,7 +197,7 @@ impl App {
         }
         let width = u16::try_from(notice.chars().count()).unwrap_or(u16::MAX);
         let x = area.right() - width.min(area.width);
-        let style = Style::default().fg(NOTICE_COLOUR);
+        let style = Style::default().fg(self.palette.subtle);
         buf.set_stringn(x, area.y, notice, usize::from(area.width), style);
     }
 

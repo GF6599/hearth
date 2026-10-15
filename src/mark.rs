@@ -5,7 +5,7 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::theme;
+use crate::theme::Palette;
 
 pub const ART: [&str; 6] = [
     "██╗  ██╗███████╗ █████╗ ██████╗ ████████╗██╗  ██╗",
@@ -44,9 +44,9 @@ impl Mark {
         }
     }
 
-    pub fn lines(self) -> Vec<Line<'static>> {
-        let brace = Style::default().fg(theme::SUBTLE);
-        let name = Style::default().fg(theme::MARKED);
+    pub fn lines(self, palette: &Palette) -> Vec<Line<'static>> {
+        let brace = Style::default().fg(palette.subtle);
+        let name = Style::default().fg(palette.marked());
         match self {
             Mark::Art => (0..ART.len())
                 .map(|row| {
