@@ -8,7 +8,7 @@ use ratatui::widgets::Widget;
 
 use crate::config::{self, Config};
 use crate::corpus::Corpus;
-use crate::pane::{Pane, advance};
+use crate::pane::{self, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::scene::{ALL, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
@@ -26,7 +26,7 @@ enum Mode {
 }
 
 pub struct App {
-    pane: Pane,
+    panes: Panes,
     corpus: Arc<Corpus>,
     speed: Speed,
     /// One for each scene in `ALL`, so each keeps its own through a
@@ -51,8 +51,7 @@ pub struct App {
 impl std::fmt::Debug for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("App")
-            .field("kind", &self.pane.kind)
-            .field("seed", &self.pane.seed)
+            .field("panes", &self.panes)
             .field("speed", &self.speed)
             .field("rates", &self.rates)
             .field("mode", &self.mode)
@@ -65,7 +64,7 @@ impl std::fmt::Debug for App {
 impl App {
     pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
         Self {
-            pane: Pane::new(kind, seed, &corpus, Speed::DEFAULT),
+            panes: Panes::new(Pane::new(kind, seed, &corpus, Speed::DEFAULT)),
             corpus,
             speed: Speed::DEFAULT,
             rates: [Rate::NORMAL; ALL.len()],
@@ -88,7 +87,7 @@ impl App {
 
     fn with_speed(mut self, speed: Speed) -> Self {
         self.speed = speed;
-        self.pane.rebuild(&self.corpus, speed);
+        self.panes.focused_mut().rebuild(&self.corpus, speed);
         if self.mode == Mode::Picking {
             self.build_preview();
         }
@@ -116,20 +115,24 @@ impl App {
         self.mode == Mode::Picking
     }
 
+    /// The pane under the picker holds still, and the picker's preview
+    /// runs in its place.
     pub fn tick(&mut self, area: Rect) {
         self.notice = self.notice.saturating_sub(1);
-        match self.mode {
-            Mode::Running => {
-                let rate = self.rates[self.slot()];
-                self.pane.tick(rate, area);
+        let layout = self.panes.layout(area);
+        let picking = self.is_picking().then(|| self.panes.focus());
+        for (index, (pane, inside)) in self.panes.iter_mut().zip(&layout.panes).enumerate() {
+            if Some(index) != picking {
+                pane.tick(self.rates[slot_of(pane.kind)], *inside);
             }
-            Mode::Picking => {
-                let kind = ALL[self.selected];
-                let rate = self.rates[self.selected];
-                let pane = self.with_picker(|picker| picker.preview_area(area));
-                if let (Some(scene), Some(pane)) = (&mut self.preview, pane) {
-                    advance(&mut **scene, kind, rate, &mut self.preview_credit, pane);
-                }
+        }
+        if let Some(focus) = picking {
+            let kind = ALL[self.selected];
+            let rate = self.rates[self.selected];
+            let inside = layout.panes[focus];
+            let preview = self.with_picker(|picker| picker.preview_area(inside));
+            if let (Some(scene), Some(preview)) = (&mut self.preview, preview) {
+                advance(&mut **scene, kind, rate, &mut self.preview_credit, preview);
             }
         }
     }
@@ -152,28 +155,32 @@ impl App {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        match self.mode {
-            Mode::Picking => self.with_picker(|picker| {
-                let pane = picker.preview_area(area);
-                picker.render(area, buf);
-                if let (Some(scene), Some(pane)) = (&self.preview, pane) {
-                    scene.render(pane, buf);
-                }
-            }),
-            Mode::Running => {
-                buf.set_style(area, Style::default().bg(theme::BASE));
-                self.pane.render(area, buf);
-                if self.notice > 0 {
-                    self.render_notice(area, buf);
-                }
+        buf.set_style(area, Style::default().bg(theme::BASE));
+        let layout = self.panes.layout(area);
+        let picking = self.is_picking().then(|| self.panes.focus());
+        for (index, (pane, inside)) in self.panes.iter().zip(&layout.panes).enumerate() {
+            if Some(index) == picking {
+                self.with_picker(|picker| {
+                    let preview = picker.preview_area(*inside);
+                    picker.render(*inside, buf);
+                    if let (Some(scene), Some(preview)) = (&self.preview, preview) {
+                        scene.render(preview, buf);
+                    }
+                });
+            } else {
+                pane.render(*inside, buf);
             }
+        }
+        pane::render_rules(&layout.rules, buf);
+        if picking.is_none() && self.notice > 0 {
+            self.render_notice(area, buf);
         }
     }
 
     /// A notice wider than the area is cut at its left edge, so the reason
     /// a save failed is never hidden by the speed in front of it.
     fn render_notice(&self, area: Rect, buf: &mut Buffer) {
-        let mut notice = self.speed_label(self.pane.kind);
+        let mut notice = self.speed_label(self.panes.focused().kind);
         if let Some(reason) = &self.unsaved {
             notice = format!("{notice}, not saved: {reason}");
         }
@@ -192,15 +199,15 @@ impl App {
     }
 
     fn slot(&self) -> usize {
-        slot_of(self.pane.kind)
+        slot_of(self.panes.focused().kind)
     }
 
     pub fn restart(&mut self) {
-        self.pane.restart(&self.corpus, self.speed);
+        self.panes.focused_mut().restart(&self.corpus, self.speed);
     }
 
     pub fn next_scene(&mut self) {
-        self.switch_to(self.pane.kind.next());
+        self.switch_to(self.panes.focused().kind.next());
     }
 
     pub fn faster(&mut self) {
@@ -212,9 +219,9 @@ impl App {
     }
 
     fn change_speed(&mut self, speed: fn(Speed) -> Speed, rate: fn(Rate) -> Rate) {
-        let saved = if self.pane.kind == SceneKind::Typing {
+        let saved = if self.panes.focused().kind == SceneKind::Typing {
             self.speed = speed(self.speed);
-            self.pane.set_speed(self.speed);
+            self.panes.focused_mut().set_speed(self.speed);
             self.save(Value::from(i64::from(self.speed.cps())))
         } else {
             let slot = self.slot();
@@ -227,7 +234,7 @@ impl App {
 
     fn save(&self, speed: Value) -> std::io::Result<()> {
         match &self.saving {
-            Some(path) => config::save_speed(path, self.pane.kind, speed),
+            Some(path) => config::save_speed(path, self.panes.focused().kind, speed),
             None => Ok(()),
         }
     }
@@ -254,8 +261,28 @@ impl App {
 
     fn build_preview(&mut self) {
         let kind = ALL[self.selected];
-        self.preview = Some(kind.build(self.pane.seed, &self.corpus, self.speed));
+        self.preview = Some(kind.build(self.panes.focused().seed, &self.corpus, self.speed));
         self.preview_credit = 0;
+    }
+
+    pub fn split_beside(&mut self) {
+        self.split(Split::Beside);
+    }
+
+    pub fn split_below(&mut self) {
+        self.split(Split::Below);
+    }
+
+    /// The new pane opens on the picker, marking the scene after the
+    /// focused one, so Enter alone gives two different scenes.
+    fn split(&mut self, split: Split) {
+        let focused = self.panes.focused();
+        let kind = focused.kind.next();
+        let seed = focused.seed.wrapping_add(1);
+        let pane = Pane::new(kind, seed, &self.corpus, self.speed);
+        self.panes.split(split, pane);
+        self.selected = slot_of(kind);
+        self.open_picker();
     }
 
     pub fn start_selected(&mut self) {
@@ -263,7 +290,7 @@ impl App {
     }
 
     fn switch_to(&mut self, kind: SceneKind) {
-        self.pane.kind = kind;
+        self.panes.focused_mut().kind = kind;
         self.selected = slot_of(kind);
         self.mode = Mode::Running;
         self.preview = None;

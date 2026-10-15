@@ -78,6 +78,8 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('-') => app.slower(),
             KeyCode::Tab => app.next_scene(),
             KeyCode::Esc => app.open_picker(),
+            KeyCode::Char('v') => app.split_beside(),
+            KeyCode::Char('s') => app.split_below(),
             _ => {}
         }
     }

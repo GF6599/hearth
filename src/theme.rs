@@ -1,6 +1,7 @@
 //! The Rose Pine palette, and the two roles the chrome draws with.
 
 use ratatui::style::Color;
+use ratatui::symbols::line;
 use ratatui::widgets::BorderType;
 
 pub const BASE: Color = Color::Rgb(0x19, 0x17, 0x24);
@@ -24,6 +25,13 @@ pub const MARKED: Color = IRIS;
 /// Every frame takes its corners from here, so a rounded surface can only
 /// come back deliberately.
 pub const BORDER: BorderType = BorderType::Plain;
+
+/// The rules between panes, in the weight `BORDER` sets.
+pub const RULE: line::Set = match BORDER {
+    BorderType::Double => line::DOUBLE,
+    BorderType::Thick => line::THICK,
+    _ => line::NORMAL,
+};
 
 /// A title is cut into the top rule as `┌─ title ─…`, with the lead dash
 /// and the gap after the label as part of the text.

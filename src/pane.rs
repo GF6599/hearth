@@ -1,11 +1,183 @@
 use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
+use ratatui::style::Style;
 
 use crate::corpus::Corpus;
 use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
+use crate::theme;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Split {
+    Beside,
+    Below,
+}
+
+/// A leaf names its pane by its place in `Panes::panes`, so a split
+/// replaces one leaf and moves no scene.
+#[derive(Debug)]
+enum Node {
+    Leaf(usize),
+    Split(Split, Box<Node>, Box<Node>),
+}
+
+/// The panes on screen as an i3 tree of splits, each split 1:1.
+#[derive(Debug)]
+pub struct Panes {
+    tree: Node,
+    panes: Vec<Pane>,
+    focus: usize,
+}
+
+/// Where each pane and each rule goes in one area. `panes` is in the
+/// order of `Panes::panes`.
+#[derive(Debug)]
+pub struct Layout {
+    pub panes: Vec<Rect>,
+    pub rules: Vec<(Split, Rect)>,
+}
+
+impl Panes {
+    pub fn new(pane: Pane) -> Self {
+        Self {
+            tree: Node::Leaf(0),
+            panes: vec![pane],
+            focus: 0,
+        }
+    }
+
+    pub fn focus(&self) -> usize {
+        self.focus
+    }
+
+    pub fn focused(&self) -> &Pane {
+        &self.panes[self.focus]
+    }
+
+    pub fn focused_mut(&mut self) -> &mut Pane {
+        &mut self.panes[self.focus]
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Pane> {
+        self.panes.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Pane> {
+        self.panes.iter_mut()
+    }
+
+    /// The new pane goes after the focused one and takes the focus, as in
+    /// i3.
+    pub fn split(&mut self, split: Split, pane: Pane) {
+        let new = self.panes.len();
+        self.panes.push(pane);
+        if let Some(leaf) = self.tree.leaf_mut(self.focus) {
+            *leaf = Node::Split(
+                split,
+                Box::new(Node::Leaf(self.focus)),
+                Box::new(Node::Leaf(new)),
+            );
+        }
+        self.focus = new;
+    }
+
+    pub fn layout(&self, area: Rect) -> Layout {
+        let mut layout = Layout {
+            panes: vec![Rect::default(); self.panes.len()],
+            rules: Vec::new(),
+        };
+        self.tree.place(area, &mut layout);
+        layout
+    }
+}
+
+impl Node {
+    fn leaf_mut(&mut self, index: usize) -> Option<&mut Node> {
+        match self {
+            Node::Leaf(leaf) if *leaf == index => Some(self),
+            Node::Leaf(_) => None,
+            Node::Split(_, first, second) => match first.leaf_mut(index) {
+                Some(leaf) => Some(leaf),
+                None => second.leaf_mut(index),
+            },
+        }
+    }
+
+    fn place(&self, area: Rect, layout: &mut Layout) {
+        match self {
+            Node::Leaf(index) => layout.panes[*index] = area,
+            Node::Split(split, first, second) => {
+                let (before, rule, after) = halves(*split, area);
+                layout.rules.push((*split, rule));
+                first.place(before, layout);
+                second.place(after, layout);
+            }
+        }
+    }
+}
+
+/// The first half takes the smaller share of an odd length, and the rule
+/// takes one cell between the two.
+fn halves(split: Split, area: Rect) -> (Rect, Rect, Rect) {
+    let length = match split {
+        Split::Beside => area.width,
+        Split::Below => area.height,
+    };
+    let first = length.saturating_sub(1) / 2;
+    let rule = (length - first).min(1);
+    let second = length - first - rule;
+    match split {
+        Split::Beside => (
+            Rect::new(area.x, area.y, first, area.height),
+            Rect::new(area.x + first, area.y, rule, area.height),
+            Rect::new(area.x + first + rule, area.y, second, area.height),
+        ),
+        Split::Below => (
+            Rect::new(area.x, area.y, area.width, first),
+            Rect::new(area.x, area.y + first, area.width, rule),
+            Rect::new(area.x, area.y + first + rule, area.width, second),
+        ),
+    }
+}
+
+/// A rule cell joins any rule that ends against its side, so two rules
+/// meet in a tee and do not read as two frames drawn over each other.
+pub fn render_rules(rules: &[(Split, Rect)], buf: &mut Buffer) {
+    let on_rule = |x: Option<u16>, y: Option<u16>| match (x, y) {
+        (Some(x), Some(y)) => rules
+            .iter()
+            .any(|(_, rule)| rule.contains(Position::new(x, y))),
+        _ => false,
+    };
+    let style = Style::default().fg(theme::MUTED).bg(theme::BASE);
+    for (split, rule) in rules {
+        for Position { x, y } in rule.positions() {
+            let symbol = match split {
+                Split::Beside => match (
+                    on_rule(x.checked_sub(1), Some(y)),
+                    on_rule(x.checked_add(1), Some(y)),
+                ) {
+                    (true, true) => theme::RULE.cross,
+                    (false, true) => theme::RULE.vertical_right,
+                    (true, false) => theme::RULE.vertical_left,
+                    (false, false) => theme::RULE.vertical,
+                },
+                Split::Below => match (
+                    on_rule(Some(x), y.checked_sub(1)),
+                    on_rule(Some(x), y.checked_add(1)),
+                ) {
+                    (true, true) => theme::RULE.cross,
+                    (false, true) => theme::RULE.horizontal_down,
+                    (true, false) => theme::RULE.horizontal_up,
+                    (false, false) => theme::RULE.horizontal,
+                },
+            };
+            buf[(x, y)].set_symbol(symbol).set_style(style);
+        }
+    }
+}
 
 /// One scene and the seed it was built from. Each pane keeps its own seed,
 /// so a restart in one pane replays nothing in another.
