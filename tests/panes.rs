@@ -376,3 +376,120 @@ fn a_new_speed_shows_in_the_focused_pane() {
     assert!(row(LEFT).ends_with("1.5×"), "{}", row(LEFT));
     assert!(!row(RIGHT).contains('×'), "{}", row(RIGHT));
 }
+
+/// Given: the fire beside life, with the focus on life.
+/// When: `x` closes life, and the app ticks three times.
+/// Then: the fire runs alone over the whole screen, with no rule and no
+/// marks.
+///
+/// Why it matters: a closed pane that leaves its rule or its area behind
+/// shrinks the screen for good.
+#[test]
+fn x_gives_the_closed_pane_s_area_to_its_sibling() {
+    // Given:
+    let mut app = fire();
+    send(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
+
+    // When:
+    send(&mut app, &[KeyCode::Char('x')]);
+    for _ in 0..3 {
+        app.tick(AREA);
+    }
+
+    // Then:
+    assert_same_inside(
+        &frame(&app),
+        &alone(SceneKind::Fire, 7, 3, AREA),
+        AREA,
+        "fire",
+    );
+}
+
+/// Given: the fire beside life, and life split again below.
+/// When: `x` closes the bottom-right pane, and the app ticks three times.
+/// Then: life takes the whole right half and the focus, and the fire on
+/// the left runs on as it was.
+///
+/// Why it matters: a close must give the area to the closed pane's own
+/// sibling and leave the rest of the tree as it was.
+#[test]
+fn a_close_in_a_stack_changes_that_stack_only() {
+    // Given:
+    let mut app = fire();
+    send(
+        &mut app,
+        &[
+            KeyCode::Char('v'),
+            KeyCode::Enter,
+            KeyCode::Char('s'),
+            KeyCode::Enter,
+        ],
+    );
+
+    // When:
+    send(&mut app, &[KeyCode::Char('x')]);
+    for _ in 0..3 {
+        app.tick(AREA);
+    }
+
+    // Then:
+    let shown = frame(&app);
+    assert_eq!(focused(&shown, &[LEFT, RIGHT]), Some(RIGHT));
+    assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 3, LEFT), LEFT, "fire");
+    assert_same_but_marks(&shown, &alone(SceneKind::Life, 9, 3, RIGHT), RIGHT, "life");
+    assert_rule(&shown, Rect::new(19, 0, 1, 12), "│");
+}
+
+/// Given: the fire alone on the screen.
+/// When: `x` is pressed, and the app ticks three times.
+/// Then: the fire still runs over the whole screen.
+///
+/// Why it matters: a screensaver with no pane has nothing to draw and no
+/// pane to open the picker in.
+#[test]
+fn the_last_pane_does_not_close() {
+    // Given:
+    let mut app = fire();
+
+    // When:
+    send(&mut app, &[KeyCode::Char('x')]);
+    for _ in 0..3 {
+        app.tick(AREA);
+    }
+
+    // Then:
+    assert!(!app.should_quit);
+    assert_same_inside(
+        &frame(&app),
+        &alone(SceneKind::Fire, 7, 3, AREA),
+        AREA,
+        "fire",
+    );
+}
+
+/// Given: the fire split side by side, with the picker in the new pane.
+/// When: Esc is pressed, and the app ticks three times.
+/// Then: the new pane is gone and the fire runs over the whole screen.
+///
+/// Why it matters: a split made by mistake must cost one key to undo.
+#[test]
+fn esc_in_a_new_pane_s_picker_closes_the_pane() {
+    // Given:
+    let mut app = fire();
+    send(&mut app, &[KeyCode::Char('v')]);
+
+    // When:
+    send(&mut app, &[KeyCode::Esc]);
+    for _ in 0..3 {
+        app.tick(AREA);
+    }
+
+    // Then:
+    assert!(!app.is_picking());
+    assert_same_inside(
+        &frame(&app),
+        &alone(SceneKind::Fire, 7, 3, AREA),
+        AREA,
+        "fire",
+    );
+}
