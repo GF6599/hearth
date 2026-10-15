@@ -38,7 +38,13 @@ const SHADES: usize = 16;
 /// The stop for one pixel. Between two stops, the share of pixels that take
 /// the hotter one follows how far the heat is from the cooler one.
 pub fn color(palette: &Palette, heat: u16, x: usize, row: usize) -> Color {
-    let stops = stops(palette);
+    let all = stops(palette);
+    // A light theme's text is its darkest role, so its fire ends at gold.
+    let stops = if palette.is_light() {
+        &all[..all.len() - 1]
+    } else {
+        &all[..]
+    };
     let heat = usize::from(heat.min(MAX_HEAT));
     let shade = heat * (stops.len() - 1) * SHADES / usize::from(MAX_HEAT);
     let hotter = shade % SHADES > BAYER[row % 4][x % 4];
