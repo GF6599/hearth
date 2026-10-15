@@ -74,7 +74,7 @@ impl App {
             saving: None,
             unsaved: None,
             mode: Mode::Running,
-            selected: ALL.iter().position(|k| *k == kind).unwrap_or(0),
+            selected: slot_of(kind),
             should_quit: false,
         }
     }
@@ -244,7 +244,7 @@ impl App {
 
     fn switch_to(&mut self, kind: SceneKind) {
         self.kind = kind;
-        self.selected = ALL.iter().position(|k| *k == kind).unwrap_or(0);
+        self.selected = slot_of(kind);
         self.mode = Mode::Running;
         self.restart();
     }
