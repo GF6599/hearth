@@ -68,13 +68,14 @@ hearth reads `~/.config/hearth/config.toml` (or `$XDG_CONFIG_HOME/hearth/config.
 ```toml
 scene = "fire"            # the scene a bare `hearth` starts. Absent: the picker
 repo = "rust-lang/rust"   # what the typing scene types. Absent: hearth's own source
+theme = "rose-pine-dawn"  # rose-pine, rose-pine-moon or rose-pine-dawn. Absent: rose-pine
 
 [speed]
 typing = 50     # keystrokes per second, from 1 to 1000
 fire = 1.5      # times the normal pace: 0.25, 0.5, 0.75, 1, 1.5, 2, 3 or 4
 ```
 
-A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
+The theme colours every scene and the picker. Dawn is a light theme, so its fire grows from gold, its brightest accent, and not from white. A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
 
 ### Picker
 
