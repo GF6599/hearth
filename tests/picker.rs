@@ -279,3 +279,44 @@ fn a_speed_shows_whole_or_not_at_all() {
     }
     assert!(name_alone, "no width shows the name without its speed");
 }
+
+/// Given: terminal widths from 6 to 120 columns.
+/// When: the picker renders at each.
+/// Then: the bottom rule holds the whole key hint, in the subtle colour, or
+/// none of it, and at 40 columns it holds the hint.
+///
+/// Why it matters: a hint cut at the corner reads as a key that does not
+/// exist, and a hint that breaks the rule leaves a gap in the frame.
+#[test]
+fn the_bottom_rule_holds_the_whole_hint_or_none() {
+    for width in 6..=120 {
+        // Given, when:
+        let buffer = render(0, width, 8);
+        let (y, bottom) = (0..buffer.area.height)
+            .map(|y| (y, row_text(&buffer, y)))
+            .find(|(_, row)| row.contains('└'))
+            .unwrap_or_else(|| panic!("no frame at width {width}"));
+
+        // Then:
+        let shown = bottom.contains(theme::PICKER_HINT);
+        let rule = bottom.trim().replacen(theme::PICKER_HINT, "", 1);
+        assert!(
+            rule.starts_with('└') && rule.ends_with('┘'),
+            "no corners at width {width}: {bottom:?}"
+        );
+        assert!(
+            rule.trim_matches(|c| c == '└' || c == '┘')
+                .chars()
+                .all(|c| c == '─'),
+            "part of the hint at width {width}: {bottom:?}"
+        );
+        if shown {
+            let x = bottom.chars().position(|c| c == '↵').unwrap();
+            let x = u16::try_from(x).unwrap();
+            assert_eq!(buffer[(x, y)].fg, theme::SUBTLE, "{width}");
+        }
+        if width == 40 {
+            assert!(shown, "{bottom:?}");
+        }
+    }
+}
