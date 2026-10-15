@@ -389,9 +389,7 @@ fn the_pane_runs_the_marked_scene_from_the_start() {
 
     for kind in [SceneKind::Matrix, SceneKind::Typing] {
         // When:
-        while ALL[app_selected(&app)] != kind {
-            app.select_next();
-        }
+        select(&mut app, kind);
         for _ in 0..5 {
             app.tick(WIDE);
         }
@@ -403,14 +401,34 @@ fn the_pane_runs_the_marked_scene_from_the_start() {
     }
 }
 
-/// The index of the marked row, read from the screen.
+/// Moves the mark down to `kind` in one pass of the list at most, so an
+/// app whose mark does not arrive fails the test and does not hang it.
+fn select(app: &mut App, kind: SceneKind) {
+    for _ in 0..ALL.len() {
+        if ALL[app_selected(app)] == kind {
+            return;
+        }
+        app.select_next();
+    }
+    panic!("the mark never reached {kind:?}");
+}
+
+/// The index of the marked row, read from the columns left of the pane,
+/// because a scene in the pane can draw a `[` of its own.
 fn app_selected(app: &App) -> usize {
     let buffer = app_frame(app, WIDE);
-    let marked = (0..WIDE.height)
-        .find(|&y| row_text(&buffer, y).contains('['))
+    let end = pane_inner(&buffer).map_or(WIDE.width, |inner| inner.x - 1);
+    let list = |y: u16| {
+        (0..end)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+    };
+    let marked = (0..WIDE.height).find(|&y| list(y).contains('[')).unwrap();
+    let row = list(marked);
+    let name = row
+        .split(|c: char| c.is_whitespace() || "[]│".contains(c))
+        .find(|word| !word.is_empty())
         .unwrap();
-    let rows = bare_rows(&buffer);
-    let name = rows[usize::from(marked)].split_whitespace().next().unwrap();
     ALL.iter().position(|kind| kind.name() == name).unwrap()
 }
 
@@ -430,9 +448,7 @@ fn the_pane_runs_the_scene_at_its_own_speed() {
         .unwrap();
     config.rates[fire] = Rate::from_times(2.0);
     let mut app = App::picker(7, Arc::new(Corpus::embedded())).with_config(&config);
-    while app_selected(&app) != fire {
-        app.select_next();
-    }
+    select(&mut app, SceneKind::Fire);
 
     // When:
     for _ in 0..5 {
