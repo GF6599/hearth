@@ -34,6 +34,7 @@ fn a_turn_from_right_to_down_draws_the_joining_corner() {
     let area = Rect::new(0, 0, 10, 6);
     let scene = Pipes::trace(
         Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
         area,
         (2, 2),
         Direction::Right,
@@ -48,7 +49,7 @@ fn a_turn_from_right_to_down_draws_the_joining_corner() {
     assert_eq!(buffer[(3, 3)].symbol(), set.vertical_left);
     assert_eq!(buffer[(2, 2)].fg, buffer[(3, 2)].fg);
     assert_eq!(buffer[(3, 2)].fg, buffer[(3, 3)].fg);
-    assert_ne!(buffer[(2, 2)].fg, theme::BASE);
+    assert_ne!(buffer[(2, 2)].fg, theme::ROSE_PINE.base);
 }
 
 /// Given: a pipe in the last column, moving right.
@@ -60,6 +61,7 @@ fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
     let area = Rect::new(0, 0, 10, 6);
     let scene = Pipes::trace(
         Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
         area,
         (9, 2),
         Direction::Right,
@@ -86,7 +88,7 @@ fn the_screen_clears_at_the_fill_share() {
     // Given:
     let area = Rect::new(0, 0, 8, 4);
     let limit = usize::try_from(area.area()).unwrap() * FILL_PERCENT / 100;
-    let mut scene = Pipes::new(Rng::seed_from_u64(7));
+    let mut scene = Pipes::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
     let mut previous = 0;
     let mut dropped = false;
 
@@ -108,16 +110,16 @@ fn the_screen_clears_at_the_fill_share() {
 /// When: each runs for a while.
 /// Then: no cell is in the marker colour.
 ///
-/// Why it matters: the focused pane shows gold corner marks in
-/// `theme::MARKER`. A pipe in that colour that turns at a pane corner
-/// draws the same rune in the same colour, and an unfocused pane then
-/// reads as focused.
+/// Why it matters: the focused pane shows corner marks in the palette's
+/// marker colour. A pipe in that colour that turns at a pane corner draws
+/// the same rune in the same colour, and an unfocused pane then reads as
+/// focused.
 #[test]
 fn no_pipe_is_in_the_marker_colour() {
     // Given:
     let area = Rect::new(0, 0, 240, 20);
     for seed in 0..32 {
-        let mut scene = Pipes::new(Rng::seed_from_u64(seed));
+        let mut scene = Pipes::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
 
         // When:
         for _ in 0..50 {
@@ -129,7 +131,7 @@ fn no_pipe_is_in_the_marker_colour() {
         let marked = buffer
             .area
             .positions()
-            .find(|&p| buffer[p].fg == theme::MARKER);
+            .find(|&p| buffer[p].fg == theme::ROSE_PINE.marker());
         assert_eq!(marked, None, "seed {seed} drew a pipe in the marker colour");
     }
 }

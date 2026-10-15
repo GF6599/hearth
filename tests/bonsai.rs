@@ -11,7 +11,7 @@ use ratatui::style::Color;
 const TREE_GLYPHS: &[&str] = &["/", "\\", "|", "~", "&", "_"];
 
 fn scene(seed: u64) -> Bonsai {
-    Bonsai::new(Rng::seed_from_u64(seed))
+    Bonsai::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE)
 }
 
 fn render(scene: &Bonsai, area: Rect, canvas: Rect) -> Buffer {

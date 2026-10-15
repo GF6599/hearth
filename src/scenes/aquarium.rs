@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::scene::{Rng, Scene};
-use crate::theme;
+use crate::theme::Palette;
 
 pub const BUBBLE: &str = "o";
 const WATERLINE: char = '~';
@@ -20,16 +20,15 @@ const SPRITES: [&[&str]; 3] = [
     &[" \\  /\\", "  >(o )>", " /  \\/"],
 ];
 
-const FISH_COLOURS: [Color; 5] = [
-    theme::LOVE,
-    theme::GOLD,
-    theme::ROSE,
-    theme::IRIS,
-    theme::FOAM,
-];
-const BUBBLE_COLOUR: Color = theme::FOAM;
-const WEED_COLOUR: Color = theme::PINE;
-const WATER_COLOUR: Color = theme::PINE;
+const fn fish_colours(palette: &Palette) -> [Color; 5] {
+    [
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.iris,
+        palette.foam,
+    ]
+}
 
 const COLUMNS_PER_FISH: u16 = 20;
 const MOST_FISH: usize = 8;
@@ -138,6 +137,7 @@ struct Weed {
 #[derive(Debug)]
 pub struct Aquarium {
     rng: Rng,
+    palette: &'static Palette,
     size: (u16, u16),
     fish: Vec<Fish>,
     bubbles: Vec<Bubble>,
@@ -147,9 +147,10 @@ pub struct Aquarium {
 }
 
 impl Aquarium {
-    pub fn new(rng: Rng) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
         Self {
             rng,
+            palette,
             size: (0, 0),
             fish: Vec::new(),
             bubbles: Vec::new(),
@@ -163,22 +164,23 @@ impl Aquarium {
     /// moves one column per tick. Random stocking stays off.
     pub fn with_fish(
         rng: Rng,
+        palette: &'static Palette,
         area: Rect,
         sprite: &[&str],
         heading: Heading,
         x: i32,
         y: u16,
     ) -> Self {
-        let mut tank = Self::new(rng);
+        let mut tank = Self::new(rng, palette);
         tank.size = (area.width, area.height);
         tank.stocked_by_hand = true;
-        tank.release(Fish::new(sprite, heading, x, y, FISH_COLOURS[0]));
+        tank.release(Fish::new(sprite, heading, x, y, palette.love));
         tank
     }
 
     /// A tank with one bubble and nothing else. Random stocking stays off.
-    pub fn with_bubble(rng: Rng, area: Rect, x: u16, y: u16) -> Self {
-        let mut tank = Self::new(rng);
+    pub fn with_bubble(rng: Rng, palette: &'static Palette, area: Rect, x: u16, y: u16) -> Self {
+        let mut tank = Self::new(rng, palette);
         tank.size = (area.width, area.height);
         tank.stocked_by_hand = true;
         tank.bubbles.push(Bubble { x, y });
@@ -214,7 +216,8 @@ impl Aquarium {
         } else {
             Heading::Left
         };
-        let colour = FISH_COLOURS[self.rng.random_range(0..FISH_COLOURS.len())];
+        let colours = fish_colours(self.palette);
+        let colour = colours[self.rng.random_range(0..colours.len())];
         let mut fish = Fish::new(sprite, heading, 0, 0, colour);
         if fish.height() > self.water_rows() {
             return;
@@ -326,7 +329,12 @@ impl Scene for Aquarium {
 
         if SURFACE < height {
             for x in 0..width {
-                put(i32::from(x), i32::from(SURFACE), WATERLINE, WATER_COLOUR);
+                put(
+                    i32::from(x),
+                    i32::from(SURFACE),
+                    WATERLINE,
+                    self.palette.pine,
+                );
             }
         }
 
@@ -336,7 +344,7 @@ impl Scene for Aquarium {
                 let y = i32::from(height) - 1 - i32::from(row);
                 let leans_left = row.is_multiple_of(2) == sway;
                 let glyph = if leans_left { '(' } else { ')' };
-                put(i32::from(weed.x), y, glyph, WEED_COLOUR);
+                put(i32::from(weed.x), y, glyph, self.palette.pine);
             }
         }
 
@@ -359,7 +367,7 @@ impl Scene for Aquarium {
                 i32::from(bubble.x),
                 i32::from(bubble.y),
                 glyph,
-                BUBBLE_COLOUR,
+                self.palette.foam,
             );
         }
     }

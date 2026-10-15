@@ -76,9 +76,9 @@ fn the_current_row_carries_the_gold_pair_and_an_iris_label() {
     // Then:
     assert_eq!(buffer[(x - 1, y)].symbol(), "[");
     assert_eq!(buffer[(after, y)].symbol(), "]");
-    assert_eq!(buffer[(x - 1, y)].fg, theme::MARKER);
-    assert_eq!(buffer[(after, y)].fg, theme::MARKER);
-    assert_eq!(buffer[(x, y)].fg, theme::MARKED);
+    assert_eq!(buffer[(x - 1, y)].fg, theme::ROSE_PINE.marker());
+    assert_eq!(buffer[(after, y)].fg, theme::ROSE_PINE.marker());
+    assert_eq!(buffer[(x, y)].fg, theme::ROSE_PINE.marked());
 }
 
 /// Given: a picker with the second scene current.
@@ -100,7 +100,7 @@ fn a_row_that_is_not_current_reserves_the_pair_as_blank_cells() {
     assert_eq!(x, current_x);
     assert_eq!(buffer[(x - 1, y)].symbol(), " ");
     assert_eq!(buffer[(after, y)].symbol(), " ");
-    assert_eq!(buffer[(x, y)].fg, theme::TEXT);
+    assert_eq!(buffer[(x, y)].fg, theme::ROSE_PINE.text);
 }
 
 /// Given: terminal widths from 20 to 120 columns.
@@ -157,7 +157,7 @@ fn each_name_has_its_summary_on_the_row_below() {
         let below = row_text(&buffer, y + 1);
         let from_name: String = below.chars().skip(usize::from(x)).collect();
         assert!(from_name.starts_with(entry.summary), "{below:?}");
-        assert_eq!(buffer[(x, y + 1)].fg, theme::SUBTLE);
+        assert_eq!(buffer[(x, y + 1)].fg, theme::ROSE_PINE.subtle);
     }
 }
 
@@ -246,7 +246,7 @@ fn each_speed_sits_at_the_right_of_its_name_row() {
         let (x, y) = locate(&buffer, entry.speed);
         let after = x + u16::try_from(entry.speed.chars().count()).unwrap();
         assert_eq!(y, name_y, "{}", entry.name);
-        assert_eq!(buffer[(x, y)].fg, theme::SUBTLE);
+        assert_eq!(buffer[(x, y)].fg, theme::ROSE_PINE.subtle);
         assert_eq!(buffer[(after, y)].symbol(), " ");
         assert_eq!(buffer[(after + 1, y)].symbol(), "│");
     }
@@ -319,7 +319,7 @@ fn the_bottom_rule_holds_the_whole_hint_or_none() {
         if shown {
             let x = bottom.chars().position(|c| c == '↵').unwrap();
             let x = u16::try_from(x).unwrap();
-            assert_eq!(buffer[(x, y)].fg, theme::SUBTLE, "{width}");
+            assert_eq!(buffer[(x, y)].fg, theme::ROSE_PINE.subtle, "{width}");
         }
         if width == 40 {
             assert!(shown, "{bottom:?}");
@@ -540,7 +540,11 @@ fn the_mark_sits_above_the_content_at_its_left_edge() {
             assert!(row_text(&buffer, y).contains(line), "{area}: row {offset}");
         }
         assert_eq!(buffer[(list_x, first)].symbol(), "╭", "{area}");
-        assert_eq!(buffer[(list_x + 2, first)].fg, theme::MARKED, "{area}");
+        assert_eq!(
+            buffer[(list_x + 2, first)].fg,
+            theme::ROSE_PINE.marked(),
+            "{area}"
+        );
         let last = first + u16::try_from(mark::ART.len()).unwrap() - 1;
         assert!(last < list_y, "{area}: art over the list");
         if let Some(inner) = pane_inner(&buffer) {
@@ -676,7 +680,11 @@ fn the_preview_rule_holds_the_whole_credit_or_none() {
         if shown {
             let x = inner.left() + 2;
             assert_eq!(buffer[(x, inner.bottom())].symbol(), "a", "{width}");
-            assert_eq!(buffer[(x, inner.bottom())].fg, theme::SUBTLE, "{width}");
+            assert_eq!(
+                buffer[(x, inner.bottom())].fg,
+                theme::ROSE_PINE.subtle,
+                "{width}"
+            );
         }
         if width == 120 {
             assert!(shown, "{bottom:?}");

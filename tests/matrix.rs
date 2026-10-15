@@ -1,7 +1,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use hearth::scene::{Rng, Scene};
-use hearth::scenes::matrix::{self, HEAD, Matrix};
+use hearth::scenes::matrix::{self, Matrix};
+use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -9,7 +10,7 @@ use ratatui::style::Color;
 use unicode_width::UnicodeWidthChar;
 
 fn scene(seed: u64) -> Matrix {
-    Matrix::new(Rng::seed_from_u64(seed))
+    Matrix::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE)
 }
 
 fn ticked(seed: u64, area: Rect, ticks: usize) -> Matrix {
@@ -38,7 +39,7 @@ fn heads(buffer: &Buffer) -> Vec<Option<u16>> {
     (0..buffer.area.width)
         .map(|x| {
             let rows: Vec<u16> = (0..buffer.area.height)
-                .filter(|&y| buffer[(x, y)].fg == HEAD)
+                .filter(|&y| buffer[(x, y)].fg == theme::ROSE_PINE.text)
                 .collect();
             assert!(rows.len() <= 1, "column {x} shows {} heads", rows.len());
             rows.first().copied()

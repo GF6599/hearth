@@ -1,4 +1,4 @@
-//! Colours source text by its language's grammar, in the Rose Pine roles.
+//! Colours source text by its language's grammar, in the palette's roles.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -7,32 +7,34 @@ use ratatui::style::Color;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
-use crate::theme;
+use crate::theme::Palette;
 
 /// The innermost scope that has a role decides the colour, and within one
 /// scope the first matching row wins, so a narrow prefix sits above a
 /// wider one.
-const ROLES: &[(&str, Color)] = &[
-    ("comment", theme::MUTED),
-    ("string", theme::GOLD),
-    ("constant", theme::IRIS),
-    ("entity.name.function", theme::ROSE),
-    ("variable.function", theme::ROSE),
-    ("support.function", theme::ROSE),
-    ("entity.name", theme::FOAM),
-    ("support.type", theme::FOAM),
-    ("support.class", theme::FOAM),
-    ("keyword.operator", theme::SUBTLE),
-    ("keyword", theme::PINE),
-    ("storage", theme::PINE),
+const ROLES: &[(&str, Role)] = &[
+    ("comment", |p| p.muted),
+    ("string", |p| p.gold),
+    ("constant", |p| p.iris),
+    ("entity.name.function", |p| p.rose),
+    ("variable.function", |p| p.rose),
+    ("support.function", |p| p.rose),
+    ("entity.name", |p| p.foam),
+    ("support.type", |p| p.foam),
+    ("support.class", |p| p.foam),
+    ("keyword.operator", |p| p.subtle),
+    ("keyword", |p| p.pine),
+    ("storage", |p| p.pine),
 ];
 
-const PLAIN: Color = theme::TEXT;
+/// Reads one role from a palette. The grammars are cached for the whole
+/// run, so they hold the role and not the colour of one theme.
+type Role = fn(&Palette) -> Color;
 
 #[derive(Debug)]
 struct Grammars {
     syntaxes: SyntaxSet,
-    roles: Vec<(Scope, Color)>,
+    roles: Vec<(Scope, Role)>,
     definition: Option<Scope>,
     comment: Option<Scope>,
 }
@@ -61,14 +63,14 @@ fn grammars() -> &'static Grammars {
         syntaxes: SyntaxSet::load_defaults_newlines(),
         roles: ROLES
             .iter()
-            .filter_map(|&(name, colour)| Scope::new(name).ok().map(|scope| (scope, colour)))
+            .filter_map(|&(name, role)| Scope::new(name).ok().map(|scope| (scope, role)))
             .collect(),
         definition: Scope::new("entity.name.function").ok(),
         comment: Scope::new("comment").ok(),
     })
 }
 
-pub fn highlight(path: &str, text: &str) -> Highlighted {
+pub fn highlight(path: &str, text: &str, palette: &Palette) -> Highlighted {
     let grammars = grammars();
     let syntax = syntax_for(&grammars.syntaxes, path, text);
     let mut state = ParseState::new(syntax);
@@ -82,7 +84,8 @@ pub fn highlight(path: &str, text: &str) -> Highlighted {
         // A grammar that fails on a line leaves the rest of the file plain,
         // because its state after the failure is unknown.
         let Ok(ops) = state.parse_line(line, &grammars.syntaxes) else {
-            out.colours.extend(text[consumed..].chars().map(|_| PLAIN));
+            out.colours
+                .extend(text[consumed..].chars().map(|_| palette.text));
             let rest = text[consumed..].lines().count();
             out.functions.extend(std::iter::repeat_n(None, rest));
             out.comment.extend(std::iter::repeat_n(false, rest));
@@ -92,7 +95,7 @@ pub fn highlight(path: &str, text: &str) -> Highlighted {
         let mut words = 0;
         let mut commented = 0;
         let mut segment = |text: &str, stack: &ScopeStack, out: &mut Highlighted| {
-            let colour = grammars.colour(stack);
+            let colour = grammars.colour(stack, palette);
             let in_definition = grammars.within(stack, grammars.definition);
             let in_comment = grammars.within(stack, grammars.comment);
             let word = text.trim();
@@ -126,7 +129,7 @@ impl Grammars {
         scope.is_some_and(|scope| stack.as_slice().iter().any(|s| scope.is_prefix_of(*s)))
     }
 
-    fn colour(&self, stack: &ScopeStack) -> Color {
+    fn colour(&self, stack: &ScopeStack, palette: &Palette) -> Color {
         stack
             .as_slice()
             .iter()
@@ -135,9 +138,9 @@ impl Grammars {
                 self.roles
                     .iter()
                     .find(|(role, _)| role.is_prefix_of(*scope))
-                    .map(|&(_, colour)| colour)
+                    .map(|&(_, role)| role(palette))
             })
-            .unwrap_or(PLAIN)
+            .unwrap_or(palette.text)
     }
 }
 

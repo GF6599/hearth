@@ -1,10 +1,9 @@
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 
 use crate::scene::{Rng, Scene};
-use crate::theme;
+use crate::theme::Palette;
 
 /// Half-width katakana, then digits and capitals. Full-width katakana are
 /// two cells wide and tear every column to their right, so they stay out.
@@ -14,10 +13,6 @@ pub fn glyphs() -> impl Iterator<Item = char> {
         .chain('0'..='9')
         .chain('A'..='Z')
 }
-
-pub const HEAD: Color = theme::TEXT;
-const NEAR_TAIL: Color = theme::FOAM;
-const FAR_TAIL: Color = theme::PINE;
 
 /// Ticks per row, drawn per column, so neighbours fall at their own pace.
 const SLOWEST: u16 = 3;
@@ -89,15 +84,17 @@ fn pick(rng: &mut Rng, table: &[char]) -> char {
 #[derive(Debug)]
 pub struct Matrix {
     rng: Rng,
+    palette: &'static Palette,
     table: Vec<char>,
     size: (u16, u16),
     columns: Vec<Column>,
 }
 
 impl Matrix {
-    pub fn new(rng: Rng) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
         Self {
             rng,
+            palette,
             table: glyphs().collect(),
             size: (0, 0),
             columns: Vec::new(),
@@ -129,11 +126,11 @@ impl Scene for Matrix {
                     continue;
                 };
                 let color = if distance == 0 {
-                    HEAD
+                    self.palette.text
                 } else if distance * 3 <= column.tail {
-                    NEAR_TAIL
+                    self.palette.foam
                 } else {
-                    FAR_TAIL
+                    self.palette.pine
                 };
                 buf[(area.x + x, area.y + y)].set_char(*glyph).set_fg(color);
             }

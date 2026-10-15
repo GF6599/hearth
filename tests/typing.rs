@@ -20,7 +20,12 @@ fn corpus(text: &str) -> Arc<Corpus> {
 }
 
 fn scene(seed: u64, text: &str) -> Typing {
-    Typing::new(Rng::seed_from_u64(seed), corpus(text), Speed::DEFAULT)
+    Typing::new(
+        Rng::seed_from_u64(seed),
+        &theme::ROSE_PINE,
+        corpus(text),
+        Speed::DEFAULT,
+    )
 }
 
 fn ticked(mut scene: Typing, area: Rect, ticks: usize) -> Typing {
@@ -187,7 +192,7 @@ fn cursors(buffer: &Buffer) -> Vec<Position> {
     buffer
         .area
         .positions()
-        .filter(|&p| buffer[p].bg == theme::TEXT && buffer[p].symbol() == " ")
+        .filter(|&p| buffer[p].bg == theme::ROSE_PINE.text && buffer[p].symbol() == " ")
         .collect()
 }
 
@@ -287,6 +292,7 @@ fn the_scene_types_at_the_speed_it_is_given() {
         // Given:
         let scene = Typing::new(
             Rng::seed_from_u64(7),
+            &theme::ROSE_PINE,
             corpus(&format!("fn f() {{ {} }}\n", "x".repeat(1000))),
             speed.parse().unwrap(),
         );
@@ -308,6 +314,7 @@ fn the_scene_types_at_the_speed_it_is_given() {
 fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
     let scene = Typing::new(
         Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
         Arc::new(Corpus::from_files([(path.to_string(), text.to_string())])),
         "200".parse().unwrap(),
     );
@@ -338,10 +345,10 @@ fn rust_is_highlighted_by_its_grammar() {
 
     // Then:
     assert_eq!(typed(&buffer), line);
-    assert_eq!(colour_at(&buffer, "fn"), theme::PINE);
-    assert_eq!(colour_at(&buffer, "main"), theme::ROSE);
-    assert_eq!(colour_at(&buffer, "x\""), theme::GOLD);
-    assert_eq!(colour_at(&buffer, "//"), theme::MUTED);
+    assert_eq!(colour_at(&buffer, "fn"), theme::ROSE_PINE.pine);
+    assert_eq!(colour_at(&buffer, "main"), theme::ROSE_PINE.rose);
+    assert_eq!(colour_at(&buffer, "x\""), theme::ROSE_PINE.gold);
+    assert_eq!(colour_at(&buffer, "//"), theme::ROSE_PINE.muted);
 }
 
 /// Given: a Python file.
@@ -353,8 +360,8 @@ fn the_grammar_follows_the_extension() {
     let line = "def greet():";
     let area = Rect::new(0, 0, 40, 8);
     let buffer = typed_file("a.py", &format!("{line}\n    pass\n"), area);
-    assert_eq!(colour_at(&buffer, "def"), theme::PINE);
-    assert_eq!(colour_at(&buffer, "greet"), theme::ROSE);
+    assert_eq!(colour_at(&buffer, "def"), theme::ROSE_PINE.pine);
+    assert_eq!(colour_at(&buffer, "greet"), theme::ROSE_PINE.rose);
 }
 
 /// Given: a file no grammar claims and a Markdown file, beside a Rust
@@ -375,6 +382,7 @@ fn a_file_with_no_function_is_skipped() {
     for seed in 0..8 {
         let mut scene = Typing::new(
             Rng::seed_from_u64(seed),
+            &theme::ROSE_PINE,
             Arc::new(Corpus::from_files(files.clone())),
             Speed::DEFAULT,
         );
@@ -428,6 +436,7 @@ fn a_python_snippet_ends_where_the_indentation_does() {
     let file = "def greet():\n    print('hi')\n\nvalue = 1\n";
     let mut scene = Typing::new(
         Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
         Arc::new(Corpus::from_files([("a.py".to_string(), file.to_string())])),
         Speed::DEFAULT,
     );
@@ -499,6 +508,7 @@ fn a_snippet_runs_to_the_line_that_closes_the_function() {
     for (path, file, snippet) in cases {
         let mut scene = Typing::new(
             Rng::seed_from_u64(7),
+            &theme::ROSE_PINE,
             Arc::new(Corpus::from_files([(path.to_string(), file.to_string())])),
             Speed::DEFAULT,
         );
@@ -547,6 +557,7 @@ fn the_frame_is_centred_and_does_not_grow() {
 fn settled_file(path: &str, text: &str, area: Rect) -> Buffer {
     let mut scene = Typing::new(
         Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
         Arc::new(Corpus::from_files([(path.to_string(), text.to_string())])),
         Speed::DEFAULT,
     );
@@ -715,7 +726,11 @@ fn the_gutter_shows_the_line_numbers_of_the_file() {
     let numbers: Vec<usize> = rows.iter().map(|row| row.number).collect();
     assert_eq!(numbers, [3, 4, 5, 6]);
     for row in &rows {
-        assert_eq!(buffer[(row.x - 2, row.y)].fg, theme::MUTED, "{row:?}");
+        assert_eq!(
+            buffer[(row.x - 2, row.y)].fg,
+            theme::ROSE_PINE.muted,
+            "{row:?}"
+        );
     }
 }
 
@@ -829,6 +844,7 @@ fn settled_files(files: &[(&str, &str)], area: Rect) -> Buffer {
         .map(|&(path, text)| (path.to_string(), text.to_string()));
     let mut scene = Typing::new(
         Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
         Arc::new(Corpus::from_files(files)),
         Speed::DEFAULT,
     );
@@ -877,9 +893,9 @@ fn the_tree_opens_the_folders_on_the_path_and_marks_the_file() {
     );
     let y = frame(&buffer).y + 2;
     let at = |x: u16| (buffer[(x, y)].symbol().to_string(), buffer[(x, y)].fg);
-    assert_eq!(at(4), ("[".to_string(), theme::MARKER));
-    assert_eq!(at(5), ("c".to_string(), theme::MARKED));
-    assert_eq!(at(9), ("]".to_string(), theme::MARKER));
+    assert_eq!(at(4), ("[".to_string(), theme::ROSE_PINE.marker()));
+    assert_eq!(at(5), ("c".to_string(), theme::ROSE_PINE.marked()));
+    assert_eq!(at(9), ("]".to_string(), theme::ROSE_PINE.marker()));
 }
 
 /// Given: one file, on a 120 column area and on a 40 column area, whose
@@ -1004,7 +1020,7 @@ fn the_minimap_shows_the_snippet_in_its_place_in_the_file() {
             row.iter()
                 .flat_map(|&(upper, lower)| [upper, lower])
                 .flatten()
-                .any(|colour| colour != theme::OVERLAY)
+                .any(|colour| colour != theme::ROSE_PINE.overlay)
         })
         .map(|(index, _)| index)
         .collect();
@@ -1013,7 +1029,7 @@ fn the_minimap_shows_the_snippet_in_its_place_in_the_file() {
     assert!(
         rows[0]
             .iter()
-            .any(|&(upper, _)| upper == Some(theme::OVERLAY))
+            .any(|&(upper, _)| upper == Some(theme::ROSE_PINE.overlay))
     );
 }
 
@@ -1037,7 +1053,7 @@ fn the_cursor_line_is_the_only_one_at_full_colour() {
         .filter(|(_, row)| {
             row.iter()
                 .flat_map(|&(upper, lower)| [upper, lower])
-                .any(|colour| colour == Some(theme::TEXT))
+                .any(|colour| colour == Some(theme::ROSE_PINE.text))
         })
         .map(|(index, _)| index)
         .collect();

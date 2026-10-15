@@ -5,7 +5,7 @@ use ratatui::style::Color;
 use ratatui::symbols::border;
 
 use crate::scene::{Rng, Scene};
-use crate::theme;
+use crate::theme::{self, Palette};
 
 /// Drawn cells, as a share of the area, at which the screen clears.
 pub const FILL_PERCENT: usize = 60;
@@ -16,15 +16,21 @@ const TURN_ODDS: u32 = 10;
 const COLUMNS_PER_PIPE: u16 = 40;
 const MOST_PIPES: usize = 6;
 
-/// No gold, because a gold turn in a pane corner reads as the focus mark
-/// that `theme::MARKER` draws.
-const COLOURS: [Color; 5] = [
-    theme::LOVE,
-    theme::ROSE,
-    theme::PINE,
-    theme::FOAM,
-    theme::IRIS,
-];
+/// Every accent but the marker, because a turn in a pane corner in that
+/// colour reads as the focus mark.
+fn colours(palette: &Palette) -> Vec<Color> {
+    [
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.pine,
+        palette.foam,
+        palette.iris,
+    ]
+    .into_iter()
+    .filter(|&colour| colour != palette.marker())
+    .collect()
+}
 
 /// The runes come from the same set as the frame, so the two match.
 const RUNES: border::Set<'static> = theme::BORDER.to_border_set();
@@ -72,6 +78,7 @@ struct Pipe {
 #[derive(Debug)]
 pub struct Pipes {
     rng: Rng,
+    colours: Vec<Color>,
     size: (u16, u16),
     cells: Vec<Option<(&'static str, Color)>>,
     pipes: Vec<Pipe>,
@@ -79,9 +86,10 @@ pub struct Pipes {
 }
 
 impl Pipes {
-    pub fn new(rng: Rng) -> Self {
+    pub fn new(rng: Rng, palette: &Palette) -> Self {
         Self {
             rng,
+            colours: colours(palette),
             size: (0, 0),
             cells: Vec::new(),
             pipes: Vec::new(),
@@ -94,19 +102,20 @@ impl Pipes {
     /// with the turns given instead of drawn.
     pub fn trace(
         rng: Rng,
+        palette: &Palette,
         area: Rect,
         start: (u16, u16),
         heading: Direction,
         moves: &[Direction],
     ) -> Self {
-        let mut scene = Self::new(rng);
+        let mut scene = Self::new(rng, palette);
         scene.resize(area);
         scene.pipes.clear();
         let mut pipe = Pipe {
             x: start.0,
             y: start.1,
             heading,
-            colour: COLOURS[0],
+            colour: scene.colours[0],
         };
         for &next in moves {
             scene.lay(&mut pipe, next);
@@ -137,7 +146,7 @@ impl Pipes {
 
     fn spawn(&mut self) -> Pipe {
         let (width, height) = self.size;
-        let colour = COLOURS[self.rng.random_range(0..COLOURS.len())];
+        let colour = self.colours[self.rng.random_range(0..self.colours.len())];
         let (x, y, heading) = match self.rng.random_range(0..4) {
             0 => (self.rng.random_range(0..width), 0, Direction::Down),
             1 => (self.rng.random_range(0..width), height - 1, Direction::Up),

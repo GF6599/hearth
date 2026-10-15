@@ -5,7 +5,7 @@ use ratatui::style::Color;
 use ratatui::symbols::border;
 
 use crate::scene::{Rng, Scene};
-use crate::theme;
+use crate::theme::{self, Palette};
 
 /// Steps a trunk may take. The shoots it sends out get a little more.
 const LIFE: u32 = 32;
@@ -24,10 +24,6 @@ pub const HOLD_TICKS: usize = 160;
 
 pub const POT_HEIGHT: u16 = 3;
 const POT_WIDTH: usize = 15;
-
-const WOOD: Color = theme::GOLD;
-const LEAVES: [Color; 2] = [theme::PINE, theme::FOAM];
-const POT: Color = theme::MUTED;
 
 const RUNES: border::Set<'static> = theme::BORDER.to_border_set();
 
@@ -52,6 +48,7 @@ struct Branch {
 #[derive(Debug)]
 pub struct Bonsai {
     rng: Rng,
+    palette: &'static Palette,
     size: (u16, u16),
     cells: Vec<Option<(char, Color)>>,
     branches: Vec<Branch>,
@@ -63,9 +60,10 @@ pub struct Bonsai {
 }
 
 impl Bonsai {
-    pub fn new(rng: Rng) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
         Self {
             rng,
+            palette,
             size: (0, 0),
             cells: Vec::new(),
             branches: Vec::new(),
@@ -127,7 +125,7 @@ impl Bonsai {
             for (column, glyph) in row.chars().enumerate() {
                 if glyph != ' ' {
                     let x = left + i32::try_from(column).unwrap_or(0);
-                    self.set(x, y, glyph, POT);
+                    self.set(x, y, glyph, self.palette.muted);
                 }
             }
         }
@@ -271,8 +269,11 @@ impl Bonsai {
         branch.x += dx;
         branch.y += dy;
         let colour = match branch.kind {
-            Kind::Dying | Kind::Dead => LEAVES[self.rng.random_range(0..LEAVES.len())],
-            _ => WOOD,
+            Kind::Dying | Kind::Dead => {
+                let leaves = [self.palette.pine, self.palette.foam];
+                leaves[self.rng.random_range(0..leaves.len())]
+            }
+            _ => self.palette.gold,
         };
         for (offset, glyph) in glyphs(branch.kind, life, dx, dy).chars().enumerate() {
             let x = branch.x + i32::try_from(offset).unwrap_or(0);

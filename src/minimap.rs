@@ -5,13 +5,11 @@ use std::ops::Range;
 
 use ratatui::style::Color;
 
-use crate::theme;
+use crate::theme::Palette;
 
 /// The columns of source that the full width stands for. A fixed number,
 /// so one very long line does not shrink every other line.
 const SOURCE_COLUMNS: usize = 80;
-
-const OUTSIDE: Color = theme::OVERLAY;
 
 /// The upper and the lower half of one cell.
 pub type Halves = (Option<Color>, Option<Color>);
@@ -56,6 +54,7 @@ impl Outline {
         rows: usize,
         snippet: Range<usize>,
         cursor: usize,
+        palette: &Palette,
     ) -> Vec<Vec<Halves>> {
         let halves = rows * 2;
         let total = self.lines.len();
@@ -91,8 +90,8 @@ impl Outline {
             }
             best.map(|(tier, colour)| match tier {
                 Tier::Cursor => colour,
-                Tier::Snippet => dim(colour),
-                Tier::Outside => OUTSIDE,
+                Tier::Snippet => dim(colour, palette.base),
+                Tier::Outside => palette.overlay,
             })
         };
         (0..rows)
@@ -107,8 +106,8 @@ impl Outline {
 
 /// Halfway from `colour` to the background, so a snippet line reads
 /// fainter than the cursor line and brighter than the rest of the file.
-fn dim(colour: Color) -> Color {
-    let (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) = (colour, theme::BASE) else {
+fn dim(colour: Color, background: Color) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) = (colour, background) else {
         return colour;
     };
     let mid = |a: u8, b: u8| u8::try_from((u16::from(a) + u16::from(b)) / 2).unwrap_or(a);

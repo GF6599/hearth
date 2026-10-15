@@ -14,7 +14,7 @@ use crate::highlight;
 use crate::minimap::Outline;
 use crate::scene::{Rng, Scene, TICK_RATE};
 use crate::snippet;
-use crate::theme;
+use crate::theme::{self, Palette};
 use crate::tree::{self, Tree};
 
 pub use crate::snippet::MOST_SNIPPET_LINES;
@@ -47,19 +47,6 @@ const LEAST_MINIMAP_WIDTH: u16 = 4;
 
 /// A blank cell before the line numbers and another after them.
 const GUTTER_GAP: usize = 1;
-
-const FOLDER_COLOUR: Color = theme::SUBTLE;
-const SEPARATOR_COLOUR: Color = theme::MUTED;
-const FILE_COLOUR: Color = theme::FOAM;
-const FUNCTION_MARK_COLOUR: Color = theme::PINE;
-const FUNCTION_COLOUR: Color = theme::ROSE;
-const STATUS_COLOUR: Color = theme::SUBTLE;
-const TREE_COLOUR: Color = theme::SUBTLE;
-const ARROW_COLOUR: Color = theme::MUTED;
-const CURSOR_COLOUR: Color = theme::TEXT;
-const FRAME_COLOUR: Color = theme::MUTED;
-const GUTTER_COLOUR: Color = theme::MUTED;
-const FILL: Color = theme::SURFACE;
 
 /// Keystrokes per second.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -125,6 +112,7 @@ impl FromStr for Speed {
 #[derive(Debug)]
 pub struct Typing {
     rng: Rng,
+    palette: &'static Palette,
     corpus: Arc<Corpus>,
     speed: Speed,
     /// Keystrokes owed and not yet typed. The fraction carries from one
@@ -154,10 +142,11 @@ pub struct Typing {
 }
 
 impl Typing {
-    pub fn new(rng: Rng, corpus: Arc<Corpus>, speed: Speed) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>, speed: Speed) -> Self {
         let tree = Tree::new(corpus.files().iter().map(|source| source.path.as_str()));
         let mut scene = Self {
             rng,
+            palette,
             corpus,
             speed,
             credit: 0.0,
@@ -193,7 +182,7 @@ impl Typing {
             let slot = self.rng.random_range(0..self.candidates.len());
             let file = self.candidates[slot];
             let source = &corpus.files()[file];
-            let (highlighted, spans) = snippets(source);
+            let (highlighted, spans) = snippets(source, self.palette);
             if spans.is_empty() {
                 self.candidates.swap_remove(slot);
                 continue;
@@ -217,7 +206,7 @@ impl Typing {
             self.tree_rows = self.tree.rows(&source.path);
             self.outline = Outline::new(&source.text, &highlighted.colours);
             self.line_count = span.len();
-            self.glyphs = glyphs(&source.text, &highlighted.colours, span);
+            self.glyphs = glyphs(&source.text, &highlighted.colours, span, self.palette);
             return;
         }
     }
@@ -232,17 +221,20 @@ impl Typing {
             .map_or("", |source| source.path.as_str());
         let mut folders: Vec<&str> = path.split('/').collect();
         let file = folders.pop().unwrap_or_default();
-        let separator = Span::styled(" › ", Style::default().fg(SEPARATOR_COLOUR));
+        let separator = Span::styled(" › ", Style::default().fg(self.palette.muted));
         let tail = [
-            Span::styled(file, Style::default().fg(FILE_COLOUR)),
+            Span::styled(file, Style::default().fg(self.palette.foam)),
             separator.clone(),
-            Span::styled("fn ", Style::default().fg(FUNCTION_MARK_COLOUR)),
-            Span::styled(self.function.as_str(), Style::default().fg(FUNCTION_COLOUR)),
+            Span::styled("fn ", Style::default().fg(self.palette.pine)),
+            Span::styled(
+                self.function.as_str(),
+                Style::default().fg(self.palette.rose),
+            ),
         ];
         let from = |start: usize| {
             let lead = folders[start..].iter().flat_map(|&folder| {
                 [
-                    Span::styled(folder, Style::default().fg(FOLDER_COLOUR)),
+                    Span::styled(folder, Style::default().fg(self.palette.subtle)),
                     separator.clone(),
                 ]
             });
@@ -299,8 +291,8 @@ impl Typing {
         let top = current
             .saturating_sub(height / 2)
             .min(self.tree_rows.len().saturating_sub(height));
-        let plain = Style::default().fg(TREE_COLOUR);
-        let marker = Style::default().fg(theme::MARKER);
+        let plain = Style::default().fg(self.palette.subtle);
+        let marker = Style::default().fg(self.palette.marker());
         for (y, row) in (frame.y..frame.bottom()).zip(&self.tree_rows[top..]) {
             let indent = " ".repeat(row.depth);
             let line = match row.kind {
@@ -308,7 +300,7 @@ impl Typing {
                     Span::raw(indent),
                     Span::styled(
                         if open { "▾ " } else { "▸ " },
-                        Style::default().fg(ARROW_COLOUR),
+                        Style::default().fg(self.palette.muted),
                     ),
                     Span::styled(row.name.as_str(), plain),
                 ]),
@@ -318,7 +310,7 @@ impl Typing {
                     let room = usize::from(width).saturating_sub(row.depth + 3);
                     let name: String = row.name.chars().take(room).collect();
                     let (open, close, name_style) = if current {
-                        ("[", "]", Style::default().fg(theme::MARKED))
+                        ("[", "]", Style::default().fg(self.palette.marked()))
                     } else {
                         (" ", " ", plain)
                     };
@@ -347,6 +339,7 @@ impl Typing {
             usize::from(frame.height),
             snippet,
             cursor,
+            self.palette,
         );
         for (y, row) in (frame.y..frame.bottom()).zip(cells) {
             for (x, halves) in (x..x + width).zip(row) {
@@ -370,7 +363,7 @@ impl Typing {
     /// A part that does not fit goes whole, the language first and then
     /// the speed, so no word is cut while a whole part could go instead.
     fn render_status(&self, frame: Rect, first: usize, buf: &mut Buffer) {
-        let style = Style::default().fg(STATUS_COLOUR);
+        let style = Style::default().fg(self.palette.subtle);
         let y = frame.bottom();
         let room = usize::from(frame.width);
         let place = self.place(first);
@@ -422,11 +415,15 @@ pub fn has_snippet(corpus: &Corpus) -> bool {
     corpus
         .files()
         .iter()
-        .any(|source| !snippets(source).1.is_empty())
+        // Only the functions count here, so any palette does.
+        .any(|source| !snippets(source, &theme::ROSE_PINE).1.is_empty())
 }
 
-fn snippets(source: &SourceFile) -> (highlight::Highlighted, Vec<std::ops::Range<usize>>) {
-    let highlighted = highlight::highlight(&source.path, &source.text);
+fn snippets(
+    source: &SourceFile,
+    palette: &Palette,
+) -> (highlight::Highlighted, Vec<std::ops::Range<usize>>) {
+    let highlighted = highlight::highlight(&source.path, &source.text, palette);
     let lines: Vec<&str> = source.text.lines().collect();
     let spans = snippet::snippets(&lines, &highlighted.functions, &highlighted.comment);
     (highlighted, spans)
@@ -442,14 +439,19 @@ fn padded(room: u16, least: u16) -> u16 {
 
 /// The glyphs of the lines in `span`, each with its colour, and a newline
 /// between two lines.
-fn glyphs(text: &str, colours: &[Color], span: std::ops::Range<usize>) -> Vec<(char, Color)> {
+fn glyphs(
+    text: &str,
+    colours: &[Color],
+    span: std::ops::Range<usize>,
+    palette: &Palette,
+) -> Vec<(char, Color)> {
     let mut out = Vec::new();
     let mut offset = 0;
     for (index, line) in text.split_inclusive('\n').enumerate() {
         let glyphs = line.trim_end_matches('\n').chars().count();
         if span.contains(&index) {
             if !out.is_empty() {
-                out.push(('\n', theme::TEXT));
+                out.push(('\n', palette.text));
             }
             let chars = line.chars().take(glyphs);
             out.extend(chars.zip(colours[offset..].iter().copied()));
@@ -483,8 +485,8 @@ impl Scene for Typing {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(theme::BORDER)
-            .border_style(Style::default().fg(FRAME_COLOUR))
-            .style(Style::default().bg(FILL));
+            .border_style(Style::default().fg(self.palette.muted))
+            .style(Style::default().bg(self.palette.surface));
         let inner = block.inner(frame);
         block.render(frame, buf);
         if frame.y > area.y {
@@ -514,7 +516,7 @@ impl Scene for Typing {
         for (y, (index, line)) in (inner.y..inner.bottom()).zip(shown.iter().enumerate()) {
             if gutter > 0 {
                 let number = format!("{:>digits$}", first + top + index + 1);
-                let style = Style::default().fg(GUTTER_COLOUR);
+                let style = Style::default().fg(self.palette.muted);
                 let gutter_x = inner.x + u16::try_from(GUTTER_GAP).unwrap_or(0);
                 buf.set_stringn(gutter_x, y, number, digits, style);
             }
@@ -527,7 +529,7 @@ impl Scene for Typing {
             let room = usize::from(inner.right() - code_x - 1);
             let x = code_x + u16::try_from(last.len().min(room)).unwrap_or(0);
             let y = inner.y + u16::try_from(shown.len() - 1).unwrap_or(0);
-            buf[(x, y)].set_char(' ').set_bg(CURSOR_COLOUR);
+            buf[(x, y)].set_char(' ').set_bg(self.palette.text);
         }
     }
 }

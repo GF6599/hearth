@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 
 use hearth::scene::{Rng, Scene};
-use hearth::scenes::life::{HOLD_GENERATIONS, Life, OLD, YOUNG};
+use hearth::scenes::life::{HOLD_GENERATIONS, Life};
+use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -23,10 +24,10 @@ fn alive(buffer: &Buffer, area: Rect) -> BTreeSet<(u16, u16)> {
         let cell = &buffer[position];
         let x = position.x - area.x;
         let upper = (position.y - area.y) * 2;
-        if cell.fg == YOUNG || cell.fg == OLD {
+        if cell.fg == theme::ROSE_PINE.rose || cell.fg == theme::ROSE_PINE.iris {
             cells.insert((x, upper));
         }
-        if cell.bg == YOUNG || cell.bg == OLD {
+        if cell.bg == theme::ROSE_PINE.rose || cell.bg == theme::ROSE_PINE.iris {
             cells.insert((x, upper + 1));
         }
     }
@@ -63,7 +64,7 @@ const GLIDER: &[&str] = &[
 fn a_glider_moves_one_cell_in_four_generations() {
     // Given:
     let area = Rect::new(0, 0, 10, 5);
-    let scene = Life::from_pattern(Rng::seed_from_u64(7), GLIDER);
+    let scene = Life::from_pattern(Rng::seed_from_u64(7), &theme::ROSE_PINE, GLIDER);
 
     // When:
     let scene = ticked(scene, area, 4);
@@ -102,12 +103,12 @@ fn a_blinker_reseeds_after_the_hold_count() {
 
     // When:
     let held = ticked(
-        Life::from_pattern(Rng::seed_from_u64(7), BLINKER),
+        Life::from_pattern(Rng::seed_from_u64(7), &theme::ROSE_PINE, BLINKER),
         area,
         HOLD_GENERATIONS,
     );
     let reseeded = ticked(
-        Life::from_pattern(Rng::seed_from_u64(7), BLINKER),
+        Life::from_pattern(Rng::seed_from_u64(7), &theme::ROSE_PINE, BLINKER),
         area,
         HOLD_GENERATIONS + 1,
     );
@@ -133,13 +134,17 @@ fn a_dead_board_reseeds_at_once() {
     let dead = vec![".........."; 10];
 
     // When:
-    let scene = ticked(Life::from_pattern(Rng::seed_from_u64(7), &dead), area, 1);
+    let scene = ticked(
+        Life::from_pattern(Rng::seed_from_u64(7), &theme::ROSE_PINE, &dead),
+        area,
+        1,
+    );
 
     // Then:
     let buffer = render(&scene, area);
     assert!(!alive(&buffer, area).is_empty());
     assert!(
         area.positions()
-            .any(|p| buffer[p].fg == YOUNG || buffer[p].bg == YOUNG)
+            .any(|p| buffer[p].fg == theme::ROSE_PINE.rose || buffer[p].bg == theme::ROSE_PINE.rose)
     );
 }

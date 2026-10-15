@@ -303,6 +303,7 @@ pub fn render_rules(rules: &[(Split, Rect)], palette: &Palette, buf: &mut Buffer
 pub struct Pane {
     pub kind: SceneKind,
     pub seed: u64,
+    palette: &'static Palette,
     scene: Box<dyn Scene>,
     /// Quarter ticks owed and not yet run, carried from frame to frame.
     credit: u32,
@@ -318,11 +319,18 @@ impl std::fmt::Debug for Pane {
 }
 
 impl Pane {
-    pub fn new(kind: SceneKind, seed: u64, corpus: &Arc<Corpus>, speed: Speed) -> Self {
+    pub fn new(
+        kind: SceneKind,
+        seed: u64,
+        palette: &'static Palette,
+        corpus: &Arc<Corpus>,
+        speed: Speed,
+    ) -> Self {
         Self {
             kind,
             seed,
-            scene: kind.build(seed, corpus, speed),
+            palette,
+            scene: kind.build(seed, palette, corpus, speed),
             credit: 0,
         }
     }
@@ -336,7 +344,7 @@ impl Pane {
 
     pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed) {
         self.credit = 0;
-        self.scene = self.kind.build(self.seed, corpus, speed);
+        self.scene = self.kind.build(self.seed, self.palette, corpus, speed);
     }
 
     pub fn set_speed(&mut self, speed: Speed) {

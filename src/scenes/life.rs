@@ -3,13 +3,9 @@ use std::collections::VecDeque;
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 
 use crate::scene::{Rng, Scene};
-use crate::theme;
-
-pub const YOUNG: Color = theme::ROSE;
-pub const OLD: Color = theme::IRIS;
+use crate::theme::Palette;
 
 /// Generations a still life or a period-two oscillator may hold before the
 /// board reseeds. About three seconds at the tick rate.
@@ -23,6 +19,7 @@ const HALF_BLOCK: char = '▀';
 #[derive(Debug)]
 pub struct Life {
     rng: Rng,
+    palette: &'static Palette,
     width: usize,
     height: usize,
     /// Generations alive, zero for a dead cell.
@@ -33,9 +30,10 @@ pub struct Life {
 }
 
 impl Life {
-    pub fn new(rng: Rng) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
         Self {
             rng,
+            palette,
             width: 0,
             height: 0,
             age: Vec::new(),
@@ -46,13 +44,13 @@ impl Life {
 
     /// A board from rows of `#` for a live cell and any other character for
     /// a dead one. The board is as wide as the longest row.
-    pub fn from_pattern(rng: Rng, rows: &[&str]) -> Self {
+    pub fn from_pattern(rng: Rng, palette: &'static Palette, rows: &[&str]) -> Self {
         let width = rows
             .iter()
             .map(|row| row.chars().count())
             .max()
             .unwrap_or(0);
-        let mut life = Self::new(rng);
+        let mut life = Self::new(rng, palette);
         life.width = width;
         life.height = rows.len();
         life.age = vec![0; width * rows.len()];
@@ -148,9 +146,9 @@ impl Scene for Life {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let colour = |age: u8| match age {
-            0 => theme::BASE,
-            1 => YOUNG,
-            _ => OLD,
+            0 => self.palette.base,
+            1 => self.palette.rose,
+            _ => self.palette.iris,
         };
         for y in 0..area.height {
             let upper = usize::from(y) * 2;

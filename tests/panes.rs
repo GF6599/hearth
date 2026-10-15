@@ -105,7 +105,9 @@ fn focused(buffer: &Buffer, panes: &[Rect]) -> Option<Rect> {
     let marked = |pane: &&Rect| {
         let [top_left, bottom_right] = marks_of(**pane);
         let (a, b) = (&buffer[top_left], &buffer[bottom_right]);
-        (a.symbol(), b.symbol()) == ("┌", "┘") && a.fg == theme::MARKER && b.fg == theme::MARKER
+        (a.symbol(), b.symbol()) == ("┌", "┘")
+            && a.fg == theme::ROSE_PINE.marker()
+            && b.fg == theme::ROSE_PINE.marker()
     };
     let found: Vec<Rect> = panes.iter().filter(marked).copied().collect();
     assert!(found.len() <= 1, "more than one pane marked: {found:?}");
@@ -127,7 +129,11 @@ fn assert_rule(buffer: &Buffer, rule: Rect, symbol: &str) {
     for position in rule.positions() {
         let cell = &buffer[position];
         assert_eq!(cell.symbol(), symbol, "rule at {position:?}");
-        assert_eq!(cell.fg, theme::MUTED, "rule colour at {position:?}");
+        assert_eq!(
+            cell.fg,
+            theme::ROSE_PINE.muted,
+            "rule colour at {position:?}"
+        );
     }
 }
 

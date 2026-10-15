@@ -49,21 +49,6 @@ pub const ROSE_PINE: Palette = Palette {
     iris: Color::Rgb(0xc4, 0xa7, 0xe7),
 };
 
-pub const BASE: Color = ROSE_PINE.base;
-pub const SURFACE: Color = ROSE_PINE.surface;
-pub const OVERLAY: Color = ROSE_PINE.overlay;
-pub const MUTED: Color = ROSE_PINE.muted;
-pub const SUBTLE: Color = ROSE_PINE.subtle;
-pub const TEXT: Color = ROSE_PINE.text;
-pub const LOVE: Color = ROSE_PINE.love;
-pub const GOLD: Color = ROSE_PINE.gold;
-pub const ROSE: Color = ROSE_PINE.rose;
-pub const PINE: Color = ROSE_PINE.pine;
-pub const FOAM: Color = ROSE_PINE.foam;
-pub const IRIS: Color = ROSE_PINE.iris;
-pub const MARKER: Color = ROSE_PINE.marker();
-pub const MARKED: Color = ROSE_PINE.marked();
-
 /// Every frame takes its corners from here, so a rounded surface can only
 /// come back deliberately.
 pub const BORDER: BorderType = BorderType::Plain;

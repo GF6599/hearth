@@ -2,6 +2,7 @@
 
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::aquarium::{Aquarium, BUBBLE, Heading};
+use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -49,7 +50,15 @@ fn a_fish_that_leaves_the_right_edge_enters_at_the_left() {
     let area = Rect::new(0, 0, 20, 8);
     let tank = |ticks| {
         ticked(
-            Aquarium::with_fish(rng(), area, SMALL_FISH, Heading::Right, 17, 4),
+            Aquarium::with_fish(
+                rng(),
+                &theme::ROSE_PINE,
+                area,
+                SMALL_FISH,
+                Heading::Right,
+                17,
+                4,
+            ),
             area,
             ticks,
         )
@@ -77,7 +86,7 @@ fn a_bubble_rises_one_row_per_tick_and_pops_at_the_surface() {
     for ticks in 1..=5u16 {
         // Given, when:
         let tank = ticked(
-            Aquarium::with_bubble(rng(), area, 5, 6),
+            Aquarium::with_bubble(rng(), &theme::ROSE_PINE, area, 5, 6),
             area,
             usize::from(ticks),
         );
@@ -93,7 +102,11 @@ fn a_bubble_rises_one_row_per_tick_and_pops_at_the_surface() {
     }
 
     // And:
-    let tank = ticked(Aquarium::with_bubble(rng(), area, 5, 6), area, 6);
+    let tank = ticked(
+        Aquarium::with_bubble(rng(), &theme::ROSE_PINE, area, 5, 6),
+        area,
+        6,
+    );
     assert!(cells_with(&render(&tank, area), &[BUBBLE]).is_empty());
 }
 
@@ -109,7 +122,15 @@ fn a_fish_taller_than_the_water_is_not_spawned() {
     // Given, when:
     let area = Rect::new(0, 0, 20, 3);
     let tank = ticked(
-        Aquarium::with_fish(rng(), area, TALL_FISH, Heading::Right, 5, 1),
+        Aquarium::with_fish(
+            rng(),
+            &theme::ROSE_PINE,
+            area,
+            TALL_FISH,
+            Heading::Right,
+            5,
+            1,
+        ),
         area,
         10,
     );

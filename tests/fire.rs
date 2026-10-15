@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 fn scene(seed: u64) -> Fire {
-    Fire::new(Rng::seed_from_u64(seed))
+    Fire::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE)
 }
 
 fn render(scene: &Fire, area: Rect, canvas: Rect) -> Buffer {
@@ -20,30 +20,30 @@ fn render(scene: &Fire, area: Rect, canvas: Rect) -> Buffer {
 
 /// The agreed ramp, from no heat to full heat.
 const RAMP: [Color; 7] = [
-    theme::BASE,
-    theme::OVERLAY,
-    theme::MUTED,
-    theme::LOVE,
-    theme::ROSE,
-    theme::GOLD,
-    theme::TEXT,
+    theme::ROSE_PINE.base,
+    theme::ROSE_PINE.overlay,
+    theme::ROSE_PINE.muted,
+    theme::ROSE_PINE.love,
+    theme::ROSE_PINE.rose,
+    theme::ROSE_PINE.gold,
+    theme::ROSE_PINE.text,
 ];
 
 const FULL: usize = RAMP.len() - 1;
 
 const PALETTE: [Color; 12] = [
-    theme::BASE,
-    theme::SURFACE,
-    theme::OVERLAY,
-    theme::MUTED,
-    theme::SUBTLE,
-    theme::TEXT,
-    theme::LOVE,
-    theme::GOLD,
-    theme::ROSE,
-    theme::PINE,
-    theme::FOAM,
-    theme::IRIS,
+    theme::ROSE_PINE.base,
+    theme::ROSE_PINE.surface,
+    theme::ROSE_PINE.overlay,
+    theme::ROSE_PINE.muted,
+    theme::ROSE_PINE.subtle,
+    theme::ROSE_PINE.text,
+    theme::ROSE_PINE.love,
+    theme::ROSE_PINE.gold,
+    theme::ROSE_PINE.rose,
+    theme::ROSE_PINE.pine,
+    theme::ROSE_PINE.foam,
+    theme::ROSE_PINE.iris,
 ];
 
 fn band_of(colour: Color) -> usize {
@@ -91,7 +91,7 @@ fn the_ramp_climbs_through_the_seven_stops() {
     for (x, row) in tile() {
         // When:
         let mut shown: Vec<Color> = (0..=MAX_HEAT)
-            .map(|heat| fire::color(heat, x, row))
+            .map(|heat| fire::color(&theme::ROSE_PINE, heat, x, row))
             .collect();
         shown.dedup();
 
@@ -113,7 +113,7 @@ fn a_tile_shades_from_each_stop_to_the_next() {
     for heat in 0..=MAX_HEAT {
         // When:
         let tile: Vec<usize> = tile()
-            .map(|(x, row)| band_of(fire::color(heat, x, row)))
+            .map(|(x, row)| band_of(fire::color(&theme::ROSE_PINE, heat, x, row)))
             .collect();
 
         // Then:

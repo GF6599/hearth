@@ -16,6 +16,7 @@ use crate::scenes::matrix::Matrix;
 use crate::scenes::noise::Noise;
 use crate::scenes::pipes::Pipes;
 use crate::scenes::typing::{Speed, Typing};
+use crate::theme::Palette;
 
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
@@ -172,17 +173,23 @@ impl SceneKind {
         ALL.iter().copied().find(|kind| kind.name() == name)
     }
 
-    pub fn build(self, seed: u64, corpus: &Arc<Corpus>, speed: Speed) -> Box<dyn Scene> {
+    pub fn build(
+        self,
+        seed: u64,
+        palette: &'static Palette,
+        corpus: &Arc<Corpus>,
+        speed: Speed,
+    ) -> Box<dyn Scene> {
         let rng = Rng::seed_from_u64(seed);
         match self {
             SceneKind::Noise => Box::new(Noise::new(rng)),
-            SceneKind::Matrix => Box::new(Matrix::new(rng)),
-            SceneKind::Fire => Box::new(Fire::new(rng)),
-            SceneKind::Life => Box::new(Life::new(rng)),
-            SceneKind::Pipes => Box::new(Pipes::new(rng)),
-            SceneKind::Bonsai => Box::new(Bonsai::new(rng)),
-            SceneKind::Aquarium => Box::new(Aquarium::new(rng)),
-            SceneKind::Typing => Box::new(Typing::new(rng, Arc::clone(corpus), speed)),
+            SceneKind::Matrix => Box::new(Matrix::new(rng, palette)),
+            SceneKind::Fire => Box::new(Fire::new(rng, palette)),
+            SceneKind::Life => Box::new(Life::new(rng, palette)),
+            SceneKind::Pipes => Box::new(Pipes::new(rng, palette)),
+            SceneKind::Bonsai => Box::new(Bonsai::new(rng, palette)),
+            SceneKind::Aquarium => Box::new(Aquarium::new(rng, palette)),
+            SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
         }
     }
 

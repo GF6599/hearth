@@ -68,7 +68,13 @@ impl App {
     pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
         Self {
             palette: &theme::ROSE_PINE,
-            panes: Panes::new(Pane::new(kind, seed, &corpus, Speed::DEFAULT)),
+            panes: Panes::new(Pane::new(
+                kind,
+                seed,
+                &theme::ROSE_PINE,
+                &corpus,
+                Speed::DEFAULT,
+            )),
             corpus,
             speed: Speed::DEFAULT,
             rates: [Rate::NORMAL; ALL.len()],
@@ -274,7 +280,12 @@ impl App {
 
     fn build_preview(&mut self) {
         let kind = ALL[self.selected];
-        self.preview = Some(kind.build(self.panes.focused().seed, &self.corpus, self.speed));
+        self.preview = Some(kind.build(
+            self.panes.focused().seed,
+            self.palette,
+            &self.corpus,
+            self.speed,
+        ));
         self.preview_credit = 0;
     }
 
@@ -296,7 +307,7 @@ impl App {
         let focused = self.panes.focused();
         let kind = focused.kind.next();
         let seed = focused.seed.wrapping_add(1);
-        let pane = Pane::new(kind, seed, &self.corpus, self.speed);
+        let pane = Pane::new(kind, seed, self.palette, &self.corpus, self.speed);
         self.panes.split(split, pane);
         self.selected = slot_of(kind);
         self.fresh = true;
