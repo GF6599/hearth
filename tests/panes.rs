@@ -608,3 +608,35 @@ fn panes_too_small_to_draw_never_panic() {
         }
     }
 }
+
+/// Given: typing beside a second typing pane, with the focus on the right.
+/// When: `+` makes typing faster, and the app ticks twenty times.
+/// Then: the left pane types at the new speed too, the same as typing
+/// alone after one `+`.
+///
+/// Why it matters: the typing speed is one value for every typing pane,
+/// so a pane left at the old speed contradicts the speed the picker shows.
+#[test]
+fn a_new_typing_speed_reaches_every_typing_pane() {
+    // Given:
+    let mut app = App::new(SceneKind::Typing, 7, Arc::new(Corpus::embedded()));
+    send(&mut app, &[KeyCode::Char('v')]);
+    send(&mut app, &[KeyCode::Char('j'); 7]);
+    send(&mut app, &[KeyCode::Enter]);
+
+    // When:
+    send(&mut app, &[KeyCode::Char('+')]);
+    for _ in 0..20 {
+        app.tick(AREA);
+    }
+
+    // Then:
+    let mut faster = App::new(SceneKind::Typing, 7, Arc::new(Corpus::embedded()));
+    send(&mut faster, &[KeyCode::Char('+')]);
+    for _ in 0..20 {
+        faster.tick(LEFT);
+    }
+    let mut expected = Buffer::empty(AREA);
+    faster.render(LEFT, &mut expected);
+    assert_same_inside(&frame(&app), &expected, LEFT, "left typing");
+}
