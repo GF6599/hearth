@@ -16,9 +16,10 @@ const TURN_ODDS: u32 = 10;
 const COLUMNS_PER_PIPE: u16 = 40;
 const MOST_PIPES: usize = 6;
 
-const COLOURS: [Color; 6] = [
+/// No gold, because a gold turn in a pane corner reads as the focus mark
+/// that `theme::MARKER` draws.
+const COLOURS: [Color; 5] = [
     theme::LOVE,
-    theme::GOLD,
     theme::ROSE,
     theme::PINE,
     theme::FOAM,
