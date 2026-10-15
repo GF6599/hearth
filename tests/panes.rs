@@ -493,3 +493,34 @@ fn esc_in_a_new_pane_s_picker_closes_the_pane() {
         "fire",
     );
 }
+
+/// Given: the fire beside life, with the focus moved back to the fire.
+/// When: `x` closes the fire, the first pane made, and the app ticks three
+/// times.
+/// Then: life runs alone over the whole screen.
+///
+/// Why it matters: every pane after a closed one moves down one place,
+/// and a pane left at its old place points past the end of the list.
+#[test]
+fn closing_the_first_pane_keeps_the_ones_after_it() {
+    // Given:
+    let mut app = fire();
+    send(
+        &mut app,
+        &[KeyCode::Char('v'), KeyCode::Enter, KeyCode::Char('h')],
+    );
+
+    // When:
+    send(&mut app, &[KeyCode::Char('x')]);
+    for _ in 0..3 {
+        app.tick(AREA);
+    }
+
+    // Then:
+    assert_same_inside(
+        &frame(&app),
+        &alone(SceneKind::Life, 9, 3, AREA),
+        AREA,
+        "life",
+    );
+}
