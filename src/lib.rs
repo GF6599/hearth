@@ -5,9 +5,10 @@
 //!              │
 //!              ├── cli       Command-line arguments
 //!              ├── config    The preferences kept between runs
-//!              ├── app       The running scene, its seed, and the keys
+//!              ├── app       The panes, the picker, and the keys
 //!              ├── events    Terminal events → App mutations
 //!              ├── mark      The {hearth} lockup above the picker
+//!              ├── pane      One scene, its seed, and the ticks it owes
 //!              ├── picker    The scene list, the only chrome
 //!              ├── scene     The Scene trait and the list of scenes
 //!              ├── scenes    One module per scene
@@ -27,6 +28,7 @@ pub mod events;
 pub mod highlight;
 pub mod mark;
 pub mod minimap;
+pub mod pane;
 pub mod picker;
 pub mod scene;
 pub mod scenes;
