@@ -524,3 +524,87 @@ fn closing_the_first_pane_keeps_the_ones_after_it() {
         "life",
     );
 }
+
+/// Given: the fire beside life, and life split again below, on a forty by
+/// twelve terminal.
+/// When: the terminal grows to eighty by twenty-four.
+/// Then: the first rule runs down column 39 and the second across row 11
+/// of the right half, the middle of each split at the new size.
+///
+/// Why it matters: a layout fixed at the size it was made in leaves a
+/// grown terminal half empty and cuts a shrunk one.
+#[test]
+fn a_resize_keeps_each_split_in_the_middle() {
+    // Given:
+    let mut app = fire();
+    send(
+        &mut app,
+        &[
+            KeyCode::Char('v'),
+            KeyCode::Enter,
+            KeyCode::Char('s'),
+            KeyCode::Enter,
+        ],
+    );
+
+    // When:
+    let grown = Rect::new(0, 0, 80, 24);
+    app.tick(grown);
+    let mut shown = Buffer::empty(grown);
+    app.render(grown, &mut shown);
+
+    // Then:
+    assert_rule(&shown, Rect::new(39, 0, 1, 11), "│");
+    assert_eq!(shown[(39, 11)].symbol(), "├");
+    assert_rule(&shown, Rect::new(39, 12, 1, 12), "│");
+    assert_rule(&shown, Rect::new(40, 11, 40, 1), "─");
+}
+
+/// Given: every scene, split into four panes.
+/// When: the app ticks and renders in a corner of a larger canvas at
+/// sizes down to one cell and none.
+/// Then: nothing panics, and no cell outside the area is written.
+///
+/// Why it matters: a terminal dragged small leaves panes with no cells,
+/// and a scene that panics on one takes the whole screensaver down.
+#[test]
+fn panes_too_small_to_draw_never_panic() {
+    let canvas = Rect::new(0, 0, 30, 12);
+    for &kind in hearth::scene::ALL {
+        // Given:
+        let mut app = App::new(kind, 7, Arc::new(Corpus::embedded()));
+        send(
+            &mut app,
+            &[
+                KeyCode::Char('v'),
+                KeyCode::Enter,
+                KeyCode::Char('s'),
+                KeyCode::Enter,
+                KeyCode::Char('v'),
+                KeyCode::Enter,
+            ],
+        );
+
+        // When, then:
+        for area in [
+            Rect::new(2, 2, 20, 8),
+            Rect::new(2, 2, 5, 3),
+            Rect::new(2, 2, 2, 1),
+            Rect::new(2, 2, 1, 1),
+            Rect::new(2, 2, 0, 0),
+        ] {
+            app.tick(area);
+            let mut shown = Buffer::empty(canvas);
+            app.render(area, &mut shown);
+            for position in canvas.positions() {
+                if !area.contains(position) {
+                    assert_eq!(
+                        shown[position],
+                        Buffer::empty(canvas)[position],
+                        "{kind:?} in {area:?} wrote {position:?}"
+                    );
+                }
+            }
+        }
+    }
+}
