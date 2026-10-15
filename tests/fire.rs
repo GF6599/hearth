@@ -100,6 +100,36 @@ fn the_ramp_climbs_through_the_seven_stops() {
     }
 }
 
+/// Given: the Rose Pine Dawn palette, where text is the darkest role.
+/// When: each heat from none to full is read at each pixel of a tile.
+/// Then: at every pixel the colours climb through base, overlay, muted,
+/// love, rose and gold, and end at gold.
+///
+/// Why it matters: on a light theme a text stop draws a dark band under
+/// the flames, which reads as the coldest part and not the hottest.
+#[test]
+fn a_light_theme_ends_the_ramp_at_gold() {
+    let dawn = &theme::ROSE_PINE_DAWN;
+    let ramp = [
+        dawn.base,
+        dawn.overlay,
+        dawn.muted,
+        dawn.love,
+        dawn.rose,
+        dawn.gold,
+    ];
+    for (x, row) in tile() {
+        // When:
+        let mut shown: Vec<Color> = (0..=MAX_HEAT)
+            .map(|heat| fire::color(dawn, heat, x, row))
+            .collect();
+        shown.dedup();
+
+        // Then:
+        assert_eq!(shown, ramp, "pixel ({x}, {row})");
+    }
+}
+
 /// Given: the ramp.
 /// When: each heat from none to full is drawn over one tile.
 /// Then: the tile holds at most two neighbouring stops, and the sum of its
