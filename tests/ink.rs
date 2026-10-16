@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
-use hearth::scenes::ink::{self, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME};
+use hearth::scenes::ink::{self, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -319,4 +319,169 @@ fn ink_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     assert!(!inked_pixels(&buffer, AREA, theme::ROSE_PINE.base).is_empty());
+}
+
+/// The velocity of `currents` at a point of a hundred by sixty pixel pane.
+fn flow(currents: &Currents, x: f32, y: f32, time: f32) -> (f32, f32) {
+    currents.velocity(x, y, time, PANE)
+}
+
+const PANE: (f32, f32) = (100.0, 60.0);
+
+/// Points spread over the inside of `PANE`, clear of its walls.
+fn samples() -> impl Iterator<Item = (f32, f32)> {
+    (1..10).flat_map(|i| (1..6).map(move |j| (i as f32 * 10.0 + 0.3, j as f32 * 10.0 + 0.7)))
+}
+
+fn currents(seed: u64) -> Currents {
+    Currents::new(&mut Rng::seed_from_u64(seed))
+}
+
+/// Given: the currents of three seeds.
+/// When: the divergence is measured by central differences at points over
+/// the pane, at three times.
+/// Then: it is zero to within rounding.
+///
+/// Why it matters: a field that flows out of one place and into another
+/// drains the ink from the first and piles it up in the second.
+#[test]
+fn the_currents_neither_pile_up_nor_drain_the_ink() {
+    let step = 0.05;
+    for seed in [1, 7, 42] {
+        let currents = currents(seed);
+        for time in [0.0, 500.0, 5000.0] {
+            for (x, y) in samples() {
+                // When:
+                let across = (flow(&currents, x + step, y, time).0
+                    - flow(&currents, x - step, y, time).0)
+                    / (2.0 * step);
+                let down = (flow(&currents, x, y + step, time).1
+                    - flow(&currents, x, y - step, time).1)
+                    / (2.0 * step);
+
+                // Then:
+                assert!(
+                    (across + down).abs() < 1e-3,
+                    "seed {seed} at ({x}, {y}, {time}): {}",
+                    across + down
+                );
+            }
+        }
+    }
+}
+
+/// Given: the currents of three seeds.
+/// When: the velocity is read on each of the four walls.
+/// Then: nothing flows through the wall: the part across it is zero.
+///
+/// Why it matters: a flow into a wall presses the ink against it, and the
+/// clamp then holds it there as a line of solid colour.
+#[test]
+fn no_current_flows_through_a_wall() {
+    let (width, rows) = PANE;
+    for seed in [1, 7, 42] {
+        let currents = currents(seed);
+        for along in 0..=20 {
+            let share = along as f32 / 20.0;
+            // When, then:
+            for x in [0.0, width] {
+                let (across, _) = flow(&currents, x, share * rows, 300.0);
+                assert!(across.abs() < 1e-4, "seed {seed}: {across} at x {x}");
+            }
+            for y in [0.0, rows] {
+                let (_, down) = flow(&currents, share * width, y, 300.0);
+                assert!(down.abs() < 1e-4, "seed {seed}: {down} at y {y}");
+            }
+        }
+    }
+}
+
+/// Given: the currents of three seeds.
+/// When: the speed is read at points over the pane.
+/// Then: the mean speed is at least a twentieth of a pixel a tick, and no
+/// point is faster than half a pixel a tick.
+///
+/// Why it matters: still water leaves each cloud a round blot, and a fast
+/// current tears a drop across the pane before it can open out.
+#[test]
+fn the_currents_are_gentle_but_never_still() {
+    for seed in [1, 7, 42] {
+        // When:
+        let currents = currents(seed);
+        let speeds: Vec<f32> = samples()
+            .map(|(x, y)| {
+                let (across, down) = flow(&currents, x, y, 300.0);
+                across.hypot(down)
+            })
+            .collect();
+
+        // Then:
+        let mean = speeds.iter().sum::<f32>() / speeds.len() as f32;
+        let most = speeds.iter().copied().fold(0.0, f32::max);
+        assert!(mean >= 0.05, "seed {seed}: mean {mean}");
+        assert!(most <= 0.5, "seed {seed}: most {most}");
+    }
+}
+
+/// Given: the currents of three seeds.
+/// When: the velocity at points over the pane is read now and a minute
+/// later.
+/// Then: on the mean it has changed by at least a fiftieth of a pixel a
+/// tick.
+///
+/// Why it matters: a field that never changes sends every drop down the
+/// same paths, and the screen settles into one fixed picture.
+#[test]
+fn the_currents_shift_over_a_minute() {
+    let minute = 1000.0;
+    for seed in [1, 7, 42] {
+        // When:
+        let currents = currents(seed);
+        let change: f32 = samples()
+            .map(|(x, y)| {
+                let (a, b) = (flow(&currents, x, y, 0.0), flow(&currents, x, y, minute));
+                (a.0 - b.0).hypot(a.1 - b.1)
+            })
+            .sum::<f32>()
+            / samples().count() as f32;
+
+        // Then:
+        assert!(change >= 0.02, "seed {seed}: {change}");
+    }
+}
+
+/// Given: the scene on a hundred by thirty area, after the first drop has
+/// released all its ink and lost most of its speed.
+/// When: it ticks on until just before the second drop.
+/// Then: the mean place of the ink has moved sideways by at least a pixel
+/// and a half.
+///
+/// Why it matters: in still water the ink spreads evenly to both sides,
+/// so a cloud that drifts as a whole shows that the currents carry it.
+#[test]
+fn the_current_carries_a_cloud_sideways() {
+    let mean_x = |scene: &Ink| {
+        let (sum, count) = scene
+            .particles()
+            .fold((0.0, 0.0), |(sum, count), (x, _)| (sum + x, count + 1.0));
+        sum / count
+    };
+    for seed in [1, 7, 42] {
+        // Given:
+        let mut scene = ticked(seed, &theme::ROSE_PINE, AREA, EMIT_TICKS + 6);
+        let before = mean_x(&scene);
+
+        // When:
+        for _ in EMIT_TICKS + 6..*DROP_EVERY.start() - 1 {
+            scene.tick(AREA);
+        }
+
+        // Then:
+        assert_eq!(scene.drops().count(), 1, "seed {seed}");
+        let after = mean_x(&scene);
+        assert!(
+            (after - before).abs() >= 1.5,
+            "seed {seed}: {before} then {after}"
+        );
+    }
 }
