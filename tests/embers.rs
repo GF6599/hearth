@@ -391,3 +391,26 @@ fn a_log_settles_with_a_burst_of_sparks_after_a_while() {
 /// Young sparks on screen that only a burst reaches. Over forty seeds the
 /// usual flow showed at most ten and a burst at least eighteen.
 const BURST_YOUNG: usize = 14;
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs past the longest burn and a little more, so a new log
+/// has dropped in from above the pile.
+/// Then: every half-block pixel in the top half is the base colour again.
+///
+/// Why it matters: a new log that does not fall hangs in the air over the
+/// fire.
+#[test]
+fn a_new_log_falls_onto_the_pile() {
+    // Given, when:
+    let ticks = usize::try_from(*BURN_TICKS.end()).unwrap() + 200;
+    let shown = pixels(&render(&ticked(7, AREA, ticks), AREA, AREA));
+
+    // Then:
+    for (y, row) in shown.iter().enumerate().take(shown.len() / 2) {
+        for (x, pixel) in row.iter().enumerate() {
+            if let Some(colour) = pixel {
+                assert_eq!(*colour, theme::ROSE_PINE.base, "pixel ({x}, {y})");
+            }
+        }
+    }
+}
