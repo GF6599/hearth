@@ -1,11 +1,11 @@
-//! The Rose Pine palettes, and the two roles the chrome draws with.
+//! The colour themes, and the two roles the chrome draws with.
 
 use ratatui::style::Color;
 use ratatui::symbols::line;
 use ratatui::widgets::BorderType;
 
-/// The roles of a Rose Pine variant. Every surface takes its colours
-/// from one of these, so a theme is one value.
+/// Rose Pine's roles. Every surface takes its colours from one of these,
+/// so a theme is one value, and another family maps its colours onto them.
 #[derive(Debug)]
 pub struct Palette {
     pub base: Color,
@@ -92,12 +92,47 @@ pub const ROSE_PINE_DAWN: Palette = Palette {
     iris: Color::Rgb(0x90, 0x7a, 0xa9),
 };
 
+/// Catppuccin by the same names in both variants: mantle fills a frame,
+/// surface0 is the overlay, overlay0 and overlay2 are muted and subtle, and
+/// red, yellow, flamingo, blue, teal and mauve are the accents.
+pub const CATPPUCCIN_MOCHA: Palette = Palette {
+    base: Color::Rgb(0x1e, 0x1e, 0x2e),
+    surface: Color::Rgb(0x18, 0x18, 0x25),
+    overlay: Color::Rgb(0x31, 0x32, 0x44),
+    muted: Color::Rgb(0x6c, 0x70, 0x86),
+    subtle: Color::Rgb(0x93, 0x99, 0xb2),
+    text: Color::Rgb(0xcd, 0xd6, 0xf4),
+    love: Color::Rgb(0xf3, 0x8b, 0xa8),
+    gold: Color::Rgb(0xf9, 0xe2, 0xaf),
+    rose: Color::Rgb(0xf2, 0xcd, 0xcd),
+    pine: Color::Rgb(0x89, 0xb4, 0xfa),
+    foam: Color::Rgb(0x94, 0xe2, 0xd5),
+    iris: Color::Rgb(0xcb, 0xa6, 0xf7),
+};
+
+pub const CATPPUCCIN_LATTE: Palette = Palette {
+    base: Color::Rgb(0xef, 0xf1, 0xf5),
+    surface: Color::Rgb(0xe6, 0xe9, 0xef),
+    overlay: Color::Rgb(0xcc, 0xd0, 0xda),
+    muted: Color::Rgb(0x9c, 0xa0, 0xb0),
+    subtle: Color::Rgb(0x7c, 0x7f, 0x93),
+    text: Color::Rgb(0x4c, 0x4f, 0x69),
+    love: Color::Rgb(0xd2, 0x0f, 0x39),
+    gold: Color::Rgb(0xdf, 0x8e, 0x1d),
+    rose: Color::Rgb(0xdd, 0x78, 0x78),
+    pine: Color::Rgb(0x1e, 0x66, 0xf5),
+    foam: Color::Rgb(0x17, 0x92, 0x99),
+    iris: Color::Rgb(0x88, 0x39, 0xef),
+};
+
 /// Each theme by the name the config file gives it. A family comes first
 /// in the name, so another family can join without a clash.
-pub const THEMES: [(&str, &Palette); 3] = [
+pub const THEMES: [(&str, &Palette); 5] = [
     ("rose-pine", &ROSE_PINE),
     ("rose-pine-moon", &ROSE_PINE_MOON),
     ("rose-pine-dawn", &ROSE_PINE_DAWN),
+    ("catppuccin-mocha", &CATPPUCCIN_MOCHA),
+    ("catppuccin-latte", &CATPPUCCIN_LATTE),
 ];
 
 pub fn by_name(name: &str) -> Option<&'static Palette> {
