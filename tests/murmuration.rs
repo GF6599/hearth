@@ -463,7 +463,8 @@ fn a_hawk_crosses_the_sky_now_and_then() {
     let mut passes = 0;
     let mut clear_since = 0;
     let mut entered = None;
-    for (tick, place) in (0u32..).zip(&track) {
+    // `track[i]` is the hawk after `i + 1` ticks, so the count starts at 1.
+    for (tick, place) in (1u32..).zip(&track) {
         match (place, entered) {
             (Some((x, _)), None) => {
                 let wait = tick - clear_since;
@@ -474,7 +475,7 @@ fn a_hawk_crosses_the_sky_now_and_then() {
                 entered = Some(*x);
             }
             (None, Some(start)) => {
-                let (end, _) = track[tick as usize - 1].unwrap();
+                let (end, _) = track[tick as usize - 2].unwrap();
                 let crossed = (start < 0.0 && end >= width) || (start >= width && end < 0.0);
                 assert!(crossed, "a pass from {start} to {end}");
                 passes += 1;

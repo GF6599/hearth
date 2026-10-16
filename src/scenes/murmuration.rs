@@ -38,6 +38,30 @@ const SPAWN_SPREAD: f32 = 1.5;
 /// Keeps a clamped bird strictly inside the last dot.
 const INSIDE: f32 = 0.01;
 
+/// Ticks from one pass of the hawk to the next, about 30 to 60 seconds.
+pub const HAWK_EVERY: RangeInclusive<u32> = 480..=960;
+/// No bird comes this close to the hawk, in dots.
+pub const HAWK_CLEARANCE: f32 = 6.0;
+/// Slower than a fleeing bird, so a bird that flees always gains on it.
+const HAWK_SPEED: f32 = 1.2;
+/// A bird this close to the hawk flees, and the hawk starts and ends its
+/// pass this far outside the pane, so the birds at the edge see it come.
+const FLEE_RADIUS: f32 = 12.0;
+/// The hawk flies at this share of the sky's height, so a bird that flees
+/// up or down never meets the top or the trees near it.
+const HAWK_BAND: (f32, f32) = (0.25, 0.6);
+/// The hawk's dots around its centre: two wings swept up from a body.
+const HAWK_SHAPE: [(isize, isize); 8] = [
+    (-3, -1),
+    (-2, -1),
+    (-1, 0),
+    (0, 0),
+    (1, 0),
+    (2, -1),
+    (3, -1),
+    (0, 1),
+];
+
 /// The trees take one cell row for each this many rows of the pane, and
 /// no more than `MOST_TREE_ROWS`, so a short pane keeps its sky.
 const PANE_ROWS_PER_TREE_ROW: usize = 8;
@@ -61,6 +85,13 @@ struct Bird {
     vy: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Hawk {
+    x: f32,
+    y: f32,
+    vx: f32,
+}
+
 #[derive(Debug)]
 pub struct Murmuration {
     rng: Rng,
@@ -74,6 +105,9 @@ pub struct Murmuration {
     /// The height of the trees in each cell column, in half-block pixels.
     trees: Vec<usize>,
     birds: Vec<Bird>,
+    hawk: Option<Hawk>,
+    /// Ticks until the next hawk.
+    hawk_wait: u32,
 }
 
 impl Murmuration {
@@ -87,7 +121,14 @@ impl Murmuration {
             tree_rows: 0,
             trees: Vec::new(),
             birds: Vec::new(),
+            hawk: None,
+            hawk_wait: 0,
         }
+    }
+
+    /// The centre of the hawk in dots, while it crosses the sky.
+    pub fn hawk(&self) -> Option<(f32, f32)> {
+        self.hawk.map(|hawk| (hawk.x, hawk.y))
     }
 
     /// Every bird's place, in dots from the top left of the pane.
@@ -97,6 +138,8 @@ impl Murmuration {
 
     fn spawn(&mut self) {
         self.birds.clear();
+        self.hawk = None;
+        self.hawk_wait = self.rng.random_range(HAWK_EVERY);
         let dots = self.width * self.height;
         if dots == 0 || self.sky == 0 {
             return;
@@ -184,7 +227,39 @@ impl Murmuration {
         push
     }
 
+    /// The hawk waits, then crosses the sky once from a side picked at
+    /// random, and is gone once it is as far past the other side.
+    fn fly_hawk(&mut self) {
+        let width = self.width as f32;
+        match &mut self.hawk {
+            Some(hawk) => {
+                hawk.x += hawk.vx;
+                if !(-FLEE_RADIUS..=width + FLEE_RADIUS).contains(&hawk.x) {
+                    self.hawk = None;
+                    self.hawk_wait = self.rng.random_range(HAWK_EVERY);
+                }
+            }
+            None => {
+                self.hawk_wait = self.hawk_wait.saturating_sub(1);
+                if self.hawk_wait == 0 {
+                    let from_left = self.rng.random_range(0..2) == 0;
+                    let share = self.rng.random_range(HAWK_BAND.0..HAWK_BAND.1);
+                    self.hawk = Some(Hawk {
+                        x: if from_left {
+                            -FLEE_RADIUS
+                        } else {
+                            width + FLEE_RADIUS
+                        },
+                        y: self.sky as f32 * share,
+                        vx: if from_left { HAWK_SPEED } else { -HAWK_SPEED },
+                    });
+                }
+            }
+        }
+    }
+
     fn step(&mut self) {
+        self.fly_hawk();
         let (columns, buckets) = self.buckets();
         let pushes: Vec<(f32, f32)> = self
             .birds
@@ -192,12 +267,22 @@ impl Murmuration {
             .map(|bird| self.steer(bird, columns, &buckets))
             .collect();
         let (width, height) = (self.width as f32, self.sky as f32);
+        let hawk = self.hawk;
         for (bird, push) in self.birds.iter_mut().zip(pushes) {
             let (mut vx, mut vy) = (bird.vx + push.0, bird.vy + push.1);
             let speed = vx.hypot(vy);
             if speed > 0.0 {
                 let kept = speed.clamp(MIN_SPEED, MAX_SPEED) / speed;
                 (vx, vy) = (vx * kept, vy * kept);
+            }
+            // A bird near the hawk drops the flock and climbs or dives away
+            // from the hawk's line at full speed, so the flock opens around
+            // it. The hawk is slower, so the gap only grows.
+            if let Some(hawk) = hawk
+                && (bird.x - hawk.x).hypot(bird.y - hawk.y) < FLEE_RADIUS
+            {
+                let away = if bird.y < hawk.y { -1.0 } else { 1.0 };
+                (vx, vy) = (0.0, away * MAX_SPEED);
             }
             bird.x += vx;
             bird.y += vy;
@@ -312,28 +397,46 @@ impl Scene for Murmuration {
         let rows = usize::from(area.height);
         let sky_rows = rows.saturating_sub(self.tree_rows);
         let bands = self.sky_bands();
-        let mut cells = vec![0; columns * sky_rows];
-        for bird in &self.birds {
-            let (x, y) = (bird.x as usize, bird.y as usize);
+        let plot = |cells: &mut [u32], x: usize, y: usize| {
             let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
             if column < columns && row < sky_rows {
                 cells[row * columns + column] |= dot_bit(x % CELL_WIDTH, y % CELL_HEIGHT);
             }
+        };
+        let mut cells = vec![0; columns * sky_rows];
+        for bird in &self.birds {
+            plot(&mut cells, bird.x as usize, bird.y as usize);
         }
-        for (index, &dots) in cells.iter().enumerate() {
+        let mut hawk_cells = vec![0; columns * sky_rows];
+        if let Some(hawk) = self.hawk {
+            let centre = (hawk.x.floor() as isize, hawk.y.floor() as isize);
+            for (dx, dy) in HAWK_SHAPE {
+                if let (Ok(x), Ok(y)) = (
+                    usize::try_from(centre.0 + dx),
+                    usize::try_from(centre.1 + dy),
+                ) {
+                    plot(&mut hawk_cells, x, y);
+                }
+            }
+        }
+        for (index, (&dots, &hawk)) in cells.iter().zip(&hawk_cells).enumerate() {
             let (column, row) = (index % columns, index / columns);
             let cell = &mut buf[(area.x + column as u16, area.y + row as u16)];
             cell.set_bg(Self::sky_colour(bands, column, row, sky_rows));
+            // One braille cell has one colour, so a cell the hawk is in
+            // shows the hawk alone.
+            let (dots, colour) = if hawk != 0 {
+                (hawk, self.palette.love)
+            } else if dots.count_ones() > FAINT_DOTS {
+                (dots, self.palette.text)
+            } else {
+                (dots, self.palette.subtle)
+            };
             if dots == 0 {
                 cell.set_char(' ');
                 continue;
             }
             let glyph = char::from_u32(BLANK_BRAILLE + dots).unwrap_or(' ');
-            let colour = if dots.count_ones() > FAINT_DOTS {
-                self.palette.text
-            } else {
-                self.palette.subtle
-            };
             cell.set_char(glyph).set_fg(colour);
         }
 
