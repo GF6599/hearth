@@ -1,3 +1,4 @@
+use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
 
 use rand::RngExt;
@@ -22,18 +23,29 @@ pub const LIFETIME: RangeInclusive<u32> = 320..=640;
 /// share of a dither tile.
 pub const FULL_INK: f32 = 2.0;
 
-const PARTICLES_PER_TICK: usize = 16;
+const PARTICLES_PER_TICK: usize = 32;
 /// Speeds in pixels a tick. The head enters fast and slows as the water
 /// takes it, and each particle leaves with part of the head's speed.
 const ENTRY_SPEED: RangeInclusive<f32> = 0.9..=1.4;
 const HEAD_DRAG: f32 = 0.96;
 const SHARE_OF_HEAD: RangeInclusive<f32> = 0.3..=1.0;
-const SPREAD: f32 = 0.3;
+const SPREAD: f32 = 0.15;
 const DRAG: f32 = 0.97;
 /// Ink is a little heavier than water, so it keeps settling after its
 /// own speed is gone.
 const SINK: f32 = 0.03;
-const JITTER: f32 = 0.02;
+const JITTER: f32 = 0.01;
+/// Waves in the stream function of the currents. Where several cross the
+/// curls are less regular than any one of them.
+const WAVES: usize = 5;
+/// The length of one wave in pixels, so a wide pane holds more curls
+/// rather than larger ones.
+const WAVELENGTH: RangeInclusive<f32> = 24.0..=64.0;
+/// The fastest current one wave makes, in pixels a tick.
+const WAVE_SPEED: RangeInclusive<f32> = 0.05..=0.12;
+/// How fast a wave's phase turns, in radians a tick, so the currents
+/// shift over a minute or two.
+const DRIFT: RangeInclusive<f32> = 0.002..=0.006;
 /// A drop enters this far in from either side, as a share of the width.
 const MARGIN: f32 = 0.15;
 /// Keeps a clamped particle strictly inside the last pixel.
@@ -78,6 +90,70 @@ pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color 
 }
 
 #[derive(Debug, Clone, Copy)]
+struct Wave {
+    across: f32,
+    down: f32,
+    height: f32,
+    drift: f32,
+    phase: f32,
+}
+
+/// The flow of the water: the curl of a stream function made of seeded
+/// sine waves. A curl has no divergence, so the ink neither piles up nor
+/// drains. The stream function is held at zero on the walls, so nothing
+/// flows through one and the ink slides along it instead.
+#[derive(Debug)]
+pub struct Currents {
+    waves: Vec<Wave>,
+}
+
+impl Currents {
+    pub fn new(rng: &mut Rng) -> Self {
+        let waves = (0..WAVES)
+            .map(|_| {
+                let heading = rng.random_range(0.0..TAU);
+                let number = TAU / rng.random_range(WAVELENGTH);
+                let turn = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+                Wave {
+                    across: number * heading.cos(),
+                    down: number * heading.sin(),
+                    height: rng.random_range(WAVE_SPEED) / number,
+                    drift: turn * rng.random_range(DRIFT),
+                    phase: rng.random_range(0.0..TAU),
+                }
+            })
+            .collect();
+        Self { waves }
+    }
+
+    /// The velocity at a point of a pane `width` by `rows` pixels, in
+    /// pixels a tick, `time` ticks after the start.
+    pub fn velocity(&self, x: f32, y: f32, time: f32, (width, rows): (f32, f32)) -> (f32, f32) {
+        let (mut stream, mut slope_x, mut slope_y) = (0.0, 0.0, 0.0);
+        for wave in &self.waves {
+            let angle = wave.across * x + wave.down * y + wave.drift * time + wave.phase;
+            let (sin, cos) = angle.sin_cos();
+            stream += wave.height * sin;
+            slope_x += wave.height * wave.across * cos;
+            slope_y += wave.height * wave.down * cos;
+        }
+        let (wall_x, wall_slope_x) = window(x, width);
+        let (wall_y, wall_slope_y) = window(y, rows);
+        (
+            wall_x * (slope_y * wall_y + stream * wall_slope_y),
+            -wall_y * (slope_x * wall_x + stream * wall_slope_x),
+        )
+    }
+}
+
+/// A hump that is zero at both ends of `0..=length` and one in the middle,
+/// with its slope.
+fn window(at: f32, length: f32) -> (f32, f32) {
+    let (sin, cos) = (PI * at / length).sin_cos();
+    (sin, PI / length * cos)
+}
+
+#[derive(Debug, Clone, Copy)]
 struct Particle {
     x: f32,
     y: f32,
@@ -114,6 +190,9 @@ pub struct Ink {
     width: usize,
     rows: usize,
     drops: Vec<Drop>,
+    currents: Currents,
+    /// Ticks since the start, the time the currents read.
+    time: u32,
     next_serial: u64,
     last_accent: Option<usize>,
     /// Ticks until the next drop.
@@ -121,13 +200,16 @@ pub struct Ink {
 }
 
 impl Ink {
-    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
+    pub fn new(mut rng: Rng, palette: &'static Palette) -> Self {
+        let currents = Currents::new(&mut rng);
         Self {
             rng,
             palette,
             width: 0,
             rows: 0,
             drops: Vec::new(),
+            currents,
+            time: 0,
             next_serial: 0,
             last_accent: None,
             wait: 0,
@@ -233,6 +315,8 @@ impl Scene for Ink {
             self.wait -= 1;
         }
 
+        let pane = (width as f32, rows as f32);
+        let time = self.time as f32;
         let mut drops = std::mem::take(&mut self.drops);
         for drop in &mut drops {
             if drop.emitting > 0 {
@@ -247,21 +331,26 @@ impl Scene for Ink {
                         lifetime,
                     });
                 }
-                (drop.x, drop.y) = self.inside(drop.x, drop.y + drop.speed);
+                let (across, down) = self.currents.velocity(drop.x, drop.y, time, pane);
+                (drop.x, drop.y) = self.inside(drop.x + across, drop.y + down + drop.speed);
                 drop.speed *= HEAD_DRAG;
                 drop.emitting -= 1;
             }
             for particle in &mut drop.particles {
                 particle.vx = particle.vx * DRAG + self.rng.random_range(-JITTER..=JITTER);
                 particle.vy *= DRAG;
-                (particle.x, particle.y) =
-                    self.inside(particle.x + particle.vx, particle.y + particle.vy + SINK);
+                let (across, down) = self.currents.velocity(particle.x, particle.y, time, pane);
+                (particle.x, particle.y) = self.inside(
+                    particle.x + particle.vx + across,
+                    particle.y + particle.vy + down + SINK,
+                );
                 particle.left -= 1;
             }
             drop.particles.retain(|particle| particle.left > 0);
         }
         drops.retain(|drop| drop.emitting > 0 || !drop.particles.is_empty());
         self.drops = drops;
+        self.time = self.time.wrapping_add(1);
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
