@@ -194,9 +194,44 @@ pub const KANAGAWA_LOTUS: Palette = Palette {
     iris: Color::Rgb(0x62, 0x4c, 0x83),
 };
 
+/// Dracula and Alucard by the names of the Dracula specification: Background,
+/// the UI's Background Dark, Selection, Comment and Foreground, then Red,
+/// Yellow, Pink, Green, Cyan and Purple as the accents. The specification
+/// has no tone between Comment and Foreground, so Comment is both muted and
+/// subtle.
+pub const DRACULA: Palette = Palette {
+    base: Color::Rgb(0x28, 0x2a, 0x36),
+    surface: Color::Rgb(0x21, 0x22, 0x2c),
+    overlay: Color::Rgb(0x44, 0x47, 0x5a),
+    muted: Color::Rgb(0x62, 0x72, 0xa4),
+    subtle: Color::Rgb(0x62, 0x72, 0xa4),
+    text: Color::Rgb(0xf8, 0xf8, 0xf2),
+    love: Color::Rgb(0xff, 0x55, 0x55),
+    gold: Color::Rgb(0xf1, 0xfa, 0x8c),
+    rose: Color::Rgb(0xff, 0x79, 0xc6),
+    pine: Color::Rgb(0x50, 0xfa, 0x7b),
+    foam: Color::Rgb(0x8b, 0xe9, 0xfd),
+    iris: Color::Rgb(0xbd, 0x93, 0xf9),
+};
+
+pub const DRACULA_ALUCARD: Palette = Palette {
+    base: Color::Rgb(0xff, 0xfb, 0xeb),
+    surface: Color::Rgb(0xce, 0xcc, 0xc0),
+    overlay: Color::Rgb(0xcf, 0xcf, 0xde),
+    muted: Color::Rgb(0x6c, 0x66, 0x4b),
+    subtle: Color::Rgb(0x6c, 0x66, 0x4b),
+    text: Color::Rgb(0x1f, 0x1f, 0x1f),
+    love: Color::Rgb(0xcb, 0x3a, 0x2a),
+    gold: Color::Rgb(0x84, 0x6e, 0x15),
+    rose: Color::Rgb(0xa3, 0x14, 0x4d),
+    pine: Color::Rgb(0x14, 0x71, 0x0a),
+    foam: Color::Rgb(0x03, 0x6a, 0x96),
+    iris: Color::Rgb(0x64, 0x4a, 0xc9),
+};
+
 /// Each theme by the name the config file gives it. A family comes first
 /// in the name, so another family can join without a clash.
-pub const THEMES: [(&str, &Palette); 9] = [
+pub const THEMES: [(&str, &Palette); 11] = [
     ("rose-pine", &ROSE_PINE),
     ("rose-pine-moon", &ROSE_PINE_MOON),
     ("rose-pine-dawn", &ROSE_PINE_DAWN),
@@ -206,6 +241,8 @@ pub const THEMES: [(&str, &Palette); 9] = [
     ("tokyo-night-day", &TOKYO_NIGHT_DAY),
     ("kanagawa-wave", &KANAGAWA_WAVE),
     ("kanagawa-lotus", &KANAGAWA_LOTUS),
+    ("dracula", &DRACULA),
+    ("dracula-alucard", &DRACULA_ALUCARD),
 ];
 
 /// The place of a theme in `THEMES`, which is the first theme for a
