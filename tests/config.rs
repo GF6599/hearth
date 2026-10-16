@@ -354,6 +354,8 @@ fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
         "catppuccin-latte",
         "tokyo-night",
         "tokyo-night-day",
+        "kanagawa-wave",
+        "kanagawa-lotus",
     ] {
         // Given:
         let text = format!("theme = \"{name}\"\n");
