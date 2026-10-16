@@ -74,9 +74,9 @@ fn the_top_of_the_screen_stays_dark() {
 
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it ticks once and renders.
-/// Then: the lowest pixel row holds stones in overlay with base gaps, a
-/// grate bar in muted spans at least a third of the width just above
-/// them, and wood sits above the grate.
+/// Then: the lowest pixel row holds stones in muted with overlay mortar, a
+/// grate bar in subtle spans at least a third of the width above them, and
+/// wood sits above the grate.
 ///
 /// Why it matters: the fire rests on something, so it reads as a
 /// fireplace and not as a glow that floats.
@@ -91,16 +91,16 @@ fn the_logs_rest_on_a_grate_over_hearth_stones() {
 
     // Then:
     let bottom = shown.last().unwrap();
-    assert!(count(bottom, palette.overlay) > 0, "no stones");
+    assert!(count(bottom, palette.muted) > 0, "no stones");
     assert!(
         bottom
             .iter()
-            .all(|pixel| *pixel == Some(palette.overlay) || *pixel == Some(palette.base)),
+            .all(|pixel| *pixel == Some(palette.muted) || *pixel == Some(palette.overlay)),
         "stones in another colour: {bottom:?}"
     );
     let grate = (0..shown.len())
         .rev()
-        .find(|&y| count(&shown[y], palette.muted) >= shown[y].len() / 3)
+        .find(|&y| count(&shown[y], palette.subtle) >= shown[y].len() / 3)
         .expect("no grate bar");
     let wood_above = shown[..grate].iter().any(|row| {
         row.iter()

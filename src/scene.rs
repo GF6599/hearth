@@ -10,6 +10,7 @@ use ratatui::layout::Rect;
 use crate::corpus::Corpus;
 use crate::scenes::aquarium::Aquarium;
 use crate::scenes::bonsai::Bonsai;
+use crate::scenes::embers::Embers;
 use crate::scenes::fire::Fire;
 use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
@@ -106,6 +107,7 @@ pub enum SceneKind {
     Noise,
     Matrix,
     Fire,
+    Embers,
     Life,
     Pipes,
     Bonsai,
@@ -118,6 +120,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Noise,
     SceneKind::Matrix,
     SceneKind::Fire,
+    SceneKind::Embers,
     SceneKind::Life,
     SceneKind::Pipes,
     SceneKind::Bonsai,
@@ -131,6 +134,7 @@ impl SceneKind {
             SceneKind::Noise => "noise",
             SceneKind::Matrix => "matrix",
             SceneKind::Fire => "fire",
+            SceneKind::Embers => "embers",
             SceneKind::Life => "life",
             SceneKind::Pipes => "pipes",
             SceneKind::Bonsai => "bonsai",
@@ -146,6 +150,7 @@ impl SceneKind {
             SceneKind::Noise => "random glyphs over the whole screen",
             SceneKind::Matrix => "katakana rain that fades from foam to pine",
             SceneKind::Fire => "the doom fire, rising in half blocks",
+            SceneKind::Embers => "logs that burn down on a grate, throwing sparks",
             SceneKind::Life => "Conway's game of life on a torus",
             SceneKind::Pipes => "pipes that walk and turn in box runes",
             SceneKind::Bonsai => "a bonsai tree that grows from a pot",
@@ -161,6 +166,7 @@ impl SceneKind {
             SceneKind::Noise => None,
             SceneKind::Matrix => Some("after cmatrix by Chris Allegretta"),
             SceneKind::Fire => Some("after the PSX Doom fire, via Fabien Sanglard"),
+            SceneKind::Embers => None,
             SceneKind::Life => Some("after John Conway's Game of Life"),
             SceneKind::Pipes => Some("after pipes.sh by Matthew Simpson"),
             SceneKind::Bonsai => Some("after cbonsai by John Allbritten"),
@@ -185,6 +191,7 @@ impl SceneKind {
             SceneKind::Noise => Box::new(Noise::new(rng, palette)),
             SceneKind::Matrix => Box::new(Matrix::new(rng, palette)),
             SceneKind::Fire => Box::new(Fire::new(rng, palette)),
+            SceneKind::Embers => Box::new(Embers::new(rng, palette)),
             SceneKind::Life => Box::new(Life::new(rng, palette)),
             SceneKind::Pipes => Box::new(Pipes::new(rng, palette)),
             SceneKind::Bonsai => Box::new(Bonsai::new(rng, palette)),
