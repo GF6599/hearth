@@ -11,6 +11,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `noise` | | Random glyphs over the whole terminal, a placeholder that proves the loop |
 | `matrix` | [cmatrix](https://github.com/abishekvashok/cmatrix) by Chris Allegretta | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
 | `fire` | [the PSX Doom fire](https://fabiensanglard.net/doom_fire_psx/), via Fabien Sanglard | The doom fire, in half blocks: heat rises from a white-hot base through gold, rose, love and a grey smoke and dies into the background, in Rose Pine colours only, dithered where one meets the next |
+| `embers` | | Logs on a grate over hearth stones glow at their ends and cracks and throw sparks that cool from gold to rose to grey as they rise. Each log burns down over a few minutes into coals, a new log drops onto the pile, and now and then a log settles with a burst |
 | `life` | [John Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life) | Conway's game of life on a torus, newborn cells in rose and settled ones in iris, reseeded when the board goes still |
 | `pipes` | [pipes.sh](https://github.com/pipeseroni/pipes.sh) by Matthew Simpson | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
 | `bonsai` | [cbonsai](https://gitlab.com/jallbrit/cbonsai) by John Allbritten | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
