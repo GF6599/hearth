@@ -160,7 +160,8 @@ fn t_wraps_from_the_last_theme_to_the_first() {
     assert_eq!(frame(&mut cycled, 20), frame(&mut still, 20));
 }
 
-/// Given: the picker on the default theme, with its preview.
+/// Given: the picker on the default theme, marking fire, which draws in
+/// base and overlay, two colours the next theme changes.
 /// When: `t` is pressed.
 /// Then: the picker stays open, and no cell, the preview included, shows
 /// a default colour that the next theme does not have.
@@ -171,6 +172,7 @@ fn t_wraps_from_the_last_theme_to_the_first() {
 fn t_in_the_picker_moves_the_list_and_the_preview_to_the_next_theme() {
     // Given:
     let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    send(&mut app, &[KeyCode::Char('j'), KeyCode::Char('j')]);
     frame(&mut app, 5);
 
     // When:
