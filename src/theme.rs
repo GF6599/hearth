@@ -125,14 +125,50 @@ pub const CATPPUCCIN_LATTE: Palette = Palette {
     iris: Color::Rgb(0x88, 0x39, 0xef),
 };
 
+/// Tokyo Night by the same names in both variants: bg_dark fills a frame,
+/// bg_highlight is the overlay, comment and dark5 are muted and subtle, and
+/// red, yellow, orange, blue, cyan and magenta are the accents. Orange is
+/// rose so that rose and iris are not two violets.
+pub const TOKYO_NIGHT: Palette = Palette {
+    base: Color::Rgb(0x1a, 0x1b, 0x26),
+    surface: Color::Rgb(0x16, 0x16, 0x1e),
+    overlay: Color::Rgb(0x29, 0x2e, 0x42),
+    muted: Color::Rgb(0x56, 0x5f, 0x89),
+    subtle: Color::Rgb(0x73, 0x7a, 0xa2),
+    text: Color::Rgb(0xc0, 0xca, 0xf5),
+    love: Color::Rgb(0xf7, 0x76, 0x8e),
+    gold: Color::Rgb(0xe0, 0xaf, 0x68),
+    rose: Color::Rgb(0xff, 0x9e, 0x64),
+    pine: Color::Rgb(0x7a, 0xa2, 0xf7),
+    foam: Color::Rgb(0x7d, 0xcf, 0xff),
+    iris: Color::Rgb(0xbb, 0x9a, 0xf7),
+};
+
+pub const TOKYO_NIGHT_DAY: Palette = Palette {
+    base: Color::Rgb(0xe1, 0xe2, 0xe7),
+    surface: Color::Rgb(0xd0, 0xd5, 0xe3),
+    overlay: Color::Rgb(0xc4, 0xc8, 0xda),
+    muted: Color::Rgb(0x84, 0x8c, 0xb5),
+    subtle: Color::Rgb(0x68, 0x70, 0x9a),
+    text: Color::Rgb(0x37, 0x60, 0xbf),
+    love: Color::Rgb(0xf5, 0x2a, 0x65),
+    gold: Color::Rgb(0x8c, 0x6c, 0x3e),
+    rose: Color::Rgb(0xb1, 0x5c, 0x00),
+    pine: Color::Rgb(0x2e, 0x7d, 0xe9),
+    foam: Color::Rgb(0x00, 0x71, 0x97),
+    iris: Color::Rgb(0x98, 0x54, 0xf1),
+};
+
 /// Each theme by the name the config file gives it. A family comes first
 /// in the name, so another family can join without a clash.
-pub const THEMES: [(&str, &Palette); 5] = [
+pub const THEMES: [(&str, &Palette); 7] = [
     ("rose-pine", &ROSE_PINE),
     ("rose-pine-moon", &ROSE_PINE_MOON),
     ("rose-pine-dawn", &ROSE_PINE_DAWN),
     ("catppuccin-mocha", &CATPPUCCIN_MOCHA),
     ("catppuccin-latte", &CATPPUCCIN_LATTE),
+    ("tokyo-night", &TOKYO_NIGHT),
+    ("tokyo-night-day", &TOKYO_NIGHT_DAY),
 ];
 
 /// The place of a theme in `THEMES`, which is the first theme for a
