@@ -80,7 +80,7 @@ The theme colours every scene and the picker. `t` moves to the next theme, start
 
 ### Picker
 
-The picker lists each scene with a one-line summary and the speed it starts at, under the `{hearth}` mark. The marked scene runs in a pane beside the list, at its own speed, from its first frame. The pane's bottom rule names the work and the person whose idea the scene reuses, whole or not at all. A narrow terminal drops the pane and shows the mark as the braced word. A short terminal drops the mark, and then the summaries, so every scene stays in the list.
+The picker lists each scene with a one-line summary and the speed it starts at, under the `{hearth}` mark. The marked scene runs in a pane beside the list, at its own speed, from its first frame. The list and the pane are one height. The pane's bottom rule names the work and the person whose idea the scene reuses, whole or not at all. A narrow terminal drops the pane and shows the mark as the braced word. When the scenes do not all fit, the list scrolls with the mark and a thumb on its right rule shows where it is. A short terminal drops the mark when fewer than five scenes would stay in view, and then the summaries.
 
 | Key | Action |
 |---|---|
