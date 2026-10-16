@@ -1,6 +1,6 @@
 //! The `{hearth}` lockup. The art is `figlet -f ANSI_Shadow hearth`. The
-//! braces are drawn from box runes, because a terminal cannot scale one
-//! glyph to the art's height.
+//! font has no braces, so they are drawn in its style by hand: blocks for
+//! the face and box runes for the shadow, with the last row shadow only.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -15,8 +15,9 @@ pub const ART: [&str; 6] = [
     "██║  ██║███████╗██║  ██║██║  ██║   ██║   ██║  ██║",
     "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝",
 ];
-const LEFT_BRACE: [&str; 6] = ["╭", "│", "┘", "┐", "│", "╰"];
-const RIGHT_BRACE: [&str; 6] = ["╮", "│", "└", "┌", "│", "╯"];
+const LEFT_BRACE: [&str; 6] = [" ███╗", " ██╔╝", "██╔╝ ", "╚██╗ ", " ███╗", " ╚══╝"];
+const RIGHT_BRACE: [&str; 6] = ["███╗ ", "╚██╗ ", " ╚██╗", " ██╔╝", "███╔╝", "╚══╝ "];
+const BRACE_WIDTH: usize = 5;
 
 /// What shows where the art does not fit, so the name never wraps or is
 /// cut into fragments.
@@ -31,7 +32,7 @@ pub enum Mark {
 impl Mark {
     pub fn width(self) -> u16 {
         let cells = match self {
-            Mark::Art => art_width() + 4,
+            Mark::Art => art_width() + 2 * (BRACE_WIDTH + 1),
             Mark::Word => WORD.chars().count(),
         };
         u16::try_from(cells).unwrap_or(u16::MAX)
@@ -45,7 +46,7 @@ impl Mark {
     }
 
     pub fn lines(self, palette: &Palette) -> Vec<Line<'static>> {
-        let brace = Style::default().fg(palette.subtle);
+        let brace = Style::default().fg(palette.marker());
         let name = Style::default().fg(palette.marked());
         match self {
             Mark::Art => (0..ART.len())
