@@ -281,7 +281,8 @@ fn a_key_release_is_ignored() {
 }
 
 /// Given: a scene ticked at one size, and the picker.
-/// When: each renders at one cell, and at no cells.
+/// When: each renders at one cell, at no cells, and at no columns twenty
+/// rows tall, where the picker's list has rows to scroll and no width.
 /// Then: each draws without a panic and stays inside the area.
 #[test]
 fn a_scene_and_the_picker_render_inside_any_area() {
@@ -293,6 +294,7 @@ fn a_scene_and_the_picker_render_inside_any_area() {
     for app in [&scene, &picker] {
         assert_eq!(frame(app, 1, 1).area, Rect::new(0, 0, 1, 1));
         assert_eq!(frame(app, 0, 0).area, Rect::new(0, 0, 0, 0));
+        assert_eq!(frame(app, 0, 20).area, Rect::new(0, 0, 0, 20));
     }
 }
 
