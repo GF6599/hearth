@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
-use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, Murmuration};
+use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration};
 use hearth::scenes::typing::Speed;
 use hearth::theme;
 use rand::SeedableRng;
@@ -429,4 +429,139 @@ fn every_theme_lights_the_sky_low_over_the_trees() {
             assert_eq!(buffer[(x, low)].bg, lightest, "{name}: low at {x}");
         }
     }
+}
+
+/// Where the hawk is after each tick, `None` while the sky is clear.
+fn hawk_track(seed: u64, ticks: u32) -> (Murmuration, Vec<Option<(f32, f32)>>) {
+    let mut scene = Murmuration::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
+    let track = (0..ticks)
+        .map(|_| {
+            scene.tick(AREA);
+            scene.hawk()
+        })
+        .collect();
+    (scene, track)
+}
+
+/// Given: the scene on a hundred by thirty area.
+/// When: it ticks long enough for three waits of the longest `HAWK_EVERY`
+/// and three crossings.
+/// Then: the hawk comes at least twice, each wait for it, from the start
+/// or from the last pass, is inside `HAWK_EVERY`, and each pass starts
+/// past one side of the pane and ends past the other.
+///
+/// Why it matters: a hawk that is always there keeps the flock split, and
+/// the calm folds never show.
+#[test]
+fn a_hawk_crosses_the_sky_now_and_then() {
+    // Given, when:
+    let ticks = HAWK_EVERY.end() * 3 + 900;
+    let (_, track) = hawk_track(7, ticks);
+
+    // Then:
+    let (width, _) = dots_of(AREA);
+    let mut passes = 0;
+    let mut clear_since = 0;
+    let mut entered = None;
+    for (tick, place) in (0u32..).zip(&track) {
+        match (place, entered) {
+            (Some((x, _)), None) => {
+                let wait = tick - clear_since;
+                assert!(
+                    HAWK_EVERY.contains(&wait),
+                    "waited {wait} ticks before tick {tick}"
+                );
+                entered = Some(*x);
+            }
+            (None, Some(start)) => {
+                let (end, _) = track[tick as usize - 1].unwrap();
+                let crossed = (start < 0.0 && end >= width) || (start >= width && end < 0.0);
+                assert!(crossed, "a pass from {start} to {end}");
+                passes += 1;
+                clear_since = tick;
+                entered = None;
+            }
+            _ => {}
+        }
+    }
+    assert!(passes >= 2, "{passes} passes in {ticks} ticks");
+}
+
+/// Given: the scene on a hundred by thirty area.
+/// When: it ticks through two passes of the hawk.
+/// Then: on every tick with the hawk in the sky, no bird is within
+/// `HAWK_CLEARANCE` dots of it.
+///
+/// Why it matters: the hawk is the one event of the scene, and what shows
+/// it is the flock opening around it.
+#[test]
+fn the_flock_opens_around_the_hawk() {
+    // Given:
+    let mut scene = Murmuration::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+    let mut seen = 0;
+
+    for tick in 0..HAWK_EVERY.end() * 2 + 600 {
+        // When:
+        scene.tick(AREA);
+        let Some((hx, hy)) = scene.hawk() else {
+            continue;
+        };
+        seen += 1;
+
+        // Then:
+        for (x, y) in scene.birds() {
+            let distance = (x - hx).hypot(y - hy);
+            assert!(
+                distance >= HAWK_CLEARANCE,
+                "tick {tick}: bird at ({x}, {y}) {distance} from the hawk at ({hx}, {hy})"
+            );
+        }
+    }
+    assert!(seen > 0, "no hawk came");
+}
+
+/// Given: the scene on a hundred by thirty area, ticked until the hawk is
+/// in the middle third of the pane.
+/// When: it renders.
+/// Then: some cells are in love, and every lit dot of a love cell is
+/// within four dots across and two up or down of the hawk.
+///
+/// Why it matters: one braille cell has one colour, so a cell that holds
+/// the hawk shows only the hawk, and a bird dot in it would turn red.
+#[test]
+fn the_hawk_draws_in_love_over_the_flock() {
+    // Given:
+    let (width, _) = dots_of(AREA);
+    let mut scene = Murmuration::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+    let (hx, hy) = (0..HAWK_EVERY.end() + 600)
+        .find_map(|_| {
+            scene.tick(AREA);
+            scene
+                .hawk()
+                .filter(|(x, _)| *x > width / 3.0 && *x < width * 2.0 / 3.0)
+        })
+        .expect("no hawk reached the middle third");
+
+    // When:
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let mut love = 0;
+    for position in AREA.positions() {
+        let cell = &buffer[position];
+        if cell.fg != theme::ROSE_PINE.love {
+            continue;
+        }
+        love += 1;
+        let dots = braille_dots(cell.symbol()).unwrap_or_else(|| panic!("{position:?}"));
+        for (dx, dy) in dots {
+            let x = (usize::from(position.x) * CELL_DOTS.0 + dx) as f32;
+            let y = (usize::from(position.y) * CELL_DOTS.1 + dy) as f32;
+            assert!(
+                (x - hx).abs() <= 4.0 && (y - hy).abs() <= 2.0,
+                "dot ({x}, {y}) in love, the hawk at ({hx}, {hy})"
+            );
+        }
+    }
+    assert!(love > 0, "the hawk is not drawn");
 }
