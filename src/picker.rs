@@ -288,7 +288,7 @@ impl Widget for Picker<'_> {
         let marker = Style::default().fg(self.palette.marker());
         let visible = rows_in(frame, summaries);
         let first = self.scrolled(visible);
-        if visible < self.entries.len() && inner.height > 0 {
+        if visible < self.entries.len() {
             self.render_thumb(frame, inner, first, visible, buf);
         }
         let mut rows = Vec::new();
