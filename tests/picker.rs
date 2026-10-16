@@ -518,19 +518,30 @@ fn row_of(buffer: &Buffer, text: &str) -> Option<u16> {
     (0..buffer.area.height).find(|&y| row_text(buffer, y).contains(text))
 }
 
-/// Given: the picker at 120 by 30, with the preview, and at 60 by 30,
+/// The braces of the art, row by row, drawn in the art's own style.
+const LEFT_BRACE: [&str; 6] = [" ███╗", " ██╔╝", "██╔╝ ", "╚██╗ ", " ███╗", " ╚══╝"];
+const RIGHT_BRACE: [&str; 6] = ["███╗ ", "╚██╗ ", " ╚██╗", " ██╔╝", "███╔╝", "╚══╝ "];
+
+/// Given: the picker at 120 by 30, with the preview, and at 80 by 30,
 /// without it.
 /// When: each renders.
-/// Then: the art rows read in order from the list frame's left column,
-/// braces first and the art in iris, and every art row is above the list
-/// and the pane.
+/// Then: from the list frame's left column each art row reads as a block
+/// brace, a blank, the art row, a blank and the closing brace, the braces
+/// in gold and the art in iris, and every art row is above the list and
+/// the pane.
 ///
 /// Why it matters: a mark that floats off the content column reads as a
-/// separate thing, and one that overlaps the list hides a scene.
+/// separate thing, one that overlaps the list hides a scene, and a thin
+/// brace beside block letters reads as faint.
 #[test]
 fn the_mark_sits_above_the_content_at_its_left_edge() {
     let app = App::picker(7, Arc::new(Corpus::embedded()));
-    for area in [WIDE, Rect::new(0, 0, 60, 30)] {
+    let width = mark::ART
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap();
+    for area in [WIDE, Rect::new(0, 0, 80, 30)] {
         // Given, when:
         let buffer = app_frame(&app, area);
 
@@ -539,11 +550,30 @@ fn the_mark_sits_above_the_content_at_its_left_edge() {
         let first = row_of(&buffer, mark::ART[0]).unwrap_or_else(|| panic!("no art at {area}"));
         for (offset, line) in (0..).zip(mark::ART) {
             let y = first + offset;
-            assert!(row_text(&buffer, y).contains(line), "{area}: row {offset}");
+            let row = usize::from(offset);
+            let expected = format!("{} {line:<width$} {}", LEFT_BRACE[row], RIGHT_BRACE[row]);
+            let shown: String = row_text(&buffer, y)
+                .chars()
+                .skip(usize::from(list_x))
+                .take(expected.chars().count())
+                .collect();
+            assert_eq!(shown, expected, "{area}: row {offset}");
+            let right = list_x + u16::try_from(expected.chars().count() - 5).unwrap();
+            for (x, glyph) in (list_x..)
+                .zip(LEFT_BRACE[row].chars())
+                .chain((right..).zip(RIGHT_BRACE[row].chars()))
+            {
+                if glyph != ' ' {
+                    assert_eq!(
+                        buffer[(x, y)].fg,
+                        theme::ROSE_PINE.marker(),
+                        "{area}: brace at {x}, {y}"
+                    );
+                }
+            }
         }
-        assert_eq!(buffer[(list_x, first)].symbol(), "╭", "{area}");
         assert_eq!(
-            buffer[(list_x + 2, first)].fg,
+            buffer[(list_x + 6, first)].fg,
             theme::ROSE_PINE.marked(),
             "{area}"
         );
@@ -555,7 +585,8 @@ fn the_mark_sits_above_the_content_at_its_left_edge() {
     }
 }
 
-/// Given: the picker 52 columns wide, too narrow for the art.
+/// Given: the picker 60 columns wide, too narrow for the art and its
+/// block braces.
 /// When: it renders.
 /// Then: the braced word shows from the list frame's left column, and no
 /// art row shows.
@@ -566,7 +597,7 @@ fn the_mark_sits_above_the_content_at_its_left_edge() {
 fn a_narrow_terminal_shows_the_braced_word() {
     // Given, when:
     let app = App::picker(7, Arc::new(Corpus::embedded()));
-    let buffer = app_frame(&app, Rect::new(0, 0, 52, 30));
+    let buffer = app_frame(&app, Rect::new(0, 0, 60, 30));
 
     // Then:
     let (list_x, _) = list_corner(&buffer);
