@@ -159,9 +159,44 @@ pub const TOKYO_NIGHT_DAY: Palette = Palette {
     iris: Color::Rgb(0x98, 0x54, 0xf1),
 };
 
+/// Kanagawa by the role each theme gives a colour, the same in both
+/// variants: ui.bg, the float background, ui.bg_p1, syn.comment, ui.special
+/// and ui.fg, then syn.preproc, vcs.changed, syn.number, syn.fun, syn.type
+/// and syn.keyword as the accents. Gold is vcs.changed because Lotus draws
+/// syn.identifier in a dark olive.
+pub const KANAGAWA_WAVE: Palette = Palette {
+    base: Color::Rgb(0x1f, 0x1f, 0x28),
+    surface: Color::Rgb(0x16, 0x16, 0x1d),
+    overlay: Color::Rgb(0x2a, 0x2a, 0x37),
+    muted: Color::Rgb(0x72, 0x71, 0x69),
+    subtle: Color::Rgb(0x93, 0x8a, 0xa9),
+    text: Color::Rgb(0xdc, 0xd7, 0xba),
+    love: Color::Rgb(0xe4, 0x68, 0x76),
+    gold: Color::Rgb(0xdc, 0xa5, 0x61),
+    rose: Color::Rgb(0xd2, 0x7e, 0x99),
+    pine: Color::Rgb(0x7e, 0x9c, 0xd8),
+    foam: Color::Rgb(0x7a, 0xa8, 0x9f),
+    iris: Color::Rgb(0x95, 0x7f, 0xb8),
+};
+
+pub const KANAGAWA_LOTUS: Palette = Palette {
+    base: Color::Rgb(0xf2, 0xec, 0xbc),
+    surface: Color::Rgb(0xd5, 0xce, 0xa3),
+    overlay: Color::Rgb(0xe7, 0xdb, 0xa0),
+    muted: Color::Rgb(0x8a, 0x89, 0x80),
+    subtle: Color::Rgb(0x76, 0x6b, 0x90),
+    text: Color::Rgb(0x54, 0x54, 0x64),
+    love: Color::Rgb(0xc8, 0x40, 0x53),
+    gold: Color::Rgb(0xde, 0x98, 0x00),
+    rose: Color::Rgb(0xb3, 0x5b, 0x79),
+    pine: Color::Rgb(0x4d, 0x69, 0x9b),
+    foam: Color::Rgb(0x59, 0x7b, 0x75),
+    iris: Color::Rgb(0x62, 0x4c, 0x83),
+};
+
 /// Each theme by the name the config file gives it. A family comes first
 /// in the name, so another family can join without a clash.
-pub const THEMES: [(&str, &Palette); 7] = [
+pub const THEMES: [(&str, &Palette); 9] = [
     ("rose-pine", &ROSE_PINE),
     ("rose-pine-moon", &ROSE_PINE_MOON),
     ("rose-pine-dawn", &ROSE_PINE_DAWN),
@@ -169,6 +204,8 @@ pub const THEMES: [(&str, &Palette); 7] = [
     ("catppuccin-latte", &CATPPUCCIN_LATTE),
     ("tokyo-night", &TOKYO_NIGHT),
     ("tokyo-night-day", &TOKYO_NIGHT_DAY),
+    ("kanagawa-wave", &KANAGAWA_WAVE),
+    ("kanagawa-lotus", &KANAGAWA_LOTUS),
 ];
 
 /// The place of a theme in `THEMES`, which is the first theme for a
