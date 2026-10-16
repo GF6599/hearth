@@ -144,8 +144,13 @@ impl App {
     pub fn next_theme(&mut self) {
         self.theme = (self.theme + 1) % theme::THEMES.len();
         self.repaint();
-        self.notice_text = theme::THEMES[self.theme].0.to_string();
-        self.unsaved = None;
+        let (name, _) = theme::THEMES[self.theme];
+        let saved = match &self.saving {
+            Some(path) => config::save_theme(path, name),
+            None => Ok(()),
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = name.to_string();
         self.notice = NOTICE_TICKS;
     }
 

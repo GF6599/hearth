@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use toml_edit::{DocumentMut, Item, Table, Value};
+use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::typing::Speed;
@@ -123,34 +123,47 @@ impl Config {
 /// Sets one speed in the file and keeps everything else in it, comments
 /// and key order included. A missing file or folder is created.
 pub fn save_speed(path: &Path, scene: SceneKind, speed: impl Into<Value>) -> io::Result<()> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e),
-    };
-    let mut document: DocumentMut = text
-        .parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut document = read_document(path)?;
     let table = document
         .entry("speed")
         .or_insert_with(|| Item::Table(Table::new()))
         .as_table_like_mut()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "speed is not a table"))?;
-    let mut speed = speed.into();
-    // Replaced in place, because a new key would drop the comment above
-    // it and the one after the old value.
-    match table.get_mut(scene.name()) {
+    set_in_place(table, scene.name(), speed.into());
+    replace(path, &document.to_string())
+}
+
+/// Sets the theme by its name in `theme::THEMES`, the same way.
+pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
+    let mut document = read_document(path)?;
+    set_in_place(document.as_table_mut(), "theme", Value::from(name));
+    replace(path, &document.to_string())
+}
+
+fn read_document(path: &Path) -> io::Result<DocumentMut> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    text.parse()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Replaced in place, because a new key would drop the comment above it
+/// and the one after the old value.
+fn set_in_place(table: &mut dyn TableLike, key: &str, mut value: Value) {
+    match table.get_mut(key) {
         Some(item) => {
             if let Some(old) = item.as_value() {
-                *speed.decor_mut() = old.decor().clone();
+                *value.decor_mut() = old.decor().clone();
             }
-            *item = Item::Value(speed);
+            *item = Item::Value(value);
         }
         None => {
-            table.insert(scene.name(), Item::Value(speed));
+            table.insert(key, Item::Value(value));
         }
     }
-    replace(path, &document.to_string())
 }
 
 /// The new text goes to a file beside the old one, reaches the disk, and is
