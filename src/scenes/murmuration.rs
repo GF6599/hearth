@@ -5,6 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use crate::dither;
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
 
@@ -73,9 +74,6 @@ const POINTED_WIDTH: usize = 3;
 const POINTED_ODDS: u32 = 3;
 const CROWN_GAP: RangeInclusive<usize> = 0..=3;
 const HALF_BLOCK: char = '▀';
-/// The order in which the cells of a 4 by 4 tile change colour, so each
-/// share of the tile is spread across it.
-const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 
 #[derive(Debug, Clone, Copy)]
 struct Bird {
@@ -366,7 +364,7 @@ impl Murmuration {
         for edge in 1..bands.len() {
             let start = edge * sky_rows / bands.len();
             let quarters = (row + 2).saturating_sub(start).min(4);
-            if BAYER[row % 4][x % 4] < quarters * 4 {
+            if dither::lights(quarters * 4, x, row) {
                 band = edge;
             }
         }

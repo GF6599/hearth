@@ -1,4 +1,3 @@
-use std::cmp::Reverse;
 use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
 
@@ -7,6 +6,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use crate::dither;
+use crate::quadrant;
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -55,16 +56,7 @@ const INSIDE: f32 = 0.01;
 /// A cell draws two by two pixels. The ink moves in square units, one
 /// cell across by half a cell down, so a pixel is half a unit across.
 const PIXELS_ACROSS: usize = 2;
-/// A glyph's bits are its upper left, upper right, lower left and lower
-/// right quarters, from the lowest bit, and a set bit draws in the
-/// foreground.
-const QUADRANTS: [char; 16] = [
-    ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
-];
-/// The order in which the cells of a 4 by 4 tile change colour, so each
-/// share of the tile is spread across it.
-const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-const SHADES: f32 = 16.0;
+const SHADES: f32 = dither::SHADES as f32;
 
 /// The roles a drop can take, in the order `shade` reads its inks.
 pub fn accents(palette: &Palette) -> [Color; 5] {
@@ -77,35 +69,6 @@ pub fn accents(palette: &Palette) -> [Color; 5] {
     ]
 }
 
-/// The glyph and its two colours for a cell of four pixels. A glyph holds
-/// two colours, the two most common, and a pixel of a third takes the ink
-/// of those two rather than the water, so thin ink is not lost.
-fn quadrant(pixels: [Color; 4], base: Color) -> (char, Color, Color) {
-    let mut counts: Vec<(Color, usize)> = Vec::with_capacity(pixels.len());
-    for colour in pixels {
-        match counts.iter_mut().find(|(each, _)| *each == colour) {
-            Some((_, count)) => *count += 1,
-            None => counts.push((colour, 1)),
-        }
-    }
-    counts.sort_by_key(|(_, count)| Reverse(*count));
-    let first = counts.first().map_or(base, |(colour, _)| *colour);
-    let Some(&(second, _)) = counts.get(1) else {
-        return (QUADRANTS[0], first, first);
-    };
-    let (ink, water) = if first == base {
-        (second, first)
-    } else {
-        (first, second)
-    };
-    let bits = pixels
-        .iter()
-        .enumerate()
-        .filter(|(_, colour)| **colour != water)
-        .fold(0, |bits, (quarter, _)| bits | 1 << quarter);
-    (QUADRANTS[bits], ink, water)
-}
-
 /// The colour of one pixel that holds `inks`, one amount for each accent.
 /// The total decides the share of the tile that is inked, and each
 /// accent takes the part of that share its ink holds. The second choice
@@ -113,10 +76,10 @@ fn quadrant(pixels: [Color; 4], base: Color) -> (char, Color, Color) {
 pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color {
     let total: f32 = inks.iter().sum();
     let share = (total / FULL_INK).min(1.0);
-    if share * SHADES <= BAYER[row % 4][x % 4] as f32 {
+    if share * SHADES <= dither::rank(x, row) as f32 {
         return palette.base;
     }
-    let pick = (BAYER[(row + 2) % 4][(x + 2) % 4] as f32 + 0.5) / SHADES * total;
+    let pick = (dither::rank(x + 2, row + 2) as f32 + 0.5) / SHADES * total;
     let mut reached = 0.0;
     for (accent, amount) in accents(palette).into_iter().zip(inks) {
         reached += amount;
@@ -410,7 +373,7 @@ impl Scene for Ink {
                     let (column, row) = (left + quarter % 2, top + quarter / 2);
                     shade(self.palette, &inks[row * columns + column], column, row)
                 });
-                let (glyph, ink, water) = quadrant(pixels, self.palette.base);
+                let (glyph, ink, water) = quadrant::cell(pixels, self.palette.base);
                 buf[(area.x + x, area.y + y)]
                     .set_char(glyph)
                     .set_fg(ink)

@@ -3,6 +3,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use crate::dither;
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -29,12 +30,6 @@ const fn stops(palette: &Palette) -> [Color; 7] {
 /// background the lower one.
 const HALF_BLOCK: char = '▀';
 
-/// A 4x4 Bayer matrix. An ordered dither, not a random one, so a heat that
-/// holds still draws a pattern that holds still.
-const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-
-const SHADES: usize = 16;
-
 /// The stop for one pixel. Between two stops, the share of pixels that take
 /// the hotter one follows how far the heat is from the cooler one.
 pub fn color(palette: &Palette, heat: u16, x: usize, row: usize) -> Color {
@@ -46,9 +41,9 @@ pub fn color(palette: &Palette, heat: u16, x: usize, row: usize) -> Color {
         &all[..]
     };
     let heat = usize::from(heat.min(MAX_HEAT));
-    let shade = heat * (stops.len() - 1) * SHADES / usize::from(MAX_HEAT);
-    let hotter = shade % SHADES > BAYER[row % 4][x % 4];
-    stops[shade / SHADES + usize::from(hotter)]
+    let shade = heat * (stops.len() - 1) * dither::SHADES / usize::from(MAX_HEAT);
+    let hotter = dither::lights(shade % dither::SHADES, x, row);
+    stops[shade / dither::SHADES + usize::from(hotter)]
 }
 
 #[derive(Debug)]
