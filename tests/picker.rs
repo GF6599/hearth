@@ -823,13 +823,18 @@ fn the_list_frame_stays_whole_at_every_height() {
 /// stops short of the pane looks cut off.
 #[test]
 fn the_list_and_the_pane_are_one_height() {
+    // Given:
+    let first = App::picker(7, Arc::new(Corpus::embedded()));
+    let mut last = App::picker(7, Arc::new(Corpus::embedded()));
+    for _ in 1..ALL.len() {
+        last.select_next();
+    }
+
     let mut shown = 0;
     for height in 14..=50 {
-        let area = Rect::new(0, 0, 120, height);
-        let mut app = App::picker(7, Arc::new(Corpus::embedded()));
-        for _ in 0..2 {
-            // Given, when:
-            let buffer = app_frame(&app, area);
+        for app in [&first, &last] {
+            // When:
+            let buffer = app_frame(app, Rect::new(0, 0, 120, height));
             let Some(inner) = pane_inner(&buffer) else {
                 continue;
             };
@@ -841,11 +846,6 @@ fn the_list_and_the_pane_are_one_height() {
                 .find(|&y| buffer[(x, y)].symbol() == "└")
                 .unwrap_or_else(|| panic!("no bottom rule at {height}"));
             assert_eq!((top, bottom), (inner.y - 1, inner.bottom()), "{height}");
-
-            for _ in 1..ALL.len() {
-                app.select_next();
-                app.tick(area);
-            }
         }
     }
     assert!(shown > 0, "no height shows the pane");
