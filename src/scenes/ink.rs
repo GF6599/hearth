@@ -21,7 +21,7 @@ pub const EMIT_TICKS: u32 = 24;
 pub const LIFETIME: RangeInclusive<u32> = 320..=640;
 /// The ink in one pixel that colours the whole of it. Less colours that
 /// share of a dither tile.
-pub const FULL_INK: f32 = 2.0;
+pub const FULL_INK: f32 = 1.0;
 
 const PARTICLES_PER_TICK: usize = 32;
 /// Speeds in pixels a tick. The head enters fast and slows as the water
@@ -51,7 +51,15 @@ const MARGIN: f32 = 0.15;
 /// Keeps a clamped particle strictly inside the last pixel.
 const INSIDE: f32 = 0.01;
 
-const HALF_BLOCK: char = '▀';
+/// A cell draws two by two pixels. The ink moves in square units, one
+/// cell across by half a cell down, so a pixel is half a unit across.
+const PIXELS_ACROSS: usize = 2;
+/// A glyph's bits are its upper left, upper right, lower left and lower
+/// right quarters, from the lowest bit, and a set bit draws in the
+/// foreground.
+const QUADRANTS: [char; 16] = [
+    ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
+];
 /// The order in which the cells of a 4 by 4 tile change colour, so each
 /// share of the tile is spread across it.
 const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
@@ -72,6 +80,35 @@ pub fn accents(palette: &Palette) -> [Color; 5] {
 /// The total decides the share of the tile that is inked, and each
 /// accent takes the part of that share its ink holds. The second choice
 /// reads the tile two cells over, so it does not follow the first.
+/// The glyph and its two colours for a cell of four pixels. A glyph holds
+/// two colours, the two most common, and a pixel of a third takes the ink
+/// of those two rather than the water, so thin ink is not lost.
+fn quadrant(pixels: [Color; 4], base: Color) -> (char, Color, Color) {
+    let mut counts: Vec<(Color, usize)> = Vec::with_capacity(pixels.len());
+    for colour in pixels {
+        match counts.iter_mut().find(|(each, _)| *each == colour) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((colour, 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    let first = counts.first().map_or(base, |(colour, _)| *colour);
+    let Some(&(second, _)) = counts.get(1) else {
+        return (QUADRANTS[0], first, first);
+    };
+    let (ink, water) = if first == base {
+        (second, first)
+    } else {
+        (first, second)
+    };
+    let bits = pixels
+        .iter()
+        .enumerate()
+        .filter(|(_, colour)| **colour != water)
+        .fold(0, |bits, (quarter, _)| bits | 1 << quarter);
+    (QUADRANTS[bits], ink, water)
+}
+
 pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color {
     let total: f32 = inks.iter().sum();
     let share = (total / FULL_INK).min(1.0);
@@ -264,10 +301,12 @@ impl Ink {
     /// among the four pixels nearest it, by how near each is, so a cloud
     /// that thins stays a cloud and does not break into lone dots.
     fn inks(&self) -> Vec<[f32; 5]> {
-        let mut inks = vec![[0.0_f32; 5]; self.width * self.rows];
+        let columns = self.width * PIXELS_ACROSS;
+        let mut inks = vec![[0.0_f32; 5]; columns * self.rows];
         for drop in &self.drops {
             for particle in &drop.particles {
-                let (x, y) = (particle.x - 0.5, particle.y - 0.5);
+                let x = particle.x * PIXELS_ACROSS as f32 - 0.5;
+                let y = particle.y - 0.5;
                 let (left, top) = (x.floor(), y.floor());
                 let (right_share, lower_share) = (x - left, y - top);
                 for (column, across) in [(left, 1.0 - right_share), (left + 1.0, right_share)] {
@@ -276,8 +315,8 @@ impl Ink {
                             continue;
                         }
                         let (column, row) = (column as usize, row as usize);
-                        if column < self.width && row < self.rows {
-                            inks[row * self.width + column][drop.accent] +=
+                        if column < columns && row < self.rows {
+                            inks[row * columns + column][drop.accent] +=
                                 particle.ink() * across * down;
                         }
                     }
@@ -355,23 +394,26 @@ impl Scene for Ink {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let inks = self.inks();
+        let columns = self.width * PIXELS_ACROSS;
         for y in 0..area.height {
-            let upper = usize::from(y) * 2;
-            let lower = upper + 1;
-            if lower >= self.rows {
+            let top = usize::from(y) * 2;
+            if top + 1 >= self.rows {
                 break;
             }
             for x in 0..area.width {
-                let column = usize::from(x);
-                if column >= self.width {
+                if usize::from(x) >= self.width {
                     break;
                 }
-                let colour =
-                    |row: usize| shade(self.palette, &inks[row * self.width + column], column, row);
+                let left = usize::from(x) * PIXELS_ACROSS;
+                let pixels = std::array::from_fn(|quarter| {
+                    let (column, row) = (left + quarter % 2, top + quarter / 2);
+                    shade(self.palette, &inks[row * columns + column], column, row)
+                });
+                let (glyph, ink, water) = quadrant(pixels, self.palette.base);
                 buf[(area.x + x, area.y + y)]
-                    .set_char(HALF_BLOCK)
-                    .set_fg(colour(upper))
-                    .set_bg(colour(lower));
+                    .set_char(glyph)
+                    .set_fg(ink)
+                    .set_bg(water);
             }
         }
     }
