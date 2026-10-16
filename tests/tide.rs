@@ -62,7 +62,7 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
 }
 
 fn is_sea(colour: Color) -> bool {
-    colour == PALETTE.pine || colour == PALETTE.text
+    colour == PALETTE.pine || colour == PALETTE.foam
 }
 
 /// How many pixels of each column, from the bottom, are sea.
@@ -108,7 +108,7 @@ fn the_sea_lies_below_the_sand_in_every_column() {
             }
             assert_eq!(
                 grid[rows - line][x],
-                PALETTE.text,
+                PALETTE.foam,
                 "tick {tick}: column {x}"
             );
         }
@@ -200,7 +200,7 @@ fn dry_sand_is_an_even_scatter_of_gold_grains() {
 
 /// Given: a scene that ticked on a hundred by thirty area.
 /// When: it ticks and renders on a twenty by six area inside a larger
-/// canvas, then on one cell, then on none.
+/// canvas, then on one cell, then on a row of no height, then on none.
 /// Then: it draws without a panic, and no cell outside the area is touched.
 #[test]
 fn a_smaller_area_draws_only_inside_it() {
@@ -212,6 +212,7 @@ fn a_smaller_area_draws_only_inside_it() {
     for area in [
         Rect::new(3, 2, 20, 6),
         Rect::new(3, 2, 1, 1),
+        Rect::new(3, 2, 5, 0),
         Rect::new(3, 2, 0, 0),
     ] {
         scene.tick(area);
