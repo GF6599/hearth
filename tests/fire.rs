@@ -101,7 +101,7 @@ fn the_ramp_climbs_through_the_seven_stops() {
 }
 
 /// Given: each light palette, Rose Pine Dawn, Catppuccin Latte, Tokyo
-/// Night Day and Kanagawa Lotus, where text is the darkest role.
+/// Night Day, Kanagawa Lotus and Alucard, where text is the darkest role.
 /// When: each heat from none to full is read at each pixel of a tile.
 /// Then: at every pixel the colours climb through base, overlay, muted,
 /// love, rose and gold, and end at gold.
@@ -115,6 +115,7 @@ fn a_light_theme_ends_the_ramp_at_gold() {
         &theme::CATPPUCCIN_LATTE,
         &theme::TOKYO_NIGHT_DAY,
         &theme::KANAGAWA_LOTUS,
+        &theme::DRACULA_ALUCARD,
     ] {
         let ramp = [
             light.base,
