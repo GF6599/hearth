@@ -398,3 +398,75 @@ fn assert_theme_everywhere(config: &Config, area: Rect, name: &str, foreign: &[C
         }
     }
 }
+
+/// Given: a file with a comment above `theme`, one after its value, and a
+/// speed table, and a second file with no `theme` key.
+/// When: hearth saves to each, and `t` is pressed.
+/// Then: the first file reads the next theme with every comment and the
+/// speed where they were, and the second file loads with the next theme
+/// and its speed.
+///
+/// Why it matters: a theme chosen with a key that the next start forgets
+/// is a choice the user makes again every run.
+#[test]
+fn t_saves_the_theme_and_keeps_the_comments() {
+    let (next, _) = theme::THEMES[1];
+    let cases = [
+        (
+            "theme-commented",
+            "# looks\ntheme = \"rose-pine\" # the default\n\n[speed]\nfire = 2.0\n",
+        ),
+        ("theme-absent", "[speed]\nfire = 2.0\n"),
+    ];
+    for (name, text) in cases {
+        // Given:
+        let path = config_file(name, Some(text));
+        let config = Config::load(&path).unwrap();
+        let mut app = app(&["hearth", "fire"], &config).saving_to(path.clone());
+
+        // When:
+        app.next_theme();
+
+        // Then:
+        let saved = fs::read_to_string(&path).unwrap();
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(loaded.theme, Some(1), "{name}: {saved}");
+        assert!(saved.contains("fire = 2.0"), "{name}: {saved}");
+        if name == "theme-commented" {
+            assert_eq!(
+                saved,
+                format!("# looks\ntheme = \"{next}\" # the default\n\n[speed]\nfire = 2.0\n")
+            );
+        }
+    }
+}
+
+/// Given: a file in a folder hearth may not write to.
+/// When: `t` is pressed.
+/// Then: the notice names the new theme and says it was not saved, and the
+/// file is as it was.
+///
+/// Why it matters: a save that fails without a word leaves the user sure
+/// that the next start keeps this theme.
+#[test]
+fn a_failed_theme_save_shows_in_the_notice() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Given:
+    let path = config_file("theme-locked", Some("[speed]\nfire = 2.0\n"));
+    let folder = path.parent().unwrap().to_path_buf();
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+    let config = Config::load(&path).unwrap();
+    let mut app = app(&["hearth", "fire"], &config).saving_to(path.clone());
+
+    // When:
+    app.next_theme();
+
+    // Then:
+    let shown = header(&app);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    let (next, _) = theme::THEMES[1];
+    assert!(shown.contains(next), "{shown}");
+    assert!(shown.contains("not saved"), "{shown}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "[speed]\nfire = 2.0\n");
+}
