@@ -8,7 +8,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, Ke
 use hearth::app::App;
 use hearth::corpus::Corpus;
 use hearth::events::{EventSource, handle_events};
-use hearth::scene::SceneKind;
+use hearth::scene::{ALL, SceneKind};
 use hearth::theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -190,7 +190,7 @@ fn a_stacked_split_puts_the_picker_below_the_scene() {
 
 /// Given: the fire split side by side, with the picker in the new pane.
 /// When: Enter starts the marked scene, and the app ticks four times.
-/// Then: the new pane runs the scene after the fire, life, from seed 9,
+/// Then: the new pane runs the scene after the fire, from seed 9,
 /// because a new pane takes the seed after the fire's 7 and a start takes
 /// the next one. The fire still runs alone on the left.
 ///
@@ -211,7 +211,12 @@ fn enter_starts_the_next_scene_in_the_new_pane_only() {
     // Then:
     let shown = frame(&app);
     assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 4, LEFT), LEFT, "fire");
-    assert_same_but_marks(&shown, &alone(SceneKind::Life, 9, 4, RIGHT), RIGHT, "life");
+    assert_same_but_marks(
+        &shown,
+        &alone(SceneKind::Fire.next(), 9, 4, RIGHT),
+        RIGHT,
+        "next",
+    );
 }
 
 /// Given: the fire split side by side, and a scene started on the right.
@@ -304,10 +309,11 @@ fn h_j_k_l_and_the_arrows_move_the_focus() {
     }
 }
 
-/// Given: the fire beside life, with the focus moved back to the fire.
+/// Given: the fire beside the scene after it, with the focus moved back to
+/// the fire.
 /// When: Tab is pressed, and the app ticks four times.
-/// Then: the left pane runs life from seed 8, the fire's next seed, and
-/// the right pane still runs its own life from seed 9.
+/// Then: the left pane runs the scene after the fire from seed 8, the
+/// fire's next seed, and the right pane still runs its own from seed 9.
 ///
 /// Why it matters: Tab, `r`, `+` and `-` must change the pane the user
 /// looks at and leave every other pane running as it was.
@@ -328,11 +334,22 @@ fn tab_changes_the_focused_pane_only() {
 
     // Then:
     let shown = frame(&app);
-    assert_same_but_marks(&shown, &alone(SceneKind::Life, 8, 4, LEFT), LEFT, "left");
-    assert_same_inside(&shown, &alone(SceneKind::Life, 9, 4, RIGHT), RIGHT, "right");
+    assert_same_but_marks(
+        &shown,
+        &alone(SceneKind::Fire.next(), 8, 4, LEFT),
+        LEFT,
+        "left",
+    );
+    assert_same_inside(
+        &shown,
+        &alone(SceneKind::Fire.next(), 9, 4, RIGHT),
+        RIGHT,
+        "right",
+    );
 }
 
-/// Given: the fire beside life, with the focus moved back to the fire.
+/// Given: the fire beside the scene after it, with the focus moved back to
+/// the fire.
 /// When: Esc is pressed.
 /// Then: the picker opens in the left pane, and the right pane shows no
 /// picker.
@@ -357,7 +374,8 @@ fn esc_opens_the_picker_in_the_focused_pane() {
     assert!(!text_inside(&shown, RIGHT).contains("scenes"));
 }
 
-/// Given: the fire beside life, with the focus moved back to the fire.
+/// Given: the fire beside the scene after it, with the focus moved back to
+/// the fire.
 /// When: `+` makes the fire faster.
 /// Then: the new speed shows on the top row of the left pane, and not on
 /// the right pane.
@@ -383,8 +401,8 @@ fn a_new_speed_shows_in_the_focused_pane() {
     assert!(!row(RIGHT).contains('×'), "{}", row(RIGHT));
 }
 
-/// Given: the fire beside life, with the focus on life.
-/// When: `x` closes life, and the app ticks three times.
+/// Given: the fire beside the scene after it, with the focus on that one.
+/// When: `x` closes it, and the app ticks three times.
 /// Then: the fire runs alone over the whole screen, with no rule and no
 /// marks.
 ///
@@ -411,9 +429,9 @@ fn x_gives_the_closed_pane_s_area_to_its_sibling() {
     );
 }
 
-/// Given: the fire beside life, and life split again below.
+/// Given: the fire beside the scene after it, split again below.
 /// When: `x` closes the bottom-right pane, and the app ticks three times.
-/// Then: life takes the whole right half and the focus, and the fire on
+/// Then: the scene after the fire takes the whole right half and the focus, and the fire on
 /// the left runs on as it was.
 ///
 /// Why it matters: a close must give the area to the closed pane's own
@@ -442,7 +460,12 @@ fn a_close_in_a_stack_changes_that_stack_only() {
     let shown = frame(&app);
     assert_eq!(focused(&shown, &[LEFT, RIGHT]), Some(RIGHT));
     assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 3, LEFT), LEFT, "fire");
-    assert_same_but_marks(&shown, &alone(SceneKind::Life, 9, 3, RIGHT), RIGHT, "life");
+    assert_same_but_marks(
+        &shown,
+        &alone(SceneKind::Fire.next(), 9, 3, RIGHT),
+        RIGHT,
+        "next",
+    );
     assert_rule(&shown, Rect::new(19, 0, 1, 12), "│");
 }
 
@@ -500,10 +523,11 @@ fn esc_in_a_new_pane_s_picker_closes_the_pane() {
     );
 }
 
-/// Given: the fire beside life, with the focus moved back to the fire.
+/// Given: the fire beside the scene after it, with the focus moved back to
+/// the fire.
 /// When: `x` closes the fire, the first pane made, and the app ticks three
 /// times.
-/// Then: life runs alone over the whole screen.
+/// Then: the scene after the fire runs alone over the whole screen.
 ///
 /// Why it matters: every pane after a closed one moves down one place,
 /// and a pane left at its old place points past the end of the list.
@@ -525,13 +549,13 @@ fn closing_the_first_pane_keeps_the_ones_after_it() {
     // Then:
     assert_same_inside(
         &frame(&app),
-        &alone(SceneKind::Life, 9, 3, AREA),
+        &alone(SceneKind::Fire.next(), 9, 3, AREA),
         AREA,
-        "life",
+        "next",
     );
 }
 
-/// Given: the fire beside life, and life split again below, on a forty by
+/// Given: the fire beside the scene after it, split again below, on a forty by
 /// twelve terminal.
 /// When: the terminal grows to eighty by twenty-four.
 /// Then: the first rule runs down column 39 and the second across row 11
@@ -627,7 +651,11 @@ fn a_new_typing_speed_reaches_every_typing_pane() {
     // Given:
     let mut app = App::new(SceneKind::Typing, 7, Arc::new(Corpus::embedded()));
     send(&mut app, &[KeyCode::Char('v')]);
-    send(&mut app, &[KeyCode::Char('j'); 7]);
+    let typing = ALL
+        .iter()
+        .position(|kind| *kind == SceneKind::Typing)
+        .unwrap();
+    send(&mut app, &vec![KeyCode::Char('j'); typing]);
     send(&mut app, &[KeyCode::Enter]);
 
     // When:

@@ -68,13 +68,19 @@ fn a_speed_in_the_file_is_the_speed_a_scene_starts_at() {
     app.next_scene();
     app.slower();
     assert!(header(&app).contains("¾×"), "{}", header(&app));
-    for _ in 0..4 {
+    for _ in 1..tabs(SceneKind::Fire, SceneKind::Typing) {
         app.next_scene();
     }
     app.faster();
     let typing: Speed = "80".parse().unwrap();
     let shown = format!("{} cps", typing.faster());
     assert!(header(&app).contains(&shown), "{}", header(&app));
+}
+
+/// The Tab presses from one scene to another, read from the order of `ALL`.
+fn tabs(from: SceneKind, to: SceneKind) -> usize {
+    let place = |kind| ALL.iter().position(|each| *each == kind).unwrap();
+    place(to) - place(from)
 }
 
 /// Given: a path where no file exists.
@@ -164,7 +170,7 @@ fn plus_saves_the_speed_and_keeps_the_comments() {
 
     // When:
     app.faster();
-    for _ in 0..5 {
+    for _ in 0..tabs(SceneKind::Fire, SceneKind::Typing) {
         app.next_scene();
     }
     app.faster();

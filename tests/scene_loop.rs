@@ -9,7 +9,7 @@ use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::events::{EventSource, handle_events};
-use hearth::scene::SceneKind;
+use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
 use hearth::theme;
 use ratatui::Terminal;
@@ -382,15 +382,25 @@ fn plus_twice_runs_a_scene_at_twice_its_pace() {
 }
 
 /// Given: fire at 2×.
-/// When: Tab moves to life and `+` is pressed, `r` restarts life, Tab moves
-/// on to typing and `+` is pressed, Tab comes back to fire and `-` is
-/// pressed, and the picker starts life again and `-` is pressed.
-/// Then: life shows `1.5×`, typing shows one step above its default, fire
-/// shows `1.5×` after its own 2×, and life shows `1×` after its own `1.5×`.
+/// When: Tab moves to the scene after fire and `+` is pressed, `r`
+/// restarts it, Tab moves on to typing and `+` is pressed, Tab comes back
+/// to fire and `-` is pressed, and the picker starts the scene after fire
+/// again and `-` is pressed.
+/// Then: the scene after fire shows `1.5×`, typing shows one step above its
+/// default, fire shows `1.5×` after its own 2×, and the scene after fire
+/// shows `1×` after its own `1.5×`.
 ///
 /// Why it matters: one shared speed carries the last scene's change into
 /// the next scene, and a speed that a restart, Tab or the picker resets is
 /// lost each time the user moves.
+/// The Tab presses from one scene to another, read from the order of `ALL`,
+/// which wraps from the last scene to the first.
+fn tabs(from: SceneKind, to: SceneKind) -> Vec<Event> {
+    let place = |kind| ALL.iter().position(|each| *each == kind).unwrap();
+    let count = (place(to) + ALL.len() - place(from)) % ALL.len();
+    (0..count).map(|_| tab()).collect()
+}
+
 #[test]
 fn each_scene_keeps_its_own_speed() {
     // Given:
@@ -400,16 +410,18 @@ fn each_scene_keeps_its_own_speed() {
     // When, then:
     send(&mut app, vec![tab(), key('+')]);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
-    send(
-        &mut app,
-        vec![key('r'), tab(), tab(), tab(), tab(), key('+')],
-    );
+    let mut keys = vec![key('r')];
+    keys.extend(tabs(SceneKind::Fire.next(), SceneKind::Typing));
+    keys.push(key('+'));
+    send(&mut app, keys);
     assert!(
         header(&app).contains(&shown(Speed::DEFAULT.faster())),
         "{}",
         header(&app)
     );
-    send(&mut app, vec![tab(), tab(), tab(), key('-')]);
+    let mut keys = tabs(SceneKind::Typing, SceneKind::Fire);
+    keys.push(key('-'));
+    send(&mut app, keys);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
     send(
         &mut app,
