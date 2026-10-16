@@ -15,6 +15,11 @@ const LEAST_PREVIEW_HEIGHT: u16 = 8;
 /// Columns between the list's frame and the pane, and outside each.
 const GAP: u16 = 2;
 
+/// The list scrolls before it gives up rows, but the mark takes rows only
+/// while this many scenes stay in view with their summaries, and the
+/// summaries go only when this many no longer fit.
+pub const LEAST_SCENES_IN_VIEW: usize = 5;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Entry<'a> {
     pub name: &'a str,
@@ -30,6 +35,10 @@ pub struct Picker<'a> {
     pub palette: &'a Palette,
     pub entries: &'a [Entry<'a>],
     pub selected: usize,
+    /// The first scene in view on the frame before. The list scrolls from
+    /// it only as far as the selection needs, so it holds still while the
+    /// selection moves inside it.
+    pub top: usize,
 }
 
 /// Where each part of the picker goes in one area.
@@ -49,11 +58,46 @@ impl Picker<'_> {
         self.layout(area).preview
     }
 
-    /// The mark takes rows only where the list keeps every summary below
-    /// it, and sits on the left edge of the content under it. It falls
-    /// back to the word, and then to nothing.
+    /// The first scene the list shows in `area`. `App` keeps it as the
+    /// `top` of the next frame.
+    pub fn first_in_view(&self, area: Rect) -> usize {
+        let Layout {
+            list, summaries, ..
+        } = self.layout(area);
+        self.scrolled(rows_in(list, summaries))
+    }
+
+    /// `top` moved only as far as keeps the selection in view, with one
+    /// scene of context either side where the list shows three or more.
+    fn scrolled(&self, visible: usize) -> usize {
+        let count = self.entries.len();
+        if visible == 0 || visible >= count {
+            return 0;
+        }
+        let context = usize::from(visible >= 3);
+        let after = if self.selected + 1 < count {
+            context
+        } else {
+            0
+        };
+        let before = if self.selected > 0 { context } else { 0 };
+        let lowest = (self.selected + 1 + after).saturating_sub(visible);
+        let highest = self.selected - before;
+        self.top.clamp(lowest, highest).min(count - visible)
+    }
+
+    /// The rows of the fewest scenes the list may show, with their
+    /// summaries, and its frame.
+    fn least_list(&self) -> usize {
+        LEAST_SCENES_IN_VIEW.min(self.entries.len()) * 2 + 2
+    }
+
+    /// The mark takes rows only where the list keeps its least share of
+    /// scenes with their summaries below it, and sits on the left edge of
+    /// the content under it. It falls back to the word, and then to
+    /// nothing.
     fn layout(&self, area: Rect) -> Layout {
-        let with_summaries = self.entries.len() * 2 + 2;
+        let with_summaries = self.least_list();
         for mark in [Mark::Art, Mark::Word] {
             let rows = mark.height() + 1;
             if usize::from(area.height) < usize::from(rows) + with_summaries + 2 {
@@ -130,10 +174,11 @@ impl Picker<'_> {
         self.frame(area, self.has_summaries(area)).width + 2 * GAP
     }
 
-    /// A summary takes a row of its own, so on an area too short for two
-    /// rows a scene the summaries go and every name stays in the list.
+    /// A summary takes a row of its own, so on an area too short for the
+    /// least share of scenes at two rows each the summaries go, and the
+    /// names scroll on their own.
     fn has_summaries(&self, area: Rect) -> bool {
-        self.entries.len() * 2 + 2 <= usize::from(area.height)
+        self.least_list() <= usize::from(area.height)
     }
 
     fn frame(&self, area: Rect, summaries: bool) -> Rect {
@@ -151,7 +196,9 @@ impl Picker<'_> {
             .chars()
             .count()
             .max(theme::PICKER_HINT.chars().count());
-        let rows = self.entries.len() * if summaries { 2 } else { 1 };
+        let per = rows_per_scene(summaries);
+        let room = usize::from(area.height).saturating_sub(2) / per * per;
+        let rows = (self.entries.len() * per).min(room);
         let width = u16::try_from(content.max(rules) + 2).unwrap_or(u16::MAX);
         let height = u16::try_from(rows + 2).unwrap_or(u16::MAX);
         let width = width.min(area.width);
@@ -209,8 +256,15 @@ impl Widget for Picker<'_> {
         let text_width = inner_width.saturating_sub(2);
         let clip = |text: &str| text.chars().take(text_width).collect::<String>();
         let marker = Style::default().fg(self.palette.marker());
+        let visible = rows_in(frame, summaries);
         let mut rows = Vec::new();
-        for (index, entry) in self.entries.iter().enumerate() {
+        for (index, entry) in self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(self.scrolled(visible))
+            .take(visible)
+        {
             let current = index == self.selected;
             let (open, close) = if current { ("[", "]") } else { (" ", " ") };
             let name_style = Style::default().fg(if current {
@@ -243,6 +297,15 @@ impl Widget for Picker<'_> {
         }
         Paragraph::new(rows).render(inner, buf);
     }
+}
+
+fn rows_per_scene(summaries: bool) -> usize {
+    if summaries { 2 } else { 1 }
+}
+
+/// The scenes a list frame shows inside its rules.
+fn rows_in(list: Rect, summaries: bool) -> usize {
+    usize::from(list.height).saturating_sub(2) / rows_per_scene(summaries)
 }
 
 /// The cells a name row needs to show its speed: the pair, the name, one

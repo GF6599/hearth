@@ -48,6 +48,8 @@ pub struct App {
     preview_credit: u32,
     mode: Mode,
     selected: usize,
+    /// The first scene in the picker list on the last tick.
+    picker_top: usize,
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
     fresh: bool,
@@ -89,6 +91,7 @@ impl App {
             preview_credit: 0,
             mode: Mode::Running,
             selected: slot_of(kind),
+            picker_top: 0,
             fresh: false,
             should_quit: false,
         }
@@ -178,7 +181,9 @@ impl App {
             let kind = ALL[self.selected];
             let rate = self.rates[self.selected];
             let inside = layout.panes[focus];
-            let preview = self.with_picker(|picker| picker.preview_area(inside));
+            let (preview, top) = self
+                .with_picker(|picker| (picker.preview_area(inside), picker.first_in_view(inside)));
+            self.picker_top = top;
             if let (Some(scene), Some(preview)) = (&mut self.preview, preview) {
                 advance(&mut **scene, kind, rate, &mut self.preview_credit, preview);
             }
@@ -201,6 +206,7 @@ impl App {
             palette: self.palette(),
             entries: &entries,
             selected: self.selected,
+            top: self.picker_top,
         })
     }
 
