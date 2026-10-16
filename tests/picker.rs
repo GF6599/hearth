@@ -13,6 +13,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 const ENTRIES: &[Entry] = &[
     Entry {
@@ -527,8 +528,7 @@ const RIGHT_BRACE: [&str; 6] = ["███╗ ", "╚██╗ ", " ╚██╗
 /// When: each renders.
 /// Then: from the list frame's left column each art row reads as a block
 /// brace, a blank, the art row, a blank and the closing brace, the braces
-/// in gold and the art in iris, and every art row is above the list and
-/// the pane.
+/// in gold, and every art row is above the list and the pane.
 ///
 /// Why it matters: a mark that floats off the content column reads as a
 /// separate thing, one that overlaps the list hides a scene, and a thin
@@ -572,11 +572,6 @@ fn the_mark_sits_above_the_content_at_its_left_edge() {
                 }
             }
         }
-        assert_eq!(
-            buffer[(list_x + 6, first)].fg,
-            theme::ROSE_PINE.marked(),
-            "{area}"
-        );
         let last = first + u16::try_from(mark::ART.len()).unwrap() - 1;
         assert!(last < list_y, "{area}: art over the list");
         if let Some(inner) = pane_inner(&buffer) {
@@ -604,6 +599,123 @@ fn a_narrow_terminal_shows_the_braced_word() {
     let y = row_of(&buffer, mark::WORD).expect("no braced word");
     assert_eq!(buffer[(list_x, y)].symbol(), "{");
     assert_eq!(row_of(&buffer, mark::ART[0]), None);
+}
+
+/// The colour of each art column that has ink, read from the frame, with
+/// the colours of the brace cells beside them.
+fn mark_colours(buffer: &Buffer) -> (Vec<Vec<Color>>, Vec<Color>) {
+    let (list_x, _) = list_corner(buffer);
+    let first = row_of(buffer, mark::ART[0]).expect("no art");
+    let art_x = list_x + u16::try_from(LEFT_BRACE[0].chars().count() + 1).unwrap();
+    let width = mark::ART
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap();
+    let columns = (0..width)
+        .map(|column| {
+            let x = art_x + u16::try_from(column).unwrap();
+            (first..first + 6)
+                .filter(|&y| buffer[(x, y)].symbol() != " ")
+                .map(|y| buffer[(x, y)].fg)
+                .collect()
+        })
+        .collect();
+    let right_x = art_x + u16::try_from(width + 1).unwrap();
+    let braces = (first..first + 6)
+        .flat_map(|y| {
+            (list_x..art_x - 1)
+                .chain(right_x..right_x + 5)
+                .map(move |x| (x, y))
+        })
+        .filter(|&position| buffer[position].symbol() != " ")
+        .map(|position| buffer[position].fg)
+        .collect();
+    (columns, braces)
+}
+
+/// Given: the picker at 120 by 30.
+/// When: it ticks through one `GLOW_TICKS` period, with a frame after each
+/// tick.
+/// Then: each art column is one colour from top to bottom, every colour is
+/// iris, rose or love and each of the three shows, on every frame at least
+/// one column glows and at least one rests in iris, and the braces stay
+/// gold.
+///
+/// Why it matters: the title is a hearth, so it glows like embers, and
+/// embers glow out of step. A title that pulses as one block reads as a
+/// warning light.
+#[test]
+fn the_title_glows_like_embers_out_of_step() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let rest = theme::ROSE_PINE.marked();
+    let glow = [rest, theme::ROSE_PINE.rose, theme::ROSE_PINE.love];
+
+    let mut seen = Vec::new();
+    for tick in 0..mark::GLOW_TICKS {
+        // When:
+        app.tick(WIDE);
+        let (columns, braces) = mark_colours(&app_frame(&app, WIDE));
+
+        // Then:
+        let mut resting = false;
+        let mut glowing = false;
+        for (column, colours) in columns.iter().enumerate() {
+            let Some(&colour) = colours.first() else {
+                continue;
+            };
+            assert!(
+                colours.iter().all(|c| *c == colour),
+                "tick {tick}: column {column} {colours:?}"
+            );
+            assert!(
+                glow.contains(&colour),
+                "tick {tick}: column {column} {colour:?}"
+            );
+            resting |= colour == rest;
+            glowing |= colour != rest;
+            if !seen.contains(&colour) {
+                seen.push(colour);
+            }
+        }
+        assert!(resting && glowing, "tick {tick}: the columns glow in step");
+        assert!(
+            braces.iter().all(|c| *c == theme::ROSE_PINE.marker()),
+            "tick {tick}: {braces:?}"
+        );
+    }
+    assert_eq!(seen.len(), glow.len(), "{seen:?}");
+}
+
+/// Given: the picker 60 columns wide, which shows the braced word.
+/// When: it renders, ticks through one `GLOW_TICKS` period, and renders
+/// again at every tick.
+/// Then: every frame shows the word in the same colours as the first.
+///
+/// Why it matters: the word is the fallback for a cramped terminal, and a
+/// few glowing letters there read as flicker, not as embers.
+#[test]
+fn the_braced_word_stays_still() {
+    // Given:
+    let area = Rect::new(0, 0, 60, 30);
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let word = |buffer: &Buffer| {
+        let (list_x, _) = list_corner(buffer);
+        let y = row_of(buffer, mark::WORD).expect("no braced word");
+        (list_x..list_x + u16::try_from(mark::WORD.len()).unwrap())
+            .map(|x| buffer[(x, y)].fg)
+            .collect::<Vec<Color>>()
+    };
+    let still = word(&app_frame(&app, area));
+
+    for tick in 0..mark::GLOW_TICKS {
+        // When:
+        app.tick(area);
+
+        // Then:
+        assert_eq!(word(&app_frame(&app, area)), still, "tick {tick}");
+    }
 }
 
 /// The scenes in the list of an app frame, top first, each with whether
