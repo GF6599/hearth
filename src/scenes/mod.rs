@@ -2,6 +2,7 @@ pub mod aquarium;
 pub mod bonsai;
 pub mod embers;
 pub mod fire;
+pub mod ink;
 pub mod life;
 pub mod matrix;
 pub mod murmuration;

@@ -1,0 +1,289 @@
+use std::ops::RangeInclusive;
+
+use rand::RngExt;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Color;
+
+use crate::scene::{Rng, Scene};
+use crate::theme::Palette;
+
+/// Ticks from one drop to the next, about 5 to 12 seconds. The first
+/// drop falls on the first tick, so a preview is never empty water.
+pub const DROP_EVERY: RangeInclusive<u32> = 80..=200;
+/// A drop releases its ink over this many ticks as it sinks, which leaves
+/// a thread behind the head.
+pub const EMIT_TICKS: u32 = 24;
+/// Ticks a particle's ink lasts, about 20 to 40 seconds. A spread of
+/// lifetimes thins a cloud before it goes, where one lifetime would cut
+/// it out all at once.
+pub const LIFETIME: RangeInclusive<u32> = 320..=640;
+/// The ink in one pixel that colours the whole of it. Less colours that
+/// share of a dither tile.
+pub const FULL_INK: f32 = 2.0;
+
+const PARTICLES_PER_TICK: usize = 16;
+/// Speeds in pixels a tick. The head enters fast and slows as the water
+/// takes it, and each particle leaves with part of the head's speed.
+const ENTRY_SPEED: RangeInclusive<f32> = 0.9..=1.4;
+const HEAD_DRAG: f32 = 0.96;
+const SHARE_OF_HEAD: RangeInclusive<f32> = 0.3..=1.0;
+const SPREAD: f32 = 0.3;
+const DRAG: f32 = 0.97;
+/// Ink is a little heavier than water, so it keeps settling after its
+/// own speed is gone.
+const SINK: f32 = 0.03;
+const JITTER: f32 = 0.02;
+/// A drop enters this far in from either side, as a share of the width.
+const MARGIN: f32 = 0.15;
+/// Keeps a clamped particle strictly inside the last pixel.
+const INSIDE: f32 = 0.01;
+
+const HALF_BLOCK: char = '▀';
+/// The order in which the cells of a 4 by 4 tile change colour, so each
+/// share of the tile is spread across it.
+const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+const SHADES: f32 = 16.0;
+
+/// The roles a drop can take, in the order `shade` reads its inks.
+pub fn accents(palette: &Palette) -> [Color; 5] {
+    [
+        palette.love,
+        palette.iris,
+        palette.foam,
+        palette.pine,
+        palette.rose,
+    ]
+}
+
+/// The colour of one pixel that holds `inks`, one amount for each accent.
+/// The total decides the share of the tile that is inked, and each
+/// accent takes the part of that share its ink holds. The second choice
+/// reads the tile two cells over, so it does not follow the first.
+pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color {
+    let total: f32 = inks.iter().sum();
+    let share = (total / FULL_INK).min(1.0);
+    if share * SHADES <= BAYER[row % 4][x % 4] as f32 {
+        return palette.base;
+    }
+    let pick = (BAYER[(row + 2) % 4][(x + 2) % 4] as f32 + 0.5) / SHADES * total;
+    let mut reached = 0.0;
+    for (accent, amount) in accents(palette).into_iter().zip(inks) {
+        reached += amount;
+        if pick < reached {
+            return accent;
+        }
+    }
+    palette.base
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Particle {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    /// Ticks of ink left, out of `lifetime`.
+    left: u32,
+    lifetime: u32,
+}
+
+impl Particle {
+    fn ink(&self) -> f32 {
+        self.left as f32 / self.lifetime as f32
+    }
+}
+
+#[derive(Debug)]
+struct Drop {
+    serial: u64,
+    accent: usize,
+    x: f32,
+    y: f32,
+    speed: f32,
+    /// Ticks of ink the head has still to release.
+    emitting: u32,
+    particles: Vec<Particle>,
+}
+
+#[derive(Debug)]
+pub struct Ink {
+    rng: Rng,
+    palette: &'static Palette,
+    /// The pane in half-block pixels.
+    width: usize,
+    rows: usize,
+    drops: Vec<Drop>,
+    next_serial: u64,
+    last_accent: Option<usize>,
+    /// Ticks until the next drop.
+    wait: u32,
+}
+
+impl Ink {
+    pub fn new(rng: Rng, palette: &'static Palette) -> Self {
+        Self {
+            rng,
+            palette,
+            width: 0,
+            rows: 0,
+            drops: Vec::new(),
+            next_serial: 0,
+            last_accent: None,
+            wait: 0,
+        }
+    }
+
+    /// Every drop that still holds ink, by the order it fell, with its
+    /// accent.
+    pub fn drops(&self) -> impl Iterator<Item = (u64, Color)> + '_ {
+        let accents = accents(self.palette);
+        self.drops
+            .iter()
+            .map(move |drop| (drop.serial, accents[drop.accent]))
+    }
+
+    /// Every particle's place, in half-block pixels from the top left of
+    /// the pane.
+    pub fn particles(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        self.drops
+            .iter()
+            .flat_map(|drop| drop.particles.iter().map(|each| (each.x, each.y)))
+    }
+
+    fn drop_one(&mut self) {
+        let count = accents(self.palette).len();
+        let accent = match self.last_accent {
+            None => self.rng.random_range(0..count),
+            Some(last) => {
+                let other = self.rng.random_range(0..count - 1);
+                if other >= last { other + 1 } else { other }
+            }
+        };
+        self.last_accent = Some(accent);
+        let width = self.width as f32;
+        let x = self
+            .rng
+            .random_range(width * MARGIN..=width * (1.0 - MARGIN));
+        let speed = self.rng.random_range(ENTRY_SPEED);
+        self.drops.push(Drop {
+            serial: self.next_serial,
+            accent,
+            x,
+            y: 0.0,
+            speed,
+            emitting: EMIT_TICKS,
+            particles: Vec::new(),
+        });
+        self.next_serial += 1;
+    }
+
+    /// The ink of each accent in each pixel. A particle shares its ink
+    /// among the four pixels nearest it, by how near each is, so a cloud
+    /// that thins stays a cloud and does not break into lone dots.
+    fn inks(&self) -> Vec<[f32; 5]> {
+        let mut inks = vec![[0.0_f32; 5]; self.width * self.rows];
+        for drop in &self.drops {
+            for particle in &drop.particles {
+                let (x, y) = (particle.x - 0.5, particle.y - 0.5);
+                let (left, top) = (x.floor(), y.floor());
+                let (right_share, lower_share) = (x - left, y - top);
+                for (column, across) in [(left, 1.0 - right_share), (left + 1.0, right_share)] {
+                    for (row, down) in [(top, 1.0 - lower_share), (top + 1.0, lower_share)] {
+                        if column < 0.0 || row < 0.0 {
+                            continue;
+                        }
+                        let (column, row) = (column as usize, row as usize);
+                        if column < self.width && row < self.rows {
+                            inks[row * self.width + column][drop.accent] +=
+                                particle.ink() * across * down;
+                        }
+                    }
+                }
+            }
+        }
+        inks
+    }
+
+    fn inside(&self, x: f32, y: f32) -> (f32, f32) {
+        (
+            x.clamp(0.0, self.width as f32 - INSIDE),
+            y.clamp(0.0, self.rows as f32 - INSIDE),
+        )
+    }
+}
+
+impl Scene for Ink {
+    fn tick(&mut self, area: Rect) {
+        let width = usize::from(area.width);
+        let rows = usize::from(area.height) * 2;
+        if (width, rows) != (self.width, self.rows) {
+            self.width = width;
+            self.rows = rows;
+            self.drops.clear();
+            self.wait = 0;
+        }
+        if width == 0 || rows == 0 {
+            return;
+        }
+        if self.wait == 0 {
+            self.drop_one();
+            self.wait = self.rng.random_range(DROP_EVERY);
+        } else {
+            self.wait -= 1;
+        }
+
+        let mut drops = std::mem::take(&mut self.drops);
+        for drop in &mut drops {
+            if drop.emitting > 0 {
+                for _ in 0..PARTICLES_PER_TICK {
+                    let lifetime = self.rng.random_range(LIFETIME);
+                    drop.particles.push(Particle {
+                        x: drop.x,
+                        y: drop.y,
+                        vx: self.rng.random_range(-SPREAD..=SPREAD),
+                        vy: drop.speed * self.rng.random_range(SHARE_OF_HEAD),
+                        left: lifetime,
+                        lifetime,
+                    });
+                }
+                (drop.x, drop.y) = self.inside(drop.x, drop.y + drop.speed);
+                drop.speed *= HEAD_DRAG;
+                drop.emitting -= 1;
+            }
+            for particle in &mut drop.particles {
+                particle.vx = particle.vx * DRAG + self.rng.random_range(-JITTER..=JITTER);
+                particle.vy *= DRAG;
+                (particle.x, particle.y) =
+                    self.inside(particle.x + particle.vx, particle.y + particle.vy + SINK);
+                particle.left -= 1;
+            }
+            drop.particles.retain(|particle| particle.left > 0);
+        }
+        drops.retain(|drop| drop.emitting > 0 || !drop.particles.is_empty());
+        self.drops = drops;
+    }
+
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let inks = self.inks();
+        for y in 0..area.height {
+            let upper = usize::from(y) * 2;
+            let lower = upper + 1;
+            if lower >= self.rows {
+                break;
+            }
+            for x in 0..area.width {
+                let column = usize::from(x);
+                if column >= self.width {
+                    break;
+                }
+                let colour =
+                    |row: usize| shade(self.palette, &inks[row * self.width + column], column, row);
+                buf[(area.x + x, area.y + y)]
+                    .set_char(HALF_BLOCK)
+                    .set_fg(colour(upper))
+                    .set_bg(colour(lower));
+            }
+        }
+    }
+}
