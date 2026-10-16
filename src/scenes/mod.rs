@@ -8,4 +8,5 @@ pub mod matrix;
 pub mod murmuration;
 pub mod noise;
 pub mod pipes;
+pub mod tide;
 pub mod typing;
