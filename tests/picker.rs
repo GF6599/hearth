@@ -813,6 +813,44 @@ fn the_list_frame_stays_whole_at_every_height() {
     }
 }
 
+/// Given: the picker 120 columns wide, from 14 to 50 rows high, with the
+/// first scene marked and then the last.
+/// When: it renders at each height that shows the preview pane.
+/// Then: the list frame's top and bottom rules are on the rows of the
+/// pane's top and bottom rules.
+///
+/// Why it matters: the list and the pane read as one band, and a list that
+/// stops short of the pane looks cut off.
+#[test]
+fn the_list_and_the_pane_are_one_height() {
+    let mut shown = 0;
+    for height in 14..=50 {
+        let area = Rect::new(0, 0, 120, height);
+        let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+        for _ in 0..2 {
+            // Given, when:
+            let buffer = app_frame(&app, area);
+            let Some(inner) = pane_inner(&buffer) else {
+                continue;
+            };
+            shown += 1;
+
+            // Then:
+            let (x, top) = list_corner(&buffer);
+            let bottom = (top + 1..height)
+                .find(|&y| buffer[(x, y)].symbol() == "└")
+                .unwrap_or_else(|| panic!("no bottom rule at {height}"));
+            assert_eq!((top, bottom), (inner.y - 1, inner.bottom()), "{height}");
+
+            for _ in 1..ALL.len() {
+                app.select_next();
+                app.tick(area);
+            }
+        }
+    }
+    assert!(shown > 0, "no height shows the pane");
+}
+
 /// The bottom rule of the preview pane, from corner to corner.
 fn pane_bottom(buffer: &Buffer, inner: Rect) -> String {
     (inner.left() - 1..=inner.right())
