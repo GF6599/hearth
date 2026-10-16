@@ -254,10 +254,10 @@ fn sparks_rise_above_the_grate_and_cool_as_they_shrink() {
 }
 
 /// Given: the scene on an eighty by twenty-four area.
-/// When: it runs past the longest wait before a settle, counting the sparks
-/// in each frame.
-/// Then: the count jumps by fifteen or more over its usual level, and the
-/// first jump comes no sooner than the shortest wait.
+/// When: it runs past the longest wait before a settle, counting the young
+/// sparks, the gold `•`, in each frame.
+/// Then: the count reaches a burst's level, and first does so no sooner
+/// than the shortest wait.
 ///
 /// Why it matters: a settle is the rare event that makes the fire feel
 /// alive, and one that comes at once or never is no event at all.
@@ -268,21 +268,26 @@ fn a_log_settles_with_a_burst_of_sparks_after_a_while() {
     let last = usize::try_from(*SETTLE_TICKS.end()).unwrap() + 60;
 
     // When:
-    let counts: Vec<usize> = (0..last)
+    let young: Vec<usize> = (0..last)
         .map(|_| {
             scene.tick(AREA);
-            sparks(&render(&scene, AREA, AREA)).len()
+            let shown = sparks(&render(&scene, AREA, AREA));
+            shown
+                .iter()
+                .filter(|(.., glyph, _, _)| glyph == "•")
+                .count()
         })
         .collect();
 
     // Then:
-    let mut sorted = counts.clone();
-    sorted.sort_unstable();
-    let usual = sorted[sorted.len() / 2];
-    let first = counts
+    let first = young
         .iter()
-        .position(|&count| count >= usual + 15)
-        .unwrap_or_else(|| panic!("no burst over {usual}: {counts:?}"));
+        .position(|&count| count >= BURST_YOUNG)
+        .unwrap_or_else(|| panic!("no burst: {young:?}"));
     let soonest = usize::try_from(*SETTLE_TICKS.start()).unwrap();
-    assert!(first >= soonest, "a burst at tick {first}");
+    assert!(first >= soonest, "a burst at tick {first}: {young:?}");
 }
+
+/// Young sparks on screen that only a burst reaches. Over forty seeds the
+/// usual flow showed at most ten and a burst at least eighteen.
+const BURST_YOUNG: usize = 14;
