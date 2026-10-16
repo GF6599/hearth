@@ -76,10 +76,6 @@ pub fn accents(palette: &Palette) -> [Color; 5] {
     ]
 }
 
-/// The colour of one pixel that holds `inks`, one amount for each accent.
-/// The total decides the share of the tile that is inked, and each
-/// accent takes the part of that share its ink holds. The second choice
-/// reads the tile two cells over, so it does not follow the first.
 /// The glyph and its two colours for a cell of four pixels. A glyph holds
 /// two colours, the two most common, and a pixel of a third takes the ink
 /// of those two rather than the water, so thin ink is not lost.
@@ -109,6 +105,10 @@ fn quadrant(pixels: [Color; 4], base: Color) -> (char, Color, Color) {
     (QUADRANTS[bits], ink, water)
 }
 
+/// The colour of one pixel that holds `inks`, one amount for each accent.
+/// The total decides the share of the tile that is inked, and each
+/// accent takes the part of that share its ink holds. The second choice
+/// reads the tile two cells over, so it does not follow the first.
 pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color {
     let total: f32 = inks.iter().sum();
     let share = (total / FULL_INK).min(1.0);
@@ -223,7 +223,7 @@ struct Drop {
 pub struct Ink {
     rng: Rng,
     palette: &'static Palette,
-    /// The pane in half-block pixels.
+    /// The pane in square units, one a cell across and two a cell down.
     width: usize,
     rows: usize,
     drops: Vec<Drop>,
@@ -262,8 +262,8 @@ impl Ink {
             .map(move |drop| (drop.serial, accents[drop.accent]))
     }
 
-    /// Every particle's place, in half-block pixels from the top left of
-    /// the pane.
+    /// Every particle's place, in square units from the top left of the
+    /// pane, one a cell across and two a cell down.
     pub fn particles(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
         self.drops
             .iter()
