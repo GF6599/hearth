@@ -25,7 +25,8 @@ enum Mode {
 }
 
 pub struct App {
-    palette: &'static Palette,
+    /// The place of the theme in `THEMES`, so `t` knows the next one.
+    theme: usize,
     panes: Panes,
     corpus: Arc<Corpus>,
     speed: Speed,
@@ -33,6 +34,8 @@ pub struct App {
     /// restart, Tab and the picker.
     rates: [Rate; ALL.len()],
     notice: u32,
+    /// What the last change set: a speed or a theme name.
+    notice_text: String,
     /// Where a changed speed is saved. `None` saves nothing, which is what
     /// a test that presses `+` needs.
     saving: Option<PathBuf>,
@@ -67,11 +70,11 @@ impl std::fmt::Debug for App {
 impl App {
     pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
         Self {
-            palette: &theme::ROSE_PINE,
+            theme: 0,
             panes: Panes::new(Pane::new(
                 kind,
                 seed,
-                &theme::ROSE_PINE,
+                theme::THEMES[0].1,
                 &corpus,
                 Speed::DEFAULT,
             )),
@@ -79,6 +82,7 @@ impl App {
             speed: Speed::DEFAULT,
             rates: [Rate::NORMAL; ALL.len()],
             notice: 0,
+            notice_text: String::new(),
             saving: None,
             unsaved: None,
             preview: None,
@@ -111,8 +115,9 @@ impl App {
                 *rate = *saved;
             }
         }
-        if let Some(palette) = config.theme {
-            self = self.with_palette(palette);
+        if let Some(theme) = config.theme {
+            self.theme = theme;
+            self.repaint();
         }
         match config.typing {
             Some(speed) => self.with_speed(speed),
@@ -120,15 +125,28 @@ impl App {
         }
     }
 
-    fn with_palette(mut self, palette: &'static Palette) -> Self {
-        self.palette = palette;
+    fn palette(&self) -> &'static Palette {
+        theme::THEMES[self.theme].1
+    }
+
+    /// Every pane starts its scene again in the theme's colours, because
+    /// some scenes keep the colour of each cell they drew.
+    fn repaint(&mut self) {
+        let palette = self.palette();
         for pane in self.panes.iter_mut() {
             pane.repaint(palette, &self.corpus, self.speed);
         }
         if self.mode == Mode::Picking {
             self.build_preview();
         }
-        self
+    }
+
+    pub fn next_theme(&mut self) {
+        self.theme = (self.theme + 1) % theme::THEMES.len();
+        self.repaint();
+        self.notice_text = theme::THEMES[self.theme].0.to_string();
+        self.unsaved = None;
+        self.notice = NOTICE_TICKS;
     }
 
     pub fn saving_to(mut self, path: PathBuf) -> Self {
@@ -175,14 +193,14 @@ impl App {
             })
             .collect();
         f(Picker {
-            palette: self.palette,
+            palette: self.palette(),
             entries: &entries,
             selected: self.selected,
         })
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, Style::default().bg(self.palette.base));
+        buf.set_style(area, Style::default().bg(self.palette().base));
         let layout = self.panes.layout(area);
         let picking = self.is_picking().then(|| self.panes.focus());
         for (index, (pane, inside)) in self.panes.iter().zip(&layout.panes).enumerate() {
@@ -198,10 +216,10 @@ impl App {
                 pane.render(*inside, buf);
             }
         }
-        pane::render_rules(&layout.rules, self.palette, buf);
+        pane::render_rules(&layout.rules, self.palette(), buf);
         let focused = layout.panes[self.panes.focus()];
         if self.panes.is_split() {
-            pane::render_focus(focused, self.palette, buf);
+            pane::render_focus(focused, self.palette(), buf);
         }
         if picking.is_none() && self.notice > 0 {
             self.render_notice(focused, buf);
@@ -211,13 +229,13 @@ impl App {
     /// A notice wider than the area is cut at its left edge, so the reason
     /// a save failed is never hidden by the speed in front of it.
     fn render_notice(&self, area: Rect, buf: &mut Buffer) {
-        let mut notice = self.speed_label(self.panes.focused().kind);
+        let mut notice = self.notice_text.clone();
         if let Some(reason) = &self.unsaved {
             notice = format!("{notice}, not saved: {reason}");
         }
         let width = u16::try_from(notice.chars().count()).unwrap_or(u16::MAX);
         let x = area.right() - width.min(area.width);
-        let style = Style::default().fg(self.palette.subtle);
+        let style = Style::default().fg(self.palette().subtle);
         buf.set_stringn(x, area.y, notice, usize::from(area.width), style);
     }
 
@@ -262,6 +280,7 @@ impl App {
             self.save(Value::from(self.rates[slot].times()))
         };
         self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = self.speed_label(self.panes.focused().kind);
         self.notice = NOTICE_TICKS;
     }
 
@@ -296,7 +315,7 @@ impl App {
         let kind = ALL[self.selected];
         self.preview = Some(kind.build(
             self.panes.focused().seed,
-            self.palette,
+            self.palette(),
             &self.corpus,
             self.speed,
         ));
@@ -321,7 +340,7 @@ impl App {
         let focused = self.panes.focused();
         let kind = focused.kind.next();
         let seed = focused.seed.wrapping_add(1);
-        let pane = Pane::new(kind, seed, self.palette, &self.corpus, self.speed);
+        let pane = Pane::new(kind, seed, self.palette(), &self.corpus, self.speed);
         self.panes.split(split, pane);
         self.selected = slot_of(kind);
         self.fresh = true;

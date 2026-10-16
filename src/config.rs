@@ -9,13 +9,14 @@ use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::typing::Speed;
-use crate::theme::{self, Palette};
+use crate::theme;
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub scene: Option<SceneKind>,
     pub repo: Option<String>,
-    pub theme: Option<&'static Palette>,
+    /// The place of the theme in `theme::THEMES`.
+    pub theme: Option<usize>,
     pub typing: Option<Speed>,
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
@@ -68,8 +69,8 @@ impl Config {
                     config.repo = Some(repo.to_string());
                 }
                 "theme" => {
-                    let palette = item.as_str().and_then(theme::by_name);
-                    config.theme = Some(palette.ok_or_else(|| {
+                    let place = item.as_str().and_then(theme::position);
+                    config.theme = Some(place.ok_or_else(|| {
                         let names: Vec<&str> =
                             theme::THEMES.iter().map(|(name, _)| *name).collect();
                         fail(format!("theme must be one of {}", names.join(", ")))

@@ -348,7 +348,8 @@ fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
         let text = format!("theme = \"{name}\"\n");
         let path = config_file(&format!("theme-{name}"), Some(&text));
         let config = Config::load(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let own = colours(theme::by_name(name).unwrap());
+        let (_, palette) = theme::THEMES[theme::position(name).unwrap()];
+        let own = colours(palette);
         let foreign: Vec<Color> = colours(&theme::ROSE_PINE)
             .into_iter()
             .filter(|colour| !own.contains(colour))

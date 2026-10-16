@@ -135,11 +135,10 @@ pub const THEMES: [(&str, &Palette); 5] = [
     ("catppuccin-latte", &CATPPUCCIN_LATTE),
 ];
 
-pub fn by_name(name: &str) -> Option<&'static Palette> {
-    THEMES
-        .iter()
-        .find(|(each, _)| *each == name)
-        .map(|&(_, palette)| palette)
+/// The place of a theme in `THEMES`, which is the first theme for a
+/// bare start.
+pub fn position(name: &str) -> Option<usize> {
+    THEMES.iter().position(|(each, _)| *each == name)
 }
 
 /// Every frame takes its corners from here, so a rounded surface can only
@@ -158,4 +157,4 @@ pub const RULE: line::Set = match BORDER {
 pub const PICKER_TITLE: &str = "─ scenes ";
 
 /// The picker's keys, cut into its bottom rule the same way.
-pub const PICKER_HINT: &str = "─ ↵ start  j/k move  q quit ";
+pub const PICKER_HINT: &str = "─ ↵ start  j/k move  t theme  q quit ";
