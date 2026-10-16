@@ -394,3 +394,39 @@ fn the_flock_stays_above_the_trees() {
         }
     }
 }
+
+/// Perceived brightness, with the weights of ITU-R BT.601.
+fn luma(colour: Color) -> u32 {
+    match colour {
+        Color::Rgb(r, g, b) => 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b),
+        other => panic!("{other:?} is not a palette colour"),
+    }
+}
+
+/// Given: the scene in each theme.
+/// When: it ticks once and renders.
+/// Then: the top row of the sky is the darkest of base, surface and
+/// overlay, and the row above the trees is the lightest.
+///
+/// Why it matters: dusk is light low over the trees. A light theme orders
+/// its three roles another way, and a sky that is brightest in the middle
+/// reads as a stripe, not as dusk.
+#[test]
+fn every_theme_lights_the_sky_low_over_the_trees() {
+    for (name, palette) in theme::THEMES {
+        // Given, when:
+        let mut scene = Murmuration::new(Rng::seed_from_u64(7), palette);
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let roles = [palette.base, palette.surface, palette.overlay];
+        let darkest = roles.iter().copied().min_by_key(|c| luma(*c)).unwrap();
+        let lightest = roles.iter().copied().max_by_key(|c| luma(*c)).unwrap();
+        let low = tree_rows(&buffer)[0] - 1;
+        for x in 0..AREA.width {
+            assert_eq!(buffer[(x, 0)].bg, darkest, "{name}: top at {x}");
+            assert_eq!(buffer[(x, low)].bg, lightest, "{name}: low at {x}");
+        }
+    }
+}
