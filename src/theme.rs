@@ -229,9 +229,43 @@ pub const DRACULA_ALUCARD: Palette = Palette {
     iris: Color::Rgb(0x64, 0x4a, 0xc9),
 };
 
+/// Solarized by its tone names: Dark takes base03, base02, base01, base00
+/// and base0, and Light inverts them. Both keep red, yellow, magenta, blue,
+/// cyan and violet as the accents. Solarized has one tone between the
+/// background and the comments, so surface and overlay share it.
+pub const SOLARIZED_DARK: Palette = Palette {
+    base: Color::Rgb(0x00, 0x2b, 0x36),
+    surface: Color::Rgb(0x07, 0x36, 0x42),
+    overlay: Color::Rgb(0x07, 0x36, 0x42),
+    muted: Color::Rgb(0x58, 0x6e, 0x75),
+    subtle: Color::Rgb(0x65, 0x7b, 0x83),
+    text: Color::Rgb(0x83, 0x94, 0x96),
+    love: Color::Rgb(0xdc, 0x32, 0x2f),
+    gold: Color::Rgb(0xb5, 0x89, 0x00),
+    rose: Color::Rgb(0xd3, 0x36, 0x82),
+    pine: Color::Rgb(0x26, 0x8b, 0xd2),
+    foam: Color::Rgb(0x2a, 0xa1, 0x98),
+    iris: Color::Rgb(0x6c, 0x71, 0xc4),
+};
+
+pub const SOLARIZED_LIGHT: Palette = Palette {
+    base: Color::Rgb(0xfd, 0xf6, 0xe3),
+    surface: Color::Rgb(0xee, 0xe8, 0xd5),
+    overlay: Color::Rgb(0xee, 0xe8, 0xd5),
+    muted: Color::Rgb(0x93, 0xa1, 0xa1),
+    subtle: Color::Rgb(0x83, 0x94, 0x96),
+    text: Color::Rgb(0x65, 0x7b, 0x83),
+    love: Color::Rgb(0xdc, 0x32, 0x2f),
+    gold: Color::Rgb(0xb5, 0x89, 0x00),
+    rose: Color::Rgb(0xd3, 0x36, 0x82),
+    pine: Color::Rgb(0x26, 0x8b, 0xd2),
+    foam: Color::Rgb(0x2a, 0xa1, 0x98),
+    iris: Color::Rgb(0x6c, 0x71, 0xc4),
+};
+
 /// Each theme by the name the config file gives it. A family comes first
 /// in the name, so another family can join without a clash.
-pub const THEMES: [(&str, &Palette); 11] = [
+pub const THEMES: [(&str, &Palette); 13] = [
     ("rose-pine", &ROSE_PINE),
     ("rose-pine-moon", &ROSE_PINE_MOON),
     ("rose-pine-dawn", &ROSE_PINE_DAWN),
@@ -243,6 +277,8 @@ pub const THEMES: [(&str, &Palette); 11] = [
     ("kanagawa-lotus", &KANAGAWA_LOTUS),
     ("dracula", &DRACULA),
     ("dracula-alucard", &DRACULA_ALUCARD),
+    ("solarized-dark", &SOLARIZED_DARK),
+    ("solarized-light", &SOLARIZED_LIGHT),
 ];
 
 /// The place of a theme in `THEMES`, which is the first theme for a
