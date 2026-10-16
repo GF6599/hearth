@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use hearth::scene::{Rng, Scene};
-use hearth::scenes::embers::Embers;
+use hearth::scenes::embers::{Embers, SETTLE_TICKS};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -188,4 +188,101 @@ fn a_tiny_area_draws_nothing_outside_itself() {
             }
         }
     }
+}
+
+/// The cells that hold a spark, as `(x, y, glyph, fg, bg)`.
+fn sparks(buffer: &Buffer) -> Vec<(u16, u16, String, Color, Color)> {
+    buffer
+        .area
+        .positions()
+        .filter_map(|position| {
+            let cell = &buffer[position];
+            ["•", "·", "."].contains(&cell.symbol()).then(|| {
+                (
+                    position.x,
+                    position.y,
+                    cell.symbol().to_string(),
+                    cell.fg,
+                    cell.bg,
+                )
+            })
+        })
+        .collect()
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs for four hundred ticks, with a frame after each.
+/// Then: every spark is `•` in gold, `·` in rose or `.` in muted, on the
+/// base colour, in a cell above the grate, and some spark reaches the top
+/// half of the screen.
+///
+/// Why it matters: the glyph shrinks and the colour cools as a spark rises,
+/// and a spark below the grate or one that never climbs breaks the picture
+/// of heat going up a chimney.
+#[test]
+fn sparks_rise_above_the_grate_and_cool_as_they_shrink() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let palette = &theme::ROSE_PINE;
+    let grate_cell = AREA.height - 2;
+    let mut seen = 0;
+    let mut high = false;
+
+    for _ in 0..400 {
+        // When:
+        scene.tick(AREA);
+        let shown = render(&scene, AREA, AREA);
+
+        // Then:
+        for (x, y, glyph, fg, bg) in sparks(&shown) {
+            let colour = match glyph.as_str() {
+                "•" => palette.gold,
+                "·" => palette.rose,
+                _ => palette.muted,
+            };
+            assert_eq!((fg, bg), (colour, palette.base), "{glyph} at ({x}, {y})");
+            assert!(
+                y < grate_cell,
+                "{glyph} at ({x}, {y}) is not above the grate"
+            );
+            seen += 1;
+            high |= y < AREA.height / 2;
+        }
+    }
+    assert!(seen > 0, "no spark");
+    assert!(high, "no spark reached the top half");
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs past the longest wait before a settle, counting the sparks
+/// in each frame.
+/// Then: the count jumps by fifteen or more over its usual level, and the
+/// first jump comes no sooner than the shortest wait.
+///
+/// Why it matters: a settle is the rare event that makes the fire feel
+/// alive, and one that comes at once or never is no event at all.
+#[test]
+fn a_log_settles_with_a_burst_of_sparks_after_a_while() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let last = usize::try_from(*SETTLE_TICKS.end()).unwrap() + 60;
+
+    // When:
+    let counts: Vec<usize> = (0..last)
+        .map(|_| {
+            scene.tick(AREA);
+            sparks(&render(&scene, AREA, AREA)).len()
+        })
+        .collect();
+
+    // Then:
+    let mut sorted = counts.clone();
+    sorted.sort_unstable();
+    let usual = sorted[sorted.len() / 2];
+    let first = counts
+        .iter()
+        .position(|&count| count >= usual + 15)
+        .unwrap_or_else(|| panic!("no burst over {usual}: {counts:?}"));
+    let soonest = usize::try_from(*SETTLE_TICKS.start()).unwrap();
+    assert!(first >= soonest, "a burst at tick {first}");
 }
