@@ -53,9 +53,16 @@ const FROTH: usize = 6;
 /// share falls as the sand dries, so the wet band fades and does not end in
 /// a hard line.
 const WET: u32 = 8;
+/// The chance that a cell the sea can reach holds a shell or a pebble.
+const OBJECT_CHANCE: f64 = 1.0 / 40.0;
+/// The pixels a shell fills, by the bits of a quadrant glyph: ▟, ▙ and ▄.
+const SHELLS: [u8; 3] = [0b1110, 0b1101, 0b1100];
+/// A pebble is one pixel, on the lower left or lower right of its cell.
+const PEBBLES: [u8; 2] = [0b0100, 0b1000];
 
 #[derive(Debug)]
 pub struct Tide {
+    rng: Rng,
     palette: &'static Palette,
     /// Ticks since the start.
     time: u32,
@@ -72,6 +79,15 @@ pub struct Tide {
     rows: usize,
     /// Ticks until each pixel of sand is dry, by row and then by column.
     wetness: Vec<u32>,
+    /// The shell or pebble in each cell, by row and then by column.
+    objects: Vec<Option<Object>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Object {
+    /// The pixels it fills, by the bits of a quadrant glyph.
+    mask: u8,
+    shell: bool,
 }
 
 impl Tide {
@@ -89,6 +105,8 @@ impl Tide {
             columns: 0,
             rows: 0,
             wetness: Vec::new(),
+            objects: Vec::new(),
+            rng,
         }
     }
 
@@ -156,6 +174,22 @@ impl Tide {
             let (x, row) = at(quarter);
             pixels[quarter] == Pixel::Sand && self.wetness(x, row) > 0
         });
+        if let Some(object) = self.object(left / 2, top / 2)
+            && pixels.iter().all(|each| *each == Pixel::Sand)
+        {
+            let colour = if object.shell {
+                self.palette.rose
+            } else {
+                self.palette.subtle
+            };
+            return std::array::from_fn(|quarter| {
+                if object.mask >> quarter & 1 == 1 {
+                    colour
+                } else {
+                    self.palette.base
+                }
+            });
+        }
         std::array::from_fn(|quarter| {
             let (x, row) = at(quarter);
             match pixels[quarter] {
@@ -168,6 +202,34 @@ impl Tide {
                 Pixel::Sand => self.palette.base,
             }
         })
+    }
+
+    fn object(&self, x: usize, y: usize) -> Option<Object> {
+        let across = self.columns / 2;
+        self.objects.get(y * across + x).copied().flatten()
+    }
+
+    /// Lays shells and pebbles on the cells the sea reaches and also
+    /// leaves, so each one is covered and uncovered as the tide turns.
+    fn scatter(&mut self) {
+        let (across, down) = (self.columns / 2, self.rows / 2);
+        let rows = self.rows as f32;
+        let reached = self.rows - ((HIGH_TIDE + SWASH) * rows).floor() as usize;
+        let left = self
+            .rows
+            .saturating_sub((LOW_TIDE * rows).ceil() as usize + 2);
+        self.objects = (0..across * down)
+            .map(|index| {
+                let top = index / across * 2;
+                if !(reached..=left).contains(&top) || !self.rng.random_bool(OBJECT_CHANCE) {
+                    return None;
+                }
+                let shell = self.rng.random_bool(0.5);
+                let masks: &[u8] = if shell { &SHELLS } else { &PEBBLES };
+                let mask = masks[self.rng.random_range(0..masks.len())];
+                Some(Object { mask, shell })
+            })
+            .collect();
     }
 
     /// Whether the sand pixel at (x, row) is drawn wet, by the share of
@@ -209,6 +271,7 @@ impl Scene for Tide {
             self.columns = columns;
             self.rows = rows;
             self.wetness = vec![0; columns * rows];
+            self.scatter();
         }
         if columns == 0 || rows == 0 {
             return;
