@@ -20,6 +20,9 @@ const CELL_DOTS: (usize, usize) = (2, 4);
 
 const BLANK_BRAILLE: u32 = 0x2800;
 
+/// The trees are drawn in half blocks, an upper and a lower pixel a cell.
+const HALF_BLOCK: &str = "▀";
+
 fn ticked(seed: u64, area: Rect, ticks: usize) -> Murmuration {
     let mut scene = Murmuration::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
     for _ in 0..ticks {
@@ -131,8 +134,8 @@ fn every_bird_shows_as_a_dot_and_every_dot_is_a_bird() {
 
 /// Given: the scene on a hundred by thirty area, a hundred ticks in.
 /// When: it renders.
-/// Then: every cell is blank or braille, a cell with one or two dots is
-/// subtle, and a cell with three or more is text.
+/// Then: every cell above the trees is blank or braille, a cell with one
+/// or two dots is subtle, and a cell with three or more is text.
 ///
 /// Why it matters: one braille cell takes one colour, so the dots in it
 /// are what shades the flock from a faint edge to a bright core.
@@ -145,7 +148,7 @@ fn a_cell_with_more_birds_is_brighter() {
     let mut shades = BTreeSet::new();
     for position in AREA.positions() {
         let cell = &buffer[position];
-        if cell.symbol() == " " {
+        if cell.symbol() == " " || cell.symbol() == HALF_BLOCK {
             continue;
         }
         let dots = braille_dots(cell.symbol())
@@ -273,4 +276,121 @@ fn murmuration_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     assert!(!lit_dots(&buffer, AREA).is_empty());
+}
+
+/// The rows of a render that hold the trees, top first.
+fn tree_rows(buffer: &Buffer) -> Vec<u16> {
+    let area = buffer.area;
+    (area.top()..area.bottom())
+        .filter(|&y| (area.left()..area.right()).any(|x| buffer[(x, y)].symbol() == HALF_BLOCK))
+        .collect()
+}
+
+/// Given: the scene on a hundred by thirty area.
+/// When: it ticks once and renders.
+/// Then: down the rows above the trees, the cell backgrounds go from base
+/// through surface to overlay, a row holds one colour or two neighbouring
+/// ones, no row goes back to a darker band, and each edge between two
+/// bands is a row that mixes them.
+///
+/// Why it matters: the sky is dusk, light low over the trees and dark
+/// above, and a hard line between two bands reads as a fault in the
+/// terminal, not as a sky.
+#[test]
+fn the_sky_lightens_in_dithered_bands_toward_the_trees() {
+    // Given, when:
+    let buffer = render(&ticked(7, AREA, 1), AREA, AREA);
+
+    // Then:
+    let palette = &theme::ROSE_PINE;
+    let bands = [palette.base, palette.surface, palette.overlay];
+    let trees = tree_rows(&buffer);
+    let sky = 0..*trees.first().expect("no trees");
+    let mut rows = Vec::new();
+    for y in sky {
+        let used: BTreeSet<usize> = (0..AREA.width)
+            .map(|x| {
+                let bg = buffer[(x, y)].bg;
+                bands
+                    .iter()
+                    .position(|band| *band == bg)
+                    .unwrap_or_else(|| panic!("{bg:?} at ({x}, {y})"))
+            })
+            .collect();
+        let (low, high) = (*used.first().unwrap(), *used.last().unwrap());
+        assert!(high - low <= 1, "row {y}: {used:?}");
+        rows.push((low, high));
+    }
+    assert!(rows.windows(2).all(|pair| pair[0] <= pair[1]), "{rows:?}");
+    assert_eq!(rows.first(), Some(&(0, 0)), "{rows:?}");
+    assert_eq!(rows.last(), Some(&(2, 2)), "{rows:?}");
+    assert!(rows.contains(&(0, 1)) && rows.contains(&(1, 2)), "{rows:?}");
+}
+
+/// Given: the scene on a hundred by thirty area.
+/// When: it ticks once and renders.
+/// Then: the tree rows hold half blocks whose pixels are muted trees or
+/// overlay sky, each pixel column is sky above and tree below, the lowest
+/// pixel row is all tree, and the trees stand at three or more heights,
+/// none of them filling every tree row.
+///
+/// Why it matters: a pixel of tree with sky under it floats, and a tree
+/// line of one height reads as a wall, not as woods at dusk.
+#[test]
+fn trees_rise_from_the_ground_in_muted() {
+    // Given, when:
+    let buffer = render(&ticked(7, AREA, 1), AREA, AREA);
+
+    // Then:
+    let palette = &theme::ROSE_PINE;
+    let trees = tree_rows(&buffer);
+    let mut heights = BTreeSet::new();
+    for x in 0..AREA.width {
+        let pixels: Vec<Color> = trees
+            .iter()
+            .flat_map(|&y| {
+                let cell = &buffer[(x, y)];
+                assert_eq!(cell.symbol(), HALF_BLOCK, "({x}, {y})");
+                [cell.fg, cell.bg]
+            })
+            .collect();
+        let sky = pixels.iter().take_while(|p| **p == palette.overlay).count();
+        assert!(
+            pixels[sky..].iter().all(|p| *p == palette.muted),
+            "column {x}: {pixels:?}"
+        );
+        assert!(sky < pixels.len(), "column {x} has no ground");
+        heights.insert(pixels.len() - sky);
+    }
+    assert!(heights.len() >= 3, "{heights:?}");
+    assert!(
+        heights.iter().all(|h| *h < trees.len() * 2),
+        "a tree fills every row: {heights:?}"
+    );
+}
+
+/// Given: the scene on a hundred by thirty area.
+/// When: it ticks a thousand times.
+/// Then: after every tick every bird is in a row above the trees.
+///
+/// Why it matters: a braille cell has one background, so a bird over the
+/// trees would cut a hole of sky into them.
+#[test]
+fn the_flock_stays_above_the_trees() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let first_tree = *tree_rows(&render(&scene, AREA, AREA))
+        .first()
+        .expect("no trees");
+
+    // When, then:
+    for tick in 0..1000 {
+        scene.tick(AREA);
+        for (x, y) in scene.birds() {
+            assert!(
+                (y as usize) / CELL_DOTS.1 < usize::from(first_tree),
+                "tick {tick}: bird at ({x}, {y}) in the trees"
+            );
+        }
+    }
 }
