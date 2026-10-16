@@ -358,6 +358,8 @@ fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
         "kanagawa-lotus",
         "dracula",
         "dracula-alucard",
+        "solarized-dark",
+        "solarized-light",
     ] {
         // Given:
         let text = format!("theme = \"{name}\"\n");
