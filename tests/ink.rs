@@ -15,8 +15,12 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 
-/// Each cell draws two pixels, the upper as the foreground.
-const HALF_BLOCK: &str = "▀";
+/// Each cell draws two by two pixels. A glyph's bits are its upper left,
+/// upper right, lower left and lower right quarters, from the lowest bit,
+/// and a set bit draws in the foreground.
+const QUADRANTS: [&str; 16] = [
+    " ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
+];
 
 const TILE: usize = 4;
 
@@ -34,19 +38,34 @@ fn render(scene: &Ink, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// Every inked pixel of a render, as (column, pixel row) from the top
-/// left of the area.
+/// The colours of a cell's four pixels, upper left, upper right, lower
+/// left and lower right, or nothing for a glyph that is not a quadrant.
+fn pixels(buffer: &Buffer, position: ratatui::layout::Position) -> Option<[Color; 4]> {
+    let cell = &buffer[position];
+    let bits = QUADRANTS.iter().position(|each| *each == cell.symbol())?;
+    Some(std::array::from_fn(|quarter| {
+        if bits & (1 << quarter) != 0 {
+            cell.fg
+        } else {
+            cell.bg
+        }
+    }))
+}
+
+/// Every inked pixel of a render, as (pixel column, pixel row) from the
+/// top left of the area.
 fn inked_pixels(buffer: &Buffer, area: Rect, base: Color) -> Vec<(usize, usize)> {
     let mut inked = Vec::new();
     for position in area.positions() {
-        let cell = &buffer[position];
-        let column = usize::from(position.x - area.x);
+        let Some(colours) = pixels(buffer, position) else {
+            continue;
+        };
+        let column = usize::from(position.x - area.x) * 2;
         let row = usize::from(position.y - area.y) * 2;
-        if cell.fg != base {
-            inked.push((column, row));
-        }
-        if cell.bg != base {
-            inked.push((column, row + 1));
+        for (quarter, colour) in colours.into_iter().enumerate() {
+            if colour != base {
+                inked.push((column + quarter % 2, row + quarter / 2));
+            }
         }
     }
     inked
@@ -58,8 +77,8 @@ fn tile() -> impl Iterator<Item = (usize, usize)> {
 
 /// Given: the scene on a forty by twenty area, in a dark and a light theme.
 /// When: it renders after each of four hundred ticks.
-/// Then: every cell is a half block whose two colours are the base or one
-/// of the five accents.
+/// Then: every cell is a quadrant glyph whose four pixels are the base or
+/// one of the five accents.
 ///
 /// Why it matters: thin ink is drawn by dither, not by a blend, so a blend
 /// would show as a colour that the theme does not have.
@@ -77,9 +96,13 @@ fn every_cell_is_the_water_or_an_accent() {
 
             // Then:
             for position in area.positions() {
-                let cell = &buffer[position];
-                assert_eq!(cell.symbol(), HALF_BLOCK, "tick {tick} at {position:?}");
-                for colour in [cell.fg, cell.bg] {
+                let colours = pixels(&buffer, position).unwrap_or_else(|| {
+                    panic!(
+                        "tick {tick}: {:?} at {position:?}",
+                        buffer[position].symbol()
+                    )
+                });
+                for colour in colours {
                     assert!(
                         allowed.contains(&colour),
                         "tick {tick}: {colour:?} at {position:?}"
@@ -87,6 +110,32 @@ fn every_cell_is_the_water_or_an_accent() {
                 }
             }
         }
+    }
+}
+
+/// Given: the scene on a hundred by thirty area, in three seeds.
+/// When: it renders after three hundred ticks.
+/// Then: some cells show one colour in the left half and another in the
+/// right.
+///
+/// Why it matters: a cell of two pixels, one above the other, draws a
+/// thread twice as coarse across as down, and the curls show steps.
+#[test]
+fn a_cell_draws_ink_at_half_its_width() {
+    for seed in [1, 7, 42] {
+        // When:
+        let scene = ticked(seed, &theme::ROSE_PINE, AREA, 300);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let split = AREA
+            .positions()
+            .filter_map(|position| pixels(&buffer, position))
+            .filter(|[upper_left, upper_right, lower_left, lower_right]| {
+                upper_left != upper_right || lower_left != lower_right
+            })
+            .count();
+        assert!(split > 0, "seed {seed}");
     }
 }
 
