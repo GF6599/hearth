@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
-use hearth::scenes::tide::{GRAINS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
+use hearth::scenes::tide::{DRY_TICKS, GRAINS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -196,6 +196,80 @@ fn dry_sand_is_an_even_scatter_of_gold_grains() {
             );
         }
     }
+}
+
+/// Sand that the water leaves stays wet for a while, then dries.
+/// Given: the scene at a hundred by thirty, rendered every tick for longer
+/// than sand takes to dry.
+/// When: the wetness of every pixel is read after each tick.
+/// Then: a pixel under the sea is fully wet, a pixel the sea left is
+/// `DRY_TICKS` less the ticks since it left, and a pixel the sea never
+/// reached is dry.
+///
+/// Why it matters: sand that never dries leaves a dark band where the tide
+/// once was, and sand that turns wet with no water reads as a stain.
+#[test]
+fn sand_the_sea_leaves_dries_in_a_fixed_time() {
+    let mut scene = ticked(7, AREA, 0);
+    let rows = usize::from(AREA.height) * 2;
+    let columns = usize::from(AREA.width) * 2;
+    let mut last_sea: Vec<Option<u32>> = vec![None; rows * columns];
+    for tick in 0..DRY_TICKS * 3 {
+        scene.tick(AREA);
+        let grid = pixels(&render(&scene, AREA, AREA), AREA);
+        for (row, line) in grid.iter().enumerate() {
+            for (x, colour) in line.iter().enumerate() {
+                // When:
+                if is_sea(*colour) {
+                    last_sea[row * columns + x] = Some(tick);
+                }
+                let wetness = scene.wetness(x, row);
+
+                // Then:
+                let expected = last_sea[row * columns + x]
+                    .map_or(0, |left| DRY_TICKS.saturating_sub(tick - left));
+                assert_eq!(wetness, expected, "tick {tick}: pixel ({x}, {row})");
+            }
+        }
+    }
+}
+
+/// Wet sand is drawn darker than dry sand, and its grains hide.
+/// Given: the scene at a hundred by thirty, over two minutes.
+/// When: every sand pixel is read with its wetness.
+/// Then: a muted pixel is always wet, a gold grain is always dry, and wet
+/// sand shows on screen.
+///
+/// Why it matters: if the wet sand looks like the dry, the drying cannot
+/// be seen, and the tide leaves no trace.
+#[test]
+fn wet_sand_is_muted_and_dry_sand_is_gold() {
+    let mut scene = ticked(7, AREA, 0);
+    let mut muted_seen = 0;
+    for tick in 0..2000 {
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+
+        // When:
+        let grid = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        for (row, line) in grid.iter().enumerate() {
+            for (x, colour) in line.iter().enumerate() {
+                let wetness = scene.wetness(x, row);
+                if *colour == PALETTE.muted {
+                    assert!(wetness > 0, "tick {tick}: dry muted pixel ({x}, {row})");
+                    muted_seen += 1;
+                }
+                if *colour == PALETTE.gold {
+                    assert_eq!(wetness, 0, "tick {tick}: wet grain ({x}, {row})");
+                }
+            }
+        }
+    }
+    assert!(muted_seen > 0, "no wet sand was ever drawn");
 }
 
 /// Given: a scene that ticked on a hundred by thirty area.
