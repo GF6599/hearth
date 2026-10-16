@@ -31,10 +31,6 @@ const SEPARATION: f32 = 0.08;
 /// edge instead of piling against it.
 const EDGE_MARGIN: f32 = 10.0;
 const EDGE_TURN: f32 = 0.12;
-/// The flock drifts to a roost on one side of the pane, then to one on
-/// the other side, so it crosses the screen and back.
-const ROOST_PULL: f32 = 0.0015;
-const ROOST_TICKS: RangeInclusive<u32> = 160..=320;
 /// The flock starts as a disc whose radius is this many dots times the
 /// square root of its size, so a flock of any size starts as dense.
 const SPAWN_SPREAD: f32 = 1.5;
@@ -57,8 +53,6 @@ pub struct Murmuration {
     width: usize,
     height: usize,
     birds: Vec<Bird>,
-    roost: (f32, f32),
-    roost_left: u32,
 }
 
 impl Murmuration {
@@ -69,8 +63,6 @@ impl Murmuration {
             width: 0,
             height: 0,
             birds: Vec::new(),
-            roost: (0.0, 0.0),
-            roost_left: 0,
         }
     }
 
@@ -102,20 +94,6 @@ impl Murmuration {
                 vy: speed * turn.sin(),
             });
         }
-        self.roost = centre;
-        self.roost_left = self.rng.random_range(ROOST_TICKS);
-    }
-
-    /// A roost on the side of the pane away from the last one.
-    fn move_roost(&mut self) {
-        let (width, height) = (self.width as f32, self.height as f32);
-        let share = if self.roost.0 < width / 2.0 {
-            self.rng.random_range(0.55..0.85)
-        } else {
-            self.rng.random_range(0.15..0.45)
-        };
-        self.roost = (width * share, height * self.rng.random_range(0.2..0.8));
-        self.roost_left = self.rng.random_range(ROOST_TICKS);
     }
 
     /// Each bird in buckets one `VISION` square, so a bird reads only the
@@ -159,10 +137,7 @@ impl Murmuration {
             }
         }
 
-        let mut push = (
-            (self.roost.0 - bird.x) * ROOST_PULL + away.0 * SEPARATION,
-            (self.roost.1 - bird.y) * ROOST_PULL + away.1 * SEPARATION,
-        );
+        let mut push = (away.0 * SEPARATION, away.1 * SEPARATION);
         if seen > 0.0 {
             push.0 +=
                 (heading.0 / seen - bird.vx) * ALIGNMENT + (middle.0 / seen - bird.x) * COHESION;
@@ -186,11 +161,6 @@ impl Murmuration {
     }
 
     fn step(&mut self) {
-        if self.roost_left == 0 {
-            self.move_roost();
-        }
-        self.roost_left -= 1;
-
         let (columns, buckets) = self.buckets();
         let pushes: Vec<(f32, f32)> = self
             .birds
