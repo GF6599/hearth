@@ -3,6 +3,7 @@ use std::ops::RangeInclusive;
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
@@ -37,6 +38,21 @@ const SPAWN_SPREAD: f32 = 1.5;
 /// Keeps a clamped bird strictly inside the last dot.
 const INSIDE: f32 = 0.01;
 
+/// The trees take one cell row for each this many rows of the pane, and
+/// no more than `MOST_TREE_ROWS`, so a short pane keeps its sky.
+const PANE_ROWS_PER_TREE_ROW: usize = 8;
+const MOST_TREE_ROWS: usize = 3;
+/// Widths of a crown and gaps between two, in cells.
+const DOME_WIDTH: RangeInclusive<usize> = 4..=7;
+const POINTED_WIDTH: usize = 3;
+/// One crown in this many is pointed.
+const POINTED_ODDS: u32 = 3;
+const CROWN_GAP: RangeInclusive<usize> = 0..=3;
+const HALF_BLOCK: char = '▀';
+/// The order in which the cells of a 4 by 4 tile change colour, so each
+/// share of the tile is spread across it.
+const BAYER: [[usize; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
 #[derive(Debug, Clone, Copy)]
 struct Bird {
     x: f32,
@@ -52,6 +68,11 @@ pub struct Murmuration {
     /// The pane in dots.
     width: usize,
     height: usize,
+    /// The dots above the trees, where the flock flies.
+    sky: usize,
+    tree_rows: usize,
+    /// The height of the trees in each cell column, in half-block pixels.
+    trees: Vec<usize>,
     birds: Vec<Bird>,
 }
 
@@ -62,6 +83,9 @@ impl Murmuration {
             palette,
             width: 0,
             height: 0,
+            sky: 0,
+            tree_rows: 0,
+            trees: Vec::new(),
             birds: Vec::new(),
         }
     }
@@ -74,11 +98,11 @@ impl Murmuration {
     fn spawn(&mut self) {
         self.birds.clear();
         let dots = self.width * self.height;
-        if dots == 0 {
+        if dots == 0 || self.sky == 0 {
             return;
         }
         let count = (dots / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
-        let (width, height) = (self.width as f32, self.height as f32);
+        let (width, height) = (self.width as f32, self.sky as f32);
         let centre = (width / 2.0, height / 2.0);
         let radius = (count as f32).sqrt() * SPAWN_SPREAD;
         let heading = self.rng.random_range(0.0..std::f32::consts::TAU);
@@ -100,7 +124,7 @@ impl Murmuration {
     /// nine buckets around it and not the whole flock.
     fn buckets(&self) -> (usize, Vec<Vec<usize>>) {
         let columns = (self.width as f32 / VISION).ceil() as usize;
-        let rows = (self.height as f32 / VISION).ceil() as usize;
+        let rows = (self.sky as f32 / VISION).ceil() as usize;
         let mut buckets = vec![Vec::new(); columns * rows];
         for (index, bird) in self.birds.iter().enumerate() {
             let column = ((bird.x / VISION) as usize).min(columns - 1);
@@ -144,7 +168,7 @@ impl Murmuration {
             push.1 +=
                 (heading.1 / seen - bird.vy) * ALIGNMENT + (middle.1 / seen - bird.y) * COHESION;
         }
-        let (width, height) = (self.width as f32, self.height as f32);
+        let (width, height) = (self.width as f32, self.sky as f32);
         if bird.x < EDGE_MARGIN {
             push.0 += EDGE_TURN;
         }
@@ -167,7 +191,7 @@ impl Murmuration {
             .iter()
             .map(|bird| self.steer(bird, columns, &buckets))
             .collect();
-        let (width, height) = (self.width as f32, self.height as f32);
+        let (width, height) = (self.width as f32, self.sky as f32);
         for (bird, push) in self.birds.iter_mut().zip(pushes) {
             let (mut vx, mut vy) = (bird.vx + push.0, bird.vy + push.1);
             let speed = vx.hypot(vy);
@@ -202,6 +226,62 @@ fn dot_bit(column: usize, row: usize) -> u32 {
     }
 }
 
+impl Murmuration {
+    /// A line of crowns over a ground one pixel high: mostly domes, and now
+    /// and then a narrow pointed one. No crown fills every tree row, so the
+    /// sky shows between the tallest trees.
+    fn grow_trees(&mut self, columns: usize) {
+        self.trees = vec![1; columns];
+        let tallest = self.tree_rows * 2;
+        if tallest < 3 {
+            return;
+        }
+        let mut x = self.rng.random_range(CROWN_GAP);
+        while x < columns {
+            let pointed = self.rng.random_range(0..POINTED_ODDS) == 0;
+            let width = if pointed {
+                POINTED_WIDTH
+            } else {
+                self.rng.random_range(DOME_WIDTH)
+            };
+            let top = self.rng.random_range(2..tallest);
+            for (offset, height) in self.trees.iter_mut().skip(x).take(width).enumerate() {
+                // Twice the distance from the middle, so an even width has
+                // a middle between two cells.
+                let off_middle = (2 * offset).abs_diff(width - 1);
+                let drop = if pointed {
+                    off_middle
+                } else {
+                    off_middle * off_middle / (2 * width)
+                };
+                *height = (*height).max(top.saturating_sub(drop).max(1));
+            }
+            x += width + self.rng.random_range(CROWN_GAP);
+        }
+    }
+
+    /// The sky in thirds of base, surface and overlay from the top. Two
+    /// thirds blend over the rows either side of their edge, a quarter,
+    /// a half and three quarters of the cells in the lower one, in an
+    /// ordered dither that reads as a gradient and not as a pattern.
+    fn sky_colour(&self, x: usize, row: usize, sky_rows: usize) -> Color {
+        let bands = [
+            self.palette.base,
+            self.palette.surface,
+            self.palette.overlay,
+        ];
+        let mut band = 0;
+        for edge in 1..bands.len() {
+            let start = edge * sky_rows / bands.len();
+            let quarters = (row + 2).saturating_sub(start).min(4);
+            if BAYER[row % 4][x % 4] < quarters * 4 {
+                band = edge;
+            }
+        }
+        bands[band]
+    }
+}
+
 impl Scene for Murmuration {
     fn tick(&mut self, area: Rect) {
         let width = usize::from(area.width) * CELL_WIDTH;
@@ -209,6 +289,10 @@ impl Scene for Murmuration {
         if (width, height) != (self.width, self.height) {
             self.width = width;
             self.height = height;
+            let rows = usize::from(area.height);
+            self.tree_rows = (rows / PANE_ROWS_PER_TREE_ROW).min(MOST_TREE_ROWS);
+            self.sky = (rows - self.tree_rows) * CELL_HEIGHT;
+            self.grow_trees(usize::from(area.width));
             self.spawn();
         }
         if !self.birds.is_empty() {
@@ -219,18 +303,19 @@ impl Scene for Murmuration {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let columns = usize::from(area.width);
         let rows = usize::from(area.height);
-        let mut cells = vec![0; columns * rows];
+        let sky_rows = rows.saturating_sub(self.tree_rows);
+        let mut cells = vec![0; columns * sky_rows];
         for bird in &self.birds {
             let (x, y) = (bird.x as usize, bird.y as usize);
             let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
-            if column < columns && row < rows {
+            if column < columns && row < sky_rows {
                 cells[row * columns + column] |= dot_bit(x % CELL_WIDTH, y % CELL_HEIGHT);
             }
         }
         for (index, &dots) in cells.iter().enumerate() {
-            let (x, y) = ((index % columns) as u16, (index / columns) as u16);
-            let cell = &mut buf[(area.x + x, area.y + y)];
-            cell.set_bg(self.palette.base);
+            let (column, row) = (index % columns, index / columns);
+            let cell = &mut buf[(area.x + column as u16, area.y + row as u16)];
+            cell.set_bg(self.sky_colour(column, row, sky_rows));
             if dots == 0 {
                 cell.set_char(' ');
                 continue;
@@ -242,6 +327,25 @@ impl Scene for Murmuration {
                 self.palette.subtle
             };
             cell.set_char(glyph).set_fg(colour);
+        }
+
+        let tallest = self.tree_rows * 2;
+        for row in sky_rows..rows {
+            for column in 0..columns {
+                let height = self.trees.get(column).copied().unwrap_or(0);
+                let pixel = |upper: usize| {
+                    if tallest - upper <= height {
+                        self.palette.muted
+                    } else {
+                        self.palette.overlay
+                    }
+                };
+                let upper = (row - sky_rows) * 2;
+                buf[(area.x + column as u16, area.y + row as u16)]
+                    .set_char(HALF_BLOCK)
+                    .set_fg(pixel(upper))
+                    .set_bg(pixel(upper + 1));
+            }
         }
     }
 }
