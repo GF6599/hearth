@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use hearth::scene::{Rng, Scene};
-use hearth::scenes::embers::{Embers, SETTLE_TICKS};
+use hearth::scenes::embers::{BURN_TICKS, Embers, SETTLE_TICKS};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -111,13 +111,14 @@ fn the_logs_rest_on_a_grate_over_hearth_stones() {
 
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it renders after one tick and again after forty.
-/// Then: some pixels change, and every pixel that changes is a glow
-/// colour (love, rose or gold) in both frames.
+/// Then: some pixels change. Every change is a glow that pulses, wood that
+/// starts to glow, or wood that burns away, and none is in the stones or
+/// the grate.
 ///
-/// Why it matters: the glow is what makes the fire live, and a stone, the
-/// grate or the wood that flickers reads as a fault.
+/// Why it matters: the glow is what makes the fire live, and wood that
+/// grows back, or a stone or the grate that flickers, reads as a fault.
 #[test]
-fn only_the_glow_changes_while_the_wood_holds_still() {
+fn only_the_glow_and_the_burn_change_the_picture() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
     let before = pixels(&render(&scene, AREA, AREA));
@@ -129,22 +130,121 @@ fn only_the_glow_changes_while_the_wood_holds_still() {
     let after = pixels(&render(&scene, AREA, AREA));
 
     // Then:
+    let palette = &theme::ROSE_PINE;
+    let grate = before.len() - 4;
     let mut changed = 0;
     for (y, (old, new)) in before.iter().zip(&after).enumerate() {
         for (x, (old, new)) in old.iter().zip(new).enumerate() {
-            if let (Some(old), Some(new)) = (old, new)
-                && old != new
-            {
-                changed += 1;
-                assert!(
-                    glow().contains(old) && glow().contains(new),
-                    "pixel ({x}, {y}) went from {old:?} to {new:?}"
-                );
+            let (Some(old), Some(new)) = (old, new) else {
+                continue;
+            };
+            if old == new {
+                continue;
             }
+            changed += 1;
+            assert!(y < grate, "the grate or a stone changed at ({x}, {y})");
+            let glows = glow().contains(new);
+            let burnt = *new == palette.base && !glow().contains(old);
+            assert!(
+                glows || burnt,
+                "pixel ({x}, {y}) went from {old:?} to {new:?}"
+            );
         }
     }
     assert!(changed > 0, "the glow held still");
 }
+
+/// Wood and glow pixels above the grate, from a render.
+fn wood_and_glow(buffer: &Buffer) -> (usize, usize) {
+    let palette = &theme::ROSE_PINE;
+    let wood = [palette.subtle, palette.muted, palette.overlay];
+    let shown = pixels(buffer);
+    let above_grate = &shown[..shown.len() - 4];
+    let count = |within: &[Color]| {
+        above_grate
+            .iter()
+            .flatten()
+            .filter(|pixel| pixel.is_some_and(|colour| within.contains(&colour)))
+            .count()
+    };
+    (count(&wood), count(&glow()))
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs for half the shortest burn.
+/// Then: there is less wood, and a larger share of what is left glows.
+///
+/// Why it matters: a log that burns for minutes and looks the same at the
+/// end as at the start is not burning.
+#[test]
+fn a_log_burns_shorter_and_glows_more() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let (wood_before, glow_before) = wood_and_glow(&render(&scene, AREA, AREA));
+
+    // When:
+    for _ in 0..*BURN_TICKS.start() / 2 {
+        scene.tick(AREA);
+    }
+
+    // Then:
+    let (wood_after, glow_after) = wood_and_glow(&render(&scene, AREA, AREA));
+    assert!(
+        wood_after < wood_before,
+        "wood {wood_before} to {wood_after}"
+    );
+    let share = |wood: usize, glow: usize| glow as f64 / (wood + glow) as f64;
+    assert!(
+        share(wood_after, glow_after) > share(wood_before, glow_before),
+        "glow {glow_before} of {wood_before} to {glow_after} of {wood_after}"
+    );
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs past the longest burn, sampling the wood every ten ticks.
+/// Then: the wood falls and later rises again by at least a log's worth,
+/// and some pixel glows in every sample.
+///
+/// Why it matters: a burnt log must give way to a new one, and the fire
+/// must never go out in between.
+#[test]
+fn a_burnt_log_gives_way_to_a_new_one_and_the_fire_never_goes_out() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let mut samples = Vec::new();
+
+    // When:
+    for tick in 0..*BURN_TICKS.end() + 600 {
+        scene.tick(AREA);
+        if tick % 10 == 0 {
+            samples.push(wood_and_glow(&render(&scene, AREA, AREA)));
+        }
+    }
+
+    // Then:
+    assert!(
+        samples.iter().all(|&(_, glow)| glow > 0),
+        "the fire went out: {samples:?}"
+    );
+    let low = samples
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, (wood, _))| *wood)
+        .map(|(at, _)| at)
+        .unwrap();
+    let rise = samples[low..]
+        .windows(2)
+        .map(|pair| pair[1].0.saturating_sub(pair[0].0))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        rise >= NEW_LOG_WOOD,
+        "no new log after the low point: {samples:?}"
+    );
+}
+
+/// Wood pixels that only a new log adds between two samples.
+const NEW_LOG_WOOD: usize = 40;
 
 /// Given: seeds 1 to 5.
 /// When: each draws twice from the same seed, and once per seed.
