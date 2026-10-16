@@ -44,6 +44,8 @@ pub struct Picker<'a> {
     /// it only as far as the selection needs, so it holds still while the
     /// selection moves inside it.
     pub top: usize,
+    /// The app's tick count, which moves the glow of the title.
+    pub tick: u32,
 }
 
 /// Where each part of the picker goes in one area.
@@ -254,7 +256,7 @@ impl Widget for Picker<'_> {
         } = self.layout(area);
         if let Some((mark, x, y)) = mark {
             let at = Rect::new(x, y, mark.width(), mark.height());
-            Paragraph::new(mark.lines(self.palette)).render(at.intersection(area), buf);
+            Paragraph::new(mark.lines(self.palette, self.tick)).render(at.intersection(area), buf);
         }
         if let Some(inner) = preview {
             let area = Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2);

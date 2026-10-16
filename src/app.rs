@@ -50,6 +50,7 @@ pub struct App {
     selected: usize,
     /// The first scene in the picker list on the last tick.
     picker_top: usize,
+    ticks: u32,
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
     fresh: bool,
@@ -92,6 +93,7 @@ impl App {
             mode: Mode::Running,
             selected: slot_of(kind),
             picker_top: 0,
+            ticks: 0,
             fresh: false,
             should_quit: false,
         }
@@ -169,6 +171,7 @@ impl App {
     /// The pane under the picker holds still, and the picker's preview
     /// runs in its place.
     pub fn tick(&mut self, area: Rect) {
+        self.ticks = self.ticks.wrapping_add(1);
         self.notice = self.notice.saturating_sub(1);
         let layout = self.panes.layout(area);
         let picking = self.is_picking().then(|| self.panes.focus());
@@ -207,6 +210,7 @@ impl App {
             entries: &entries,
             selected: self.selected,
             top: self.picker_top,
+            tick: self.ticks,
         })
     }
 

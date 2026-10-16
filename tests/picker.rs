@@ -40,6 +40,7 @@ fn render(selected: usize, width: u16, height: u16) -> Buffer {
                     entries: ENTRIES,
                     selected,
                     top: 0,
+                    tick: 0,
                 },
                 f.area(),
             );
