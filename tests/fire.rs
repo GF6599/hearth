@@ -100,7 +100,8 @@ fn the_ramp_climbs_through_the_seven_stops() {
     }
 }
 
-/// Given: the Rose Pine Dawn palette, where text is the darkest role.
+/// Given: each light palette, Rose Pine Dawn and Catppuccin Latte, where
+/// text is the darkest role.
 /// When: each heat from none to full is read at each pixel of a tile.
 /// Then: at every pixel the colours climb through base, overlay, muted,
 /// love, rose and gold, and end at gold.
@@ -109,24 +110,25 @@ fn the_ramp_climbs_through_the_seven_stops() {
 /// the flames, which reads as the coldest part and not the hottest.
 #[test]
 fn a_light_theme_ends_the_ramp_at_gold() {
-    let dawn = &theme::ROSE_PINE_DAWN;
-    let ramp = [
-        dawn.base,
-        dawn.overlay,
-        dawn.muted,
-        dawn.love,
-        dawn.rose,
-        dawn.gold,
-    ];
-    for (x, row) in tile() {
-        // When:
-        let mut shown: Vec<Color> = (0..=MAX_HEAT)
-            .map(|heat| fire::color(dawn, heat, x, row))
-            .collect();
-        shown.dedup();
+    for light in [&theme::ROSE_PINE_DAWN, &theme::CATPPUCCIN_LATTE] {
+        let ramp = [
+            light.base,
+            light.overlay,
+            light.muted,
+            light.love,
+            light.rose,
+            light.gold,
+        ];
+        for (x, row) in tile() {
+            // When:
+            let mut shown: Vec<Color> = (0..=MAX_HEAT)
+                .map(|heat| fire::color(light, heat, x, row))
+                .collect();
+            shown.dedup();
 
-        // Then:
-        assert_eq!(shown, ramp, "pixel ({x}, {row})");
+            // Then:
+            assert_eq!(shown, ramp, "pixel ({x}, {row})");
+        }
     }
 }
 

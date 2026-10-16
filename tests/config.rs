@@ -327,27 +327,44 @@ fn colours(palette: &Palette) -> [Color; 12] {
     ]
 }
 
-/// Given: a file that sets the theme to Rose Pine Dawn, which shares no
-/// colour with Rose Pine.
+/// Given: a file that sets each theme other than the default, by the name
+/// the file gives it.
 /// When: hearth starts the picker, and then each scene, and runs a while.
-/// Then: no cell draws in a Rose Pine colour, and no glyph and no
-/// background is left in the terminal's own colour.
+/// Then: no cell draws in a Rose Pine colour that the theme does not have,
+/// and no glyph and no background is left in the terminal's own colour.
 ///
 /// Why it matters: one surface that keeps the old colours, or the
 /// terminal's, draws dark on a light theme and reads as broken.
 #[test]
 fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
-    // Given:
-    let path = config_file("theme", Some("theme = \"rose-pine-dawn\"\n"));
-    let config = Config::load(&path).unwrap();
     let area = Rect::new(0, 0, 100, 30);
-    let main = colours(&theme::ROSE_PINE);
+    for name in [
+        "rose-pine-moon",
+        "rose-pine-dawn",
+        "catppuccin-mocha",
+        "catppuccin-latte",
+    ] {
+        // Given:
+        let text = format!("theme = \"{name}\"\n");
+        let path = config_file(&format!("theme-{name}"), Some(&text));
+        let config = Config::load(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let own = colours(theme::by_name(name).unwrap());
+        let foreign: Vec<Color> = colours(&theme::ROSE_PINE)
+            .into_iter()
+            .filter(|colour| !own.contains(colour))
+            .collect();
+        assert_theme_everywhere(&config, area, name, &foreign);
+    }
+}
 
+/// Starts the picker and each scene under `config`, and checks every cell
+/// of a frame against `foreign`, the colours the theme must not show.
+fn assert_theme_everywhere(config: &Config, area: Rect, name: &str, foreign: &[Color]) {
     let mut starts = vec![vec!["hearth"]];
     starts.extend(ALL.iter().map(|kind| vec!["hearth", kind.name()]));
     for args in starts {
         // When:
-        let mut app = app(&args, &config);
+        let mut app = app(&args, config);
         for _ in 0..40 {
             app.tick(area);
         }
@@ -357,9 +374,17 @@ fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
         // Then:
         for position in area.positions() {
             let cell = &buffer[position];
-            let at = format!("{args:?} at {position:?}");
-            assert!(!main.contains(&cell.fg), "Rose Pine fg {:?} {at}", cell.fg);
-            assert!(!main.contains(&cell.bg), "Rose Pine bg {:?} {at}", cell.bg);
+            let at = format!("{name} {args:?} at {position:?}");
+            assert!(
+                !foreign.contains(&cell.fg),
+                "Rose Pine fg {:?} {at}",
+                cell.fg
+            );
+            assert!(
+                !foreign.contains(&cell.bg),
+                "Rose Pine bg {:?} {at}",
+                cell.bg
+            );
             assert_ne!(cell.bg, Color::Reset, "terminal bg {at}");
             if !cell.symbol().trim().is_empty() {
                 assert_ne!(
