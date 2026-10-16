@@ -22,6 +22,9 @@ pub const HIGH_TIDE: f32 = 0.5;
 pub const SWASH: f32 = 0.12;
 /// The sixteenths of each tile of dry sand that are grains.
 pub const GRAINS: usize = 2;
+/// Ticks from the sea leaving a pixel of sand to the sand being dry, about
+/// half a minute.
+pub const DRY_TICKS: u32 = 500;
 
 /// Ticks from one wave to the next, about seven to ten seconds.
 const WAVE_TICKS: RangeInclusive<f32> = 110.0..=160.0;
@@ -46,6 +49,10 @@ const SET: usize = 7;
 /// The sixteenths of the pixels below the foam line that are foam too, so
 /// the edge froths and is not one hard line.
 const FROTH: usize = 6;
+/// The sixteenths of sand the sea has just left that are drawn muted. The
+/// share falls as the sand dries, so the wet band fades and does not end in
+/// a hard line.
+const WET: u32 = 8;
 
 #[derive(Debug)]
 pub struct Tide {
@@ -60,6 +67,11 @@ pub struct Tide {
     ripple_length: f32,
     ripple_phase: f32,
     strengths: [f32; SET],
+    /// The pane in pixels, two a cell across and two a cell down.
+    columns: usize,
+    rows: usize,
+    /// Ticks until each pixel of sand is dry, by row and then by column.
+    wetness: Vec<u32>,
 }
 
 impl Tide {
@@ -74,6 +86,19 @@ impl Tide {
             ripple_length: rng.random_range(RIPPLE_LENGTH),
             ripple_phase: rng.random_range(0.0..1.0),
             strengths: std::array::from_fn(|_| rng.random_range(WEAKEST..=1.0)),
+            columns: 0,
+            rows: 0,
+            wetness: Vec::new(),
+        }
+    }
+
+    /// Ticks until the sand at pixel (x, row) is dry, from the top left. A
+    /// pixel under the sea reads `DRY_TICKS`.
+    pub fn wetness(&self, x: usize, row: usize) -> u32 {
+        if x < self.columns && row < self.rows {
+            self.wetness[row * self.columns + x]
+        } else {
+            0
         }
     }
 
@@ -122,19 +147,34 @@ impl Tide {
     }
 
     /// The colours of one cell. A cell draws two colours, so where the sea
-    /// meets the sand its sea is all foam and its sand has no grains.
+    /// meets the sand its sea is all foam and its sand is bare, and sand
+    /// with any wet pixel shows no grains.
     fn colours(&self, pixels: [Pixel; 4], left: usize, top: usize) -> [Color; 4] {
         let shore = pixels.contains(&Pixel::Sand) && pixels.iter().any(|each| *each != Pixel::Sand);
+        let at = |quarter: usize| (left + quarter % 2, top + quarter / 2);
+        let wet = (0..4).any(|quarter| {
+            let (x, row) = at(quarter);
+            pixels[quarter] == Pixel::Sand && self.wetness(x, row) > 0
+        });
         std::array::from_fn(|quarter| {
-            let (x, row) = (left + quarter % 2, top + quarter / 2);
+            let (x, row) = at(quarter);
             match pixels[quarter] {
                 Pixel::Foam => self.palette.foam,
                 Pixel::Sea if shore => self.palette.foam,
                 Pixel::Sea => self.palette.pine,
-                Pixel::Sand if !shore && grain(x, row) => self.palette.gold,
+                Pixel::Sand if shore => self.palette.base,
+                Pixel::Sand if wet && self.damp(x, row) => self.palette.muted,
+                Pixel::Sand if !wet && grain(x, row) => self.palette.gold,
                 Pixel::Sand => self.palette.base,
             }
         })
+    }
+
+    /// Whether the sand pixel at (x, row) is drawn wet, by the share of
+    /// `WET` that its wetness still holds.
+    fn damp(&self, x: usize, row: usize) -> bool {
+        let sixteenths = (WET * self.wetness(x, row)).div_ceil(DRY_TICKS);
+        dither::lights(sixteenths as usize, x, row)
     }
 }
 
@@ -162,8 +202,26 @@ enum Pixel {
 }
 
 impl Scene for Tide {
-    fn tick(&mut self, _area: Rect) {
+    fn tick(&mut self, area: Rect) {
         self.time = self.time.wrapping_add(1);
+        let (columns, rows) = (usize::from(area.width) * 2, usize::from(area.height) * 2);
+        if (columns, rows) != (self.columns, self.rows) {
+            self.columns = columns;
+            self.rows = rows;
+            self.wetness = vec![0; columns * rows];
+        }
+        if columns == 0 || rows == 0 {
+            return;
+        }
+        let waterlines = self.waterlines(columns, rows);
+        for (index, wetness) in self.wetness.iter_mut().enumerate() {
+            let (x, row) = (index % columns, index / columns);
+            *wetness = if rows - row <= waterlines[x] {
+                DRY_TICKS
+            } else {
+                wetness.saturating_sub(1)
+            };
+        }
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
