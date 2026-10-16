@@ -9,6 +9,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
+use hearth::mark;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
@@ -277,7 +278,8 @@ fn a_save_through_a_symlink_keeps_the_link() {
 }
 
 /// Given: a file that sets fire to 2 and typing to 80.
-/// When: hearth starts with no scene and the picker renders.
+/// When: hearth starts with no scene and the picker renders in a terminal
+/// tall enough for every scene.
 /// Then: the fire row reads `fire 2×`, the typing row `typing 80 cps`, and
 /// the life row `life 1×`.
 ///
@@ -291,7 +293,8 @@ fn the_picker_shows_each_scene_at_its_saved_speed() {
     let app = app(&["hearth"], &config);
 
     // When:
-    let area = Rect::new(0, 0, 100, 30);
+    let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+    let area = Rect::new(0, 0, 100, tall);
     let mut buffer = Buffer::empty(area);
     app.render(area, &mut buffer);
     let rows: Vec<String> = (0..area.height)
