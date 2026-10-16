@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::scene::{Rng, Scene};
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 
 /// The flock holds one bird for this many dots of the pane, within the
 /// bounds of `FLOCK`.
@@ -260,16 +260,23 @@ impl Murmuration {
         }
     }
 
-    /// The sky in thirds of base, surface and overlay from the top. Two
-    /// thirds blend over the rows either side of their edge, a quarter,
-    /// a half and three quarters of the cells in the lower one, in an
-    /// ordered dither that reads as a gradient and not as a pattern.
-    fn sky_colour(&self, x: usize, row: usize, sky_rows: usize) -> Color {
-        let bands = [
+    /// Base, surface and overlay from the darkest to the lightest, so the
+    /// sky lightens low over the trees on a light theme too.
+    fn sky_bands(&self) -> [Color; 3] {
+        let mut bands = [
             self.palette.base,
             self.palette.surface,
             self.palette.overlay,
         ];
+        bands.sort_by_key(|band| theme::luma(*band));
+        bands
+    }
+
+    /// The sky in thirds of `bands` from the top. Two thirds blend over the
+    /// rows either side of their edge, a quarter, a half and three quarters
+    /// of the cells in the lower one, in an ordered dither that reads as a
+    /// gradient and not as a pattern.
+    fn sky_colour(bands: [Color; 3], x: usize, row: usize, sky_rows: usize) -> Color {
         let mut band = 0;
         for edge in 1..bands.len() {
             let start = edge * sky_rows / bands.len();
@@ -304,6 +311,7 @@ impl Scene for Murmuration {
         let columns = usize::from(area.width);
         let rows = usize::from(area.height);
         let sky_rows = rows.saturating_sub(self.tree_rows);
+        let bands = self.sky_bands();
         let mut cells = vec![0; columns * sky_rows];
         for bird in &self.birds {
             let (x, y) = (bird.x as usize, bird.y as usize);
@@ -315,7 +323,7 @@ impl Scene for Murmuration {
         for (index, &dots) in cells.iter().enumerate() {
             let (column, row) = (index % columns, index / columns);
             let cell = &mut buf[(area.x + column as u16, area.y + row as u16)];
-            cell.set_bg(self.sky_colour(column, row, sky_rows));
+            cell.set_bg(Self::sky_colour(bands, column, row, sky_rows));
             if dots == 0 {
                 cell.set_char(' ');
                 continue;
@@ -337,7 +345,7 @@ impl Scene for Murmuration {
                     if tallest - upper <= height {
                         self.palette.muted
                     } else {
-                        self.palette.overlay
+                        bands[2]
                     }
                 };
                 let upper = (row - sky_rows) * 2;

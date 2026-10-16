@@ -40,7 +40,7 @@ impl Palette {
 }
 
 /// Perceived brightness, with the weights of ITU-R BT.601.
-fn luma(colour: Color) -> u32 {
+pub fn luma(colour: Color) -> u32 {
     match colour {
         Color::Rgb(r, g, b) => 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b),
         _ => 0,
