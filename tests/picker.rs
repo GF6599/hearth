@@ -6,7 +6,7 @@ use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::mark;
-use hearth::picker::{Entry, Picker};
+use hearth::picker::{Entry, LEAST_SCENES_IN_VIEW, Picker};
 use hearth::scene::{ALL, Rate, SceneKind};
 use hearth::theme;
 use ratatui::Terminal;
@@ -38,6 +38,7 @@ fn render(selected: usize, width: u16, height: u16) -> Buffer {
                     palette: &theme::ROSE_PINE,
                     entries: ENTRIES,
                     selected,
+                    top: 0,
                 },
                 f.area(),
             );
@@ -214,7 +215,8 @@ fn the_app_lists_every_scene_with_its_summary() {
     let app = App::picker(7, Arc::new(Corpus::embedded()));
 
     // When:
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(100, tall)).unwrap();
     terminal
         .draw(|f| app.render(f.area(), f.buffer_mut()))
         .unwrap();
@@ -573,17 +575,45 @@ fn a_narrow_terminal_shows_the_braced_word() {
     assert_eq!(row_of(&buffer, mark::ART[0]), None);
 }
 
+/// The scenes in the list of an app frame, top first, each with whether
+/// its summary is on the row below. The pipes summary starts with the
+/// name pipes, so a row that is a whole summary is never a name row.
+fn in_view(buffer: &Buffer) -> Vec<(SceneKind, bool)> {
+    let end = pane_inner(buffer).map_or(buffer.area.width, |inner| inner.x - 1);
+    let rows: Vec<String> = (0..buffer.area.height)
+        .map(|y| {
+            (0..end)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .replace(['[', ']'], " ")
+                .trim_matches(|c| matches!(c, ' ' | '│'))
+                .to_string()
+        })
+        .collect();
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| !ALL.iter().any(|kind| kind.summary() == row.as_str()))
+        .filter_map(|(y, row)| {
+            let kind = SceneKind::from_name(row.split_whitespace().next()?)?;
+            let summary = rows.get(y + 1).is_some_and(|below| below == kind.summary());
+            Some((kind, summary))
+        })
+        .collect()
+}
+
 /// Given: terminal heights from 4 to 40 rows, 120 columns wide.
 /// When: the picker renders at each.
-/// Then: a height that shows the art or the word shows every summary too,
-/// some height shows the summaries with no mark, and at 30 rows the art
-/// shows.
+/// Then: a height that shows the art or the word shows at least
+/// `LEAST_SCENES_IN_VIEW` scenes, each with its summary, some height shows
+/// that many with no mark, and at 30 rows the art shows.
 ///
-/// Why it matters: the mark is the brand and the summaries help choose a
-/// scene, so a short terminal gives up the brand first.
+/// Why it matters: the mark is the brand and the list is where a scene is
+/// chosen, so the brand takes rows only while the list keeps a useful
+/// share of the scenes.
 #[test]
-fn a_short_terminal_gives_up_the_mark_before_a_summary() {
+fn a_short_terminal_gives_up_the_mark_before_the_summaries() {
     let app = App::picker(7, Arc::new(Corpus::embedded()));
+    let least = LEAST_SCENES_IN_VIEW.min(ALL.len());
     let mut summaries_alone = false;
     for height in 4..=40 {
         // Given, when:
@@ -592,12 +622,11 @@ fn a_short_terminal_gives_up_the_mark_before_a_summary() {
         // Then:
         let art = row_of(&buffer, mark::ART[0]).is_some();
         let word = row_of(&buffer, mark::WORD).is_some();
-        let summaries = ALL
-            .iter()
-            .all(|kind| row_of(&buffer, kind.summary()).is_some());
+        let shown = in_view(&buffer);
+        let summaries = shown.len() >= least && shown.iter().all(|(_, summary)| *summary);
         assert!(
             !(art || word) || summaries,
-            "a mark without summaries at {height}"
+            "a mark over {shown:?} at {height}"
         );
         summaries_alone |= summaries && !art && !word;
         if height == 30 {
@@ -608,6 +637,77 @@ fn a_short_terminal_gives_up_the_mark_before_a_summary() {
         summaries_alone,
         "no height shows the summaries with no mark"
     );
+}
+
+/// Given: the picker 120 columns wide, at a height that shows a share of
+/// the scenes with their summaries, and at one that shows names only.
+/// When: the mark moves down the list one scene at a time.
+/// Then: at each step the marked scene is in view, and so is the scene
+/// after it, and at the end the first scene is out of view.
+///
+/// Why it matters: a mark that moves past the bottom of the frame marks a
+/// scene the user cannot see, and Enter starts a scene by surprise.
+#[test]
+fn the_list_scrolls_to_keep_the_marked_scene_in_view() {
+    for height in [16, 8] {
+        // Given:
+        let area = Rect::new(0, 0, 120, height);
+        let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+        let shown = in_view(&app_frame(&app, area));
+        assert!(shown.len() < ALL.len(), "every scene fits at {height}");
+
+        for (index, kind) in ALL.iter().enumerate() {
+            // When:
+            let buffer = app_frame(&app, area);
+
+            // Then:
+            let shown: Vec<SceneKind> = in_view(&buffer).into_iter().map(|(k, _)| k).collect();
+            let marked = format!("[{}]", kind.name());
+            assert!(
+                row_of(&buffer, &marked).is_some(),
+                "{height}: {marked} in {shown:?}"
+            );
+            if let Some(next) = ALL.get(index + 1) {
+                assert!(shown.contains(next), "{height}: {next:?} in {shown:?}");
+            }
+            if index + 1 == ALL.len() {
+                assert!(!shown.contains(&ALL[0]), "{height}: {shown:?}");
+            }
+            app.select_next();
+            app.tick(area);
+        }
+    }
+}
+
+/// Given: the picker 120 by 16, scrolled to the last scene.
+/// When: the mark moves up one scene at a time.
+/// Then: the list holds still while the mark stays below the top scene
+/// in view, and scrolls one scene when the mark reaches it.
+///
+/// Why it matters: a list that scrolls on every key pins the mark to one
+/// row, and then the list moves while the mark appears to stand still.
+#[test]
+fn the_list_holds_still_while_the_mark_moves_inside_it() {
+    // Given:
+    let area = Rect::new(0, 0, 120, 16);
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    for _ in 1..ALL.len() {
+        app.select_next();
+        app.tick(area);
+    }
+    let at_end = in_view(&app_frame(&app, area));
+    let top = ALL.iter().position(|kind| *kind == at_end[0].0).unwrap();
+    assert!(top > 0, "the list did not scroll: {at_end:?}");
+
+    // When, then:
+    for selected in (top + 1..ALL.len() - 1).rev() {
+        app.select_previous();
+        app.tick(area);
+        assert_eq!(in_view(&app_frame(&app, area)), at_end, "at {selected}");
+    }
+    app.select_previous();
+    app.tick(area);
+    assert_eq!(in_view(&app_frame(&app, area))[0].0, ALL[top - 1]);
 }
 
 /// Given: the picker 60 and 120 columns wide, from 10 to 40 rows high.
