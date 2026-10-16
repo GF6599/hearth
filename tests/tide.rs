@@ -272,6 +272,68 @@ fn wet_sand_is_muted_and_dry_sand_is_gold() {
     assert!(muted_seen > 0, "no wet sand was ever drawn");
 }
 
+fn is_shell_or_pebble(colour: Color) -> bool {
+    colour == PALETTE.rose || colour == PALETTE.subtle
+}
+
+/// Shells and pebbles lie where the sea reaches, and the sea hides them.
+/// Given: the scene of three seeds, over one whole tide.
+/// When: each cell of the render is read every fifty ticks.
+/// Then: no cell shows a shell or a pebble beside the sea, none lies
+/// where the sea can never reach or never leaves, and the number on show
+/// changes as the tide comes and goes.
+///
+/// Why it matters: a shell drawn in the sea floats, one above the highest
+/// wave is never covered, and ones that never hide show no tide at all.
+#[test]
+fn shells_and_pebbles_show_where_the_sea_has_gone() {
+    let rows = usize::from(AREA.height) * 2;
+    let lowest = rows - (LOW_TIDE * rows as f32).floor() as usize;
+    let highest = rows - ((HIGH_TIDE + SWASH) * rows as f32).ceil() as usize - 1;
+    for seed in [1, 7, 42] {
+        let mut scene = ticked(seed, AREA, 1);
+        let mut shown = Vec::new();
+        for tick in 0..TIDE_TICKS {
+            scene.tick(AREA);
+            if tick % 50 != 0 {
+                continue;
+            }
+
+            // When:
+            let grid = pixels(&render(&scene, AREA, AREA), AREA);
+
+            // Then:
+            let mut count = 0;
+            for top in (0..rows).step_by(2) {
+                for left in (0..grid[0].len()).step_by(2) {
+                    let cell = [
+                        grid[top][left],
+                        grid[top][left + 1],
+                        grid[top + 1][left],
+                        grid[top + 1][left + 1],
+                    ];
+                    if !cell.iter().any(|each| is_shell_or_pebble(*each)) {
+                        continue;
+                    }
+                    count += 1;
+                    assert!(
+                        !cell.iter().any(|each| is_sea(*each)),
+                        "seed {seed}, tick {tick}: a shell beside the sea at ({left}, {top})"
+                    );
+                    assert!(
+                        (highest..lowest).contains(&top),
+                        "seed {seed}, tick {tick}: a shell out of the sea's reach at ({left}, {top})"
+                    );
+                }
+            }
+            shown.push(count);
+        }
+        let (fewest, most) = (shown.iter().min().unwrap(), shown.iter().max().unwrap());
+        assert!(most > fewest, "seed {seed}: always {most} on show");
+        assert!(*most > 0, "seed {seed}: no shell ever shows");
+    }
+}
+
 /// Given: a scene that ticked on a hundred by thirty area.
 /// When: it ticks and renders on a twenty by six area inside a larger
 /// canvas, then on one cell, then on a row of no height, then on none.
