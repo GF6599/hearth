@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::f32::consts::{PI, TAU};
 use std::ops::RangeInclusive;
 
@@ -87,7 +88,7 @@ fn quadrant(pixels: [Color; 4], base: Color) -> (char, Color, Color) {
             None => counts.push((colour, 1)),
         }
     }
-    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    counts.sort_by_key(|(_, count)| Reverse(*count));
     let first = counts.first().map_or(base, |(colour, _)| *colour);
     let Some(&(second, _)) = counts.get(1) else {
         return (QUADRANTS[0], first, first);
