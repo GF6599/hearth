@@ -710,6 +710,83 @@ fn the_list_holds_still_while_the_mark_moves_inside_it() {
     assert_eq!(in_view(&app_frame(&app, area))[0].0, ALL[top - 1]);
 }
 
+/// The right rule of the list frame between its corners: the rows inside
+/// the frame, and the rows of them that do not show the plain rule.
+fn right_rule(buffer: &Buffer) -> (Vec<u16>, Vec<u16>) {
+    let (left, top) = list_corner(buffer);
+    let right = (left + 1..buffer.area.width)
+        .find(|&x| buffer[(x, top)].symbol() == "┐")
+        .expect("no top-right corner");
+    let bottom = (top + 1..buffer.area.height)
+        .find(|&y| buffer[(right, y)].symbol() == "┘")
+        .expect("no bottom-right corner");
+    let inside: Vec<u16> = (top + 1..bottom).collect();
+    let thumb = inside
+        .iter()
+        .copied()
+        .filter(|&y| buffer[(right, y)].symbol() != "│")
+        .inspect(|&y| assert_eq!(buffer[(right, y)].fg, theme::ROSE_PINE.subtle, "row {y}"))
+        .collect();
+    (inside, thumb)
+}
+
+/// Given: the picker 120 by 16, which shows a share of the scenes.
+/// When: it renders with the first scene marked, and again with the mark
+/// moved to the last.
+/// Then: a thumb in subtle on the list's right rule, shorter than the
+/// rule, starts on the first row inside the frame, and at the end it stops
+/// on the last row.
+///
+/// Why it matters: a list cut at its frame looks like the whole list, so
+/// without the thumb nobody knows that more scenes are below.
+#[test]
+fn a_thumb_on_the_right_rule_shows_where_the_list_is() {
+    // Given:
+    let area = Rect::new(0, 0, 120, 16);
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+
+    // When:
+    let (inside, at_start) = right_rule(&app_frame(&app, area));
+    for _ in 1..ALL.len() {
+        app.select_next();
+        app.tick(area);
+    }
+    let (_, at_end) = right_rule(&app_frame(&app, area));
+
+    // Then:
+    for thumb in [&at_start, &at_end] {
+        assert!(
+            !thumb.is_empty() && thumb.len() < inside.len(),
+            "{thumb:?} in {inside:?}"
+        );
+        assert!(
+            thumb.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "{thumb:?}"
+        );
+    }
+    assert_eq!(at_start.first(), inside.first());
+    assert_eq!(at_end.last(), inside.last());
+}
+
+/// Given: the picker in a terminal tall enough for every scene.
+/// When: it renders.
+/// Then: the list's right rule is the plain rule from corner to corner.
+///
+/// Why it matters: a thumb that fills the whole rule says nothing, and it
+/// reads as a heavier border on one side.
+#[test]
+fn a_list_that_shows_every_scene_has_no_thumb() {
+    // Given:
+    let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+
+    // When:
+    let (_, thumb) = right_rule(&app_frame(&app, Rect::new(0, 0, 120, tall)));
+
+    // Then:
+    assert_eq!(thumb, Vec::<u16>::new());
+}
+
 /// Given: the picker 60 and 120 columns wide, from 10 to 40 rows high.
 /// When: it renders at each size.
 /// Then: the list frame's bottom-left corner is in the area, in the
