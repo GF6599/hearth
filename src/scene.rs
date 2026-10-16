@@ -14,6 +14,7 @@ use crate::scenes::embers::Embers;
 use crate::scenes::fire::Fire;
 use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
+use crate::scenes::murmuration::Murmuration;
 use crate::scenes::noise::Noise;
 use crate::scenes::pipes::Pipes;
 use crate::scenes::typing::{Speed, Typing};
@@ -112,6 +113,7 @@ pub enum SceneKind {
     Pipes,
     Bonsai,
     Aquarium,
+    Murmuration,
     Typing,
 }
 
@@ -125,6 +127,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Pipes,
     SceneKind::Bonsai,
     SceneKind::Aquarium,
+    SceneKind::Murmuration,
     SceneKind::Typing,
 ];
 
@@ -139,6 +142,7 @@ impl SceneKind {
             SceneKind::Pipes => "pipes",
             SceneKind::Bonsai => "bonsai",
             SceneKind::Aquarium => "aquarium",
+            SceneKind::Murmuration => "murmuration",
             SceneKind::Typing => "typing",
         }
     }
@@ -155,6 +159,7 @@ impl SceneKind {
             SceneKind::Pipes => "pipes that walk and turn in box runes",
             SceneKind::Bonsai => "a bonsai tree that grows from a pot",
             SceneKind::Aquarium => "fish, bubbles and swaying seaweed",
+            SceneKind::Murmuration => "a flock of starlings that folds at dusk",
             SceneKind::Typing => "functions typed from a git repository",
         }
     }
@@ -171,6 +176,7 @@ impl SceneKind {
             SceneKind::Pipes => Some("after pipes.sh by Matthew Simpson"),
             SceneKind::Bonsai => Some("after cbonsai by John Allbritten"),
             SceneKind::Aquarium => Some("after asciiquarium by Kirk Baucom"),
+            SceneKind::Murmuration => Some("after the boids of Craig Reynolds"),
             SceneKind::Typing => Some("after gittype by Yuji Ueki"),
         }
     }
@@ -196,6 +202,7 @@ impl SceneKind {
             SceneKind::Pipes => Box::new(Pipes::new(rng, palette)),
             SceneKind::Bonsai => Box::new(Bonsai::new(rng, palette)),
             SceneKind::Aquarium => Box::new(Aquarium::new(rng, palette)),
+            SceneKind::Murmuration => Box::new(Murmuration::new(rng, palette)),
             SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
         }
     }

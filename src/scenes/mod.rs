@@ -4,6 +4,7 @@ pub mod embers;
 pub mod fire;
 pub mod life;
 pub mod matrix;
+pub mod murmuration;
 pub mod noise;
 pub mod pipes;
 pub mod typing;
