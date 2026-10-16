@@ -124,8 +124,8 @@ impl Picker<'_> {
         self.body(area)
     }
 
-    /// Beside a pane the list starts on the pane's top row, so the two
-    /// frames read as one band, and the list takes its summaries from the
+    /// Beside a pane the list takes the pane's rows, so the two frames
+    /// read as one band, and the list takes its summaries from the
     /// band's height rather than the area's. Alone it sits in the middle.
     fn body(&self, area: Rect) -> Layout {
         let band = Rect::new(
@@ -139,6 +139,7 @@ impl Picker<'_> {
             let column = Rect::new(band.x, band.y, self.list_width(band), band.height);
             let list = Rect {
                 y: band.y,
+                height: band.height,
                 ..self.frame(column, summaries)
             };
             return Layout {
