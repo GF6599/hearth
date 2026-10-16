@@ -586,7 +586,7 @@ fn in_view(buffer: &Buffer) -> Vec<(SceneKind, bool)> {
                 .map(|x| buffer[(x, y)].symbol())
                 .collect::<String>()
                 .replace(['[', ']'], " ")
-                .trim_matches(|c| matches!(c, ' ' | '│'))
+                .trim_matches(|c| matches!(c, ' ' | '│' | '┃'))
                 .to_string()
         })
         .collect();

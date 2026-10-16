@@ -2,7 +2,10 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+    Widget,
+};
 
 use crate::mark::Mark;
 use crate::theme::{self, Palette};
@@ -14,6 +17,8 @@ const LEAST_PREVIEW_HEIGHT: u16 = 8;
 
 /// Columns between the list's frame and the pane, and outside each.
 const GAP: u16 = 2;
+
+const THUMB: &str = "┃";
 
 /// The list scrolls before it gives up rows, but the mark takes rows only
 /// while this many scenes stay in view with their summaries, and the
@@ -210,6 +215,31 @@ impl Picker<'_> {
             height,
         )
     }
+
+    /// A thumb on the right rule of the list, between its corners. The
+    /// rule itself is the track, so the frame keeps its look.
+    fn render_thumb(
+        &self,
+        frame: Rect,
+        inner: Rect,
+        first: usize,
+        visible: usize,
+        buf: &mut Buffer,
+    ) {
+        let rule = Rect::new(frame.right() - 1, inner.y, 1, inner.height);
+        // The state counts scroll places, not scenes, so the thumb meets
+        // the bottom of the rule when the last scene is in view.
+        let mut state = ScrollbarState::new(self.entries.len() - visible + 1)
+            .viewport_content_length(visible)
+            .position(first);
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(None)
+            .thumb_symbol(THUMB)
+            .thumb_style(Style::default().fg(self.palette.subtle))
+            .render(rule, buf, &mut state);
+    }
 }
 
 impl Widget for Picker<'_> {
@@ -257,14 +287,12 @@ impl Widget for Picker<'_> {
         let clip = |text: &str| text.chars().take(text_width).collect::<String>();
         let marker = Style::default().fg(self.palette.marker());
         let visible = rows_in(frame, summaries);
+        let first = self.scrolled(visible);
+        if visible < self.entries.len() && inner.height > 0 {
+            self.render_thumb(frame, inner, first, visible, buf);
+        }
         let mut rows = Vec::new();
-        for (index, entry) in self
-            .entries
-            .iter()
-            .enumerate()
-            .skip(self.scrolled(visible))
-            .take(visible)
-        {
+        for (index, entry) in self.entries.iter().enumerate().skip(first).take(visible) {
             let current = index == self.selected;
             let (open, close) = if current { ("[", "]") } else { (" ", " ") };
             let name_style = Style::default().fg(if current {
