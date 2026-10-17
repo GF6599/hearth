@@ -4,6 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 
+use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
@@ -304,6 +305,7 @@ pub struct Pane {
     pub kind: SceneKind,
     pub seed: u64,
     palette: &'static Palette,
+    background: Background,
     scene: Box<dyn Scene>,
     /// Quarter ticks owed and not yet run, carried from frame to frame.
     credit: u32,
@@ -323,6 +325,7 @@ impl Pane {
         kind: SceneKind,
         seed: u64,
         palette: &'static Palette,
+        background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
     ) -> Self {
@@ -330,7 +333,8 @@ impl Pane {
             kind,
             seed,
             palette,
-            scene: kind.build(seed, palette, corpus, speed),
+            background,
+            scene: kind.build(seed, palette, background, corpus, speed),
             credit: 0,
         }
     }
@@ -342,14 +346,23 @@ impl Pane {
         self.rebuild(corpus, speed);
     }
 
-    pub fn repaint(&mut self, palette: &'static Palette, corpus: &Arc<Corpus>, speed: Speed) {
+    pub fn repaint(
+        &mut self,
+        palette: &'static Palette,
+        background: Background,
+        corpus: &Arc<Corpus>,
+        speed: Speed,
+    ) {
         self.palette = palette;
+        self.background = background;
         self.rebuild(corpus, speed);
     }
 
     pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed) {
         self.credit = 0;
-        self.scene = self.kind.build(self.seed, self.palette, corpus, speed);
+        self.scene = self
+            .kind
+            .build(self.seed, self.palette, self.background, corpus, speed);
     }
 
     pub fn set_speed(&mut self, speed: Speed) {

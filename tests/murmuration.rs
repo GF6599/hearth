@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
 use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration};
@@ -267,6 +268,7 @@ fn murmuration_is_a_scene_by_name() {
     let mut scene = kind.build(
         7,
         &theme::ROSE_PINE,
+        Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
     );

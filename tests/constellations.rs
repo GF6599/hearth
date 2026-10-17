@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
 use hearth::scenes::constellations::{Constellations, NAMES};
@@ -459,7 +460,13 @@ fn a_frame_after_a_resize_and_before_a_tick_stays_inside() {
 fn constellations_is_a_scene_by_name() {
     // When:
     let kind = SceneKind::from_name("constellations").expect("constellations is listed");
-    let mut scene = kind.build(7, PALETTE, &Arc::new(Corpus::embedded()), Speed::DEFAULT);
+    let mut scene = kind.build(
+        7,
+        PALETTE,
+        Background::Theme,
+        &Arc::new(Corpus::embedded()),
+        Speed::DEFAULT,
+    );
     scene.tick(AREA);
 
     // Then:

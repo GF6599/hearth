@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
+use crate::config::Background;
 use crate::dither;
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
@@ -103,6 +104,7 @@ pub struct Murmuration {
     hawk: Option<Hawk>,
     /// Ticks until the next hawk.
     hawk_wait: u32,
+    background: Background,
 }
 
 impl Murmuration {
@@ -118,7 +120,15 @@ impl Murmuration {
             birds: Vec::new(),
             hawk: None,
             hawk_wait: 0,
+            background: Background::Theme,
         }
+    }
+
+    /// With the terminal's background the whole sky is the base, so it
+    /// clears with the rest of the background and leaves no band.
+    pub fn with_background(mut self, background: Background) -> Self {
+        self.background = background;
+        self
     }
 
     /// The centre of the hawk in dots, while it crosses the sky.
@@ -331,6 +341,9 @@ impl Murmuration {
     /// Base, surface and overlay from the darkest to the lightest, so the
     /// sky lightens low over the trees on a light theme too.
     fn sky_bands(&self) -> [Color; 3] {
+        if self.background == Background::Terminal {
+            return [self.palette.base; 3];
+        }
         let mut bands = [
             self.palette.base,
             self.palette.surface,

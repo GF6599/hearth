@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
 use hearth::scenes::tide::{DRY_TICKS, GRAINS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
@@ -372,7 +373,13 @@ fn a_smaller_area_draws_only_inside_it() {
 fn tide_is_a_scene_by_name() {
     // When:
     let kind = SceneKind::from_name("tide").expect("tide is listed");
-    let mut scene = kind.build(7, PALETTE, &Arc::new(Corpus::embedded()), Speed::DEFAULT);
+    let mut scene = kind.build(
+        7,
+        PALETTE,
+        Background::Theme,
+        &Arc::new(Corpus::embedded()),
+        Speed::DEFAULT,
+    );
     scene.tick(AREA);
 
     // Then:

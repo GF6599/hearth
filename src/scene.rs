@@ -7,6 +7,7 @@ use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scenes::aquarium::Aquarium;
 use crate::scenes::bonsai::Bonsai;
@@ -209,6 +210,7 @@ impl SceneKind {
         self,
         seed: u64,
         palette: &'static Palette,
+        background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
     ) -> Box<dyn Scene> {
@@ -222,7 +224,9 @@ impl SceneKind {
             SceneKind::Pipes => Box::new(Pipes::new(rng, palette)),
             SceneKind::Bonsai => Box::new(Bonsai::new(rng, palette)),
             SceneKind::Aquarium => Box::new(Aquarium::new(rng, palette)),
-            SceneKind::Murmuration => Box::new(Murmuration::new(rng, palette)),
+            SceneKind::Murmuration => {
+                Box::new(Murmuration::new(rng, palette).with_background(background))
+            }
             SceneKind::Ink => Box::new(Ink::new(rng, palette)),
             SceneKind::Tide => Box::new(Tide::new(rng, palette)),
             SceneKind::Constellations => Box::new(Constellations::new(rng, palette)),

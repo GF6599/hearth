@@ -81,6 +81,7 @@ impl App {
                 kind,
                 seed,
                 theme::THEMES[0].1,
+                Background::Theme,
                 &corpus,
                 Speed::DEFAULT,
             )),
@@ -126,6 +127,8 @@ impl App {
         self.background = config.background;
         if let Some(theme) = config.theme {
             self.theme = theme;
+        }
+        if config.theme.is_some() || self.background != Background::Theme {
             self.repaint();
         }
         match config.typing {
@@ -135,7 +138,10 @@ impl App {
     }
 
     fn palette(&self) -> &'static Palette {
-        theme::THEMES[self.theme].1
+        match self.background {
+            Background::Theme => theme::THEMES[self.theme].1,
+            Background::Terminal => &theme::FLAT_THEMES[self.theme],
+        }
     }
 
     /// Every pane starts its scene again in the theme's colours, because
@@ -143,7 +149,7 @@ impl App {
     fn repaint(&mut self) {
         let palette = self.palette();
         for pane in self.panes.iter_mut() {
-            pane.repaint(palette, &self.corpus, self.speed);
+            pane.repaint(palette, self.background, &self.corpus, self.speed);
         }
         if self.mode == Mode::Picking {
             self.build_preview();
@@ -248,12 +254,13 @@ impl App {
         }
     }
 
-    /// Gives every cell in the theme's base or surface the terminal's own
-    /// background. A block glyph drawn in one of them turns over, so the
-    /// other colour stays in front and the picture holds.
+    /// Gives every cell in the theme's base the terminal's own background.
+    /// The surface takes the base's colour in `FLAT_THEMES`, so it clears
+    /// too. A block glyph drawn in the base turns over, so the other colour
+    /// stays in front and the picture holds.
     fn clear_background(&self, area: Rect, buf: &mut Buffer) {
-        let palette = self.palette();
-        let clear = |colour: Color| colour == palette.base || colour == palette.surface;
+        let base = self.palette().base;
+        let clear = |colour: Color| colour == base;
         for position in area.positions() {
             let cell = &mut buf[position];
             let turned = clear(cell.fg)
@@ -363,6 +370,7 @@ impl App {
         self.preview = Some(kind.build(
             self.panes.focused().seed,
             self.palette(),
+            self.background,
             &self.corpus,
             self.speed,
         ));
@@ -387,7 +395,14 @@ impl App {
         let focused = self.panes.focused();
         let kind = focused.kind.next();
         let seed = focused.seed.wrapping_add(1);
-        let pane = Pane::new(kind, seed, self.palette(), &self.corpus, self.speed);
+        let pane = Pane::new(
+            kind,
+            seed,
+            self.palette(),
+            self.background,
+            &self.corpus,
+            self.speed,
+        );
         self.panes.split(split, pane);
         self.selected = slot_of(kind);
         self.fresh = true;

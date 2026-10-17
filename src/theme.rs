@@ -6,7 +6,7 @@ use ratatui::widgets::BorderType;
 
 /// Rose Pine's roles. Every surface takes its colours from one of these,
 /// so a theme is one value, and another family maps its colours onto them.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub base: Color,
     pub surface: Color,
@@ -280,6 +280,24 @@ pub const THEMES: [(&str, &Palette); 13] = [
     ("solarized-dark", &SOLARIZED_DARK),
     ("solarized-light", &SOLARIZED_LIGHT),
 ];
+
+/// Each theme of `THEMES` with its surface in its base colour, for the
+/// terminal's background. A panel then shows the terminal with the rest of
+/// the background, and a role that shares the surface's colour, as
+/// Solarized's overlay does, stays painted.
+pub static FLAT_THEMES: [Palette; THEMES.len()] = {
+    let mut flat = [ROSE_PINE; THEMES.len()];
+    let mut index = 0;
+    while index < THEMES.len() {
+        let palette = THEMES[index].1;
+        flat[index] = Palette {
+            surface: palette.base,
+            ..*palette
+        };
+        index += 1;
+    }
+    flat
+};
 
 /// The place of a theme in `THEMES`, which is the first theme for a
 /// bare start.
