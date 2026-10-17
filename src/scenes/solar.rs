@@ -40,17 +40,26 @@ const RING_TILT: f32 = 0.3;
 /// The Moon's orbit round Earth, as a half width in dots, and its period.
 const MOON_ACROSS: f32 = 4.4;
 const MOON_TICKS: f32 = 40.0;
+/// How far a trail reaches behind its planet, as a share of a turn.
+const TRAIL_TURN: f32 = 1.0 / 8.0;
+/// Dots along an orbit from one trail place to the next.
+const TRAIL_GAP: f32 = 1.0;
+/// The fraction of the golden ratio. Its multiples spread the trail's dither
+/// thresholds evenly with no pattern that the eye picks up.
+const GOLDEN: f32 = 0.618_034;
 
 /// What a cell shows when more than one thing falls in it, from the
 /// lowest. One braille cell holds one colour, so a cell shows the dots of
-/// its highest layer alone. A body on the far half of its orbit is behind
-/// the sun and one on the near half in front of it, and between two
-/// bodies the nearer wins.
+/// its highest layer alone. A body or a trail on the far half of its orbit
+/// is behind the sun and one on the near half in front of it, a body is
+/// over every trail on its side, and between two bodies the nearer wins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
     Orbit,
+    TrailBehind,
     Behind(i32),
     Sun,
+    TrailFront,
     Front(i32),
 }
 
@@ -87,13 +96,17 @@ impl Solar {
         let (centre, across) = self.frame();
         ORBITS
             .iter()
-            .zip(self.phases)
-            .map(|(share, phase)| {
-                let period = MERCURY_TICKS * (share / ORBITS[0]).powf(1.5);
-                let angle = phase + TAU * self.time as f32 / period;
-                place(centre, across * share, angle)
-            })
+            .zip(self.angles())
+            .map(|(share, angle)| place(centre, across * share, angle))
             .collect()
+    }
+
+    /// Where each planet is on its orbit, Mercury first, as an angle.
+    fn angles(&self) -> [f32; ORBITS.len()] {
+        std::array::from_fn(|index| {
+            let period = MERCURY_TICKS * (ORBITS[index] / ORBITS[0]).powf(1.5);
+            (self.phases[index] + TAU * self.time as f32 / period).rem_euclid(TAU)
+        })
     }
 
     /// The middle of the pane and the half width of the outermost orbit, in
@@ -195,6 +208,7 @@ impl Scene for Solar {
             }
         };
         let planets = self.planets();
+        let angles = self.angles();
         let colours = [
             self.palette.subtle,
             self.palette.text,
@@ -205,6 +219,28 @@ impl Scene for Solar {
             self.palette.pine,
             self.palette.iris,
         ];
+        for (index, (&share, &angle)) in ORBITS.iter().zip(&angles).enumerate() {
+            let reach = across * share;
+            let steps = ((TAU * reach / TRAIL_GAP) as i32).max(1);
+            let gap = TAU / steps as f32;
+            let newest = (angle / gap).floor() as i32;
+            for step in (newest - (TRAIL_TURN * steps as f32) as i32..=newest).rev() {
+                // Each place keeps its threshold as the planet moves on, so a
+                // lit dot stays lit until the fade passes its threshold.
+                let fade = (angle - step as f32 * gap) / (TAU * TRAIL_TURN);
+                let threshold = (step.rem_euclid(steps) as f32 * GOLDEN).fract();
+                if fade > 1.0 || threshold < fade {
+                    continue;
+                }
+                let (x, y) = place(centre, reach, step as f32 * gap);
+                let layer = if y > centre.1 {
+                    Layer::TrailFront
+                } else {
+                    Layer::TrailBehind
+                };
+                plot(x.round() as i32, y.round() as i32, layer, colours[index]);
+            }
+        }
         for (index, &body) in planets.iter().enumerate() {
             let layer = depth(body);
             for (x, y) in disc(body, RADII[index]) {
