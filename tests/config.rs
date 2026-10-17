@@ -7,7 +7,7 @@ use std::sync::Arc;
 use clap::Parser;
 use hearth::app::App;
 use hearth::cli::Cli;
-use hearth::config::Config;
+use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::mark;
 use hearth::scene::{ALL, SceneKind};
@@ -151,6 +151,55 @@ fn a_bad_value_names_the_file_and_the_key() {
         );
         assert!(error.contains(key), "{name}: {error}");
     }
+}
+
+/// The background is the theme's unless the file asks for the terminal's.
+/// Given: files with no background, with `background = "terminal"`, with
+/// `background = "theme"`, with `background = "glass"`, and with a key
+/// hearth does not know.
+/// When: each loads.
+/// Then: the first and the third give the theme's background and the
+/// second the terminal's. The fourth fails with a message that names the
+/// key and both values, and the last with one that lists `background`
+/// among the settings.
+///
+/// Why it matters: the terminal's background on by default would show a
+/// light theme over a dark terminal, and a wrong value that loads quietly
+/// is a setting the user saved for nothing.
+#[test]
+fn the_background_is_the_themes_unless_the_file_asks_for_the_terminals() {
+    for (name, text, expected) in [
+        ("background-none", "", Background::Theme),
+        (
+            "background-terminal",
+            "background = \"terminal\"\n",
+            Background::Terminal,
+        ),
+        (
+            "background-theme",
+            "background = \"theme\"\n",
+            Background::Theme,
+        ),
+    ] {
+        // Given:
+        let path = config_file(name, Some(text));
+
+        // When:
+        let config = Config::load(&path).unwrap();
+
+        // Then:
+        assert_eq!(config.background, expected, "{name}");
+    }
+
+    let path = config_file("background-glass", Some("background = \"glass\"\n"));
+    let error = Config::load(&path).unwrap_err();
+    for word in ["background", "theme", "terminal"] {
+        assert!(error.contains(word), "{error}");
+    }
+
+    let path = config_file("background-unknown", Some("backdrop = \"terminal\"\n"));
+    let error = Config::load(&path).unwrap_err();
+    assert!(error.contains("background"), "{error}");
 }
 
 /// Given: a file with a comment above the table, one above `fire`, one
