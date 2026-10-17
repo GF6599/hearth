@@ -35,6 +35,9 @@ Tab
 # solar
 Sleep 7s
 Tab
+# drive
+Sleep 7s
+Tab
 # matrix
 Sleep 4s
 Tab
