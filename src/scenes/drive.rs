@@ -304,7 +304,7 @@ impl Drive {
         for post in (first.ceil() as i64..=last.floor() as i64).rev() {
             let ahead = post as f64 * POST_GAP - self.travelled;
             let step = (road_rows as f64 / ahead).round() as usize;
-            let Some(Some((base, centre, half))) = stretches.get(step).copied() else {
+            let Some(Some((ground, centre, half))) = stretches.get(step).copied() else {
                 continue;
             };
             let near = step as f64 / road_rows as f64;
@@ -317,8 +317,8 @@ impl Drive {
             // end of a cell, so no cell holds a post, grass of one band and
             // grass of the other.
             let thick = thick.div_ceil(2) * 2;
-            let bottom = (base | 1).min(rows.len() - 1);
-            let top = base.saturating_sub(height - 1) & !1;
+            let bottom = (ground | 1).min(rows.len() - 1);
+            let top = ground.saturating_sub(height - 1) & !1;
             for side in [-1.0, 1.0] {
                 let middle = centre + side * half * POST.2;
                 let left = (middle - thick as f64 / 2.0).round() as i64 & !1;
@@ -355,21 +355,21 @@ impl Drive {
             let step = road_rows as f64 * near;
             // A car nearer than the bottom row stands on no stretch in
             // view. The road has not turned yet there, so it is centred.
-            let (base, centre, half) = if step.round() as usize <= road_rows {
+            let (ground, centre, half) = if step.round() as usize <= road_rows {
                 let Some(Some(stretch)) = stretches.get(step.round() as usize).copied() else {
                     continue;
                 };
                 stretch
             } else {
                 let rise = self.altitude(car) - eye;
-                let base = (horizon as f64 + step * (1.0 - rise)).round() as usize;
-                (base, across / 2.0, across * ROAD / 2.0 * near)
+                let ground = (horizon as f64 + step * (1.0 - rise)).round() as usize;
+                (ground, across / 2.0, across * ROAD / 2.0 * near)
             };
             let cells_across = (wide * near / 2.0).ceil().max(1.0) as usize;
             let cells_down = (tall * near / 2.0).ceil().max(1.0) as usize;
             let middle = centre - half * LANE;
             let left = ((middle - cells_across as f64) / 2.0).floor() as i64 * 2;
-            let top = (base | 1) as i64 + 1 - 2 * cells_down as i64;
+            let top = (ground | 1) as i64 + 1 - 2 * cells_down as i64;
             for down in 0..cells_down {
                 let line = CAR[((down as f64 + 0.5) * tall / cells_down as f64) as usize];
                 for over in 0..cells_across {
