@@ -18,10 +18,17 @@ Sleep 500ms
 Show
 
 Sleep 2s
-Down
-Sleep 600ms
 Enter
 
+# embers
+Sleep 6s
+Tab
+# ink
+Sleep 7s
+Tab
+# tide
+Sleep 6s
+Tab
 # matrix
 Sleep 4s
 Tab
@@ -38,6 +45,9 @@ Tab
 Sleep 7s
 Tab
 # aquarium
+Sleep 5s
+Tab
+# murmuration
 Sleep 5s
 Tab
 # typing
