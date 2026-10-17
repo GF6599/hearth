@@ -61,6 +61,19 @@ const HOLD_TICKS: u32 = 133;
 const FADE_TICKS: u32 = 40;
 const FIGURE_TICKS: u32 = DRAW_TICKS + HOLD_TICKS + FADE_TICKS;
 
+/// The longest trail of a shooting star behind its head, in dots.
+pub const TRAIL: usize = 10;
+/// Ticks from one shooting star to the next, about 18 to 45 seconds. A
+/// shooting star waits while a figure shows, and a figure waits while a
+/// shooting star flies, because one braille cell holds one colour.
+const METEOR_WAIT: RangeInclusive<u32> = 300..=750;
+/// How far a shooting star flies before it burns out, in dots.
+const METEOR_RUN: RangeInclusive<f32> = 40.0..=80.0;
+/// Dots a tick, so a shooting star crosses in about a second.
+const METEOR_SPEED: f32 = 4.0;
+/// Its angle below level, in radians, about 20 to 57 degrees.
+const METEOR_SLANT: RangeInclusive<f32> = 0.35..=1.0;
+
 #[derive(Debug)]
 struct Star {
     x: u16,
@@ -89,6 +102,35 @@ struct Figure {
 }
 
 #[derive(Debug)]
+struct Meteor {
+    /// Where it starts, in dots, and the dot it moves each unit of its run.
+    from: (f32, f32),
+    direction: (f32, f32),
+    run: f32,
+    flown: f32,
+}
+
+impl Meteor {
+    /// The dots from the end of its trail to its head, on one line. Both
+    /// ends lie on its run, which starts and ends inside the pane.
+    fn dots(&self) -> Vec<(i32, i32)> {
+        let at = |along: f32| {
+            (
+                (self.from.0 + self.direction.0 * along).round() as i32,
+                (self.from.1 + self.direction.1 * along).round() as i32,
+            )
+        };
+        let head = self.flown.min(self.run);
+        let tail = (self.flown - TRAIL as f32).max(0.0);
+        line(at(tail), at(head))
+    }
+
+    fn burnt_out(&self) -> bool {
+        self.flown - TRAIL as f32 > self.run
+    }
+}
+
+#[derive(Debug)]
 pub struct Constellations {
     rng: Rng,
     palette: &'static Palette,
@@ -99,6 +141,9 @@ pub struct Constellations {
     /// Ticks until the next figure joins.
     wait: u32,
     last_name: Option<&'static str>,
+    meteor: Option<Meteor>,
+    /// Ticks until the next shooting star.
+    meteor_wait: u32,
 }
 
 impl Constellations {
@@ -112,6 +157,8 @@ impl Constellations {
             figure: None,
             wait: 0,
             last_name: None,
+            meteor: None,
+            meteor_wait: 0,
         }
     }
 
@@ -246,6 +293,53 @@ impl Constellations {
         None
     }
 
+    fn meteor_tick(&mut self) {
+        if let Some(meteor) = &mut self.meteor {
+            meteor.flown += METEOR_SPEED;
+            if meteor.burnt_out() {
+                self.meteor = None;
+                self.meteor_wait = self.rng.random_range(METEOR_WAIT);
+            }
+        } else if self.meteor_wait > 0 {
+            self.meteor_wait -= 1;
+        } else if self.figure.is_none() {
+            self.meteor = self.launch();
+            if self.meteor.is_none() {
+                self.meteor_wait = self.rng.random_range(METEOR_WAIT);
+            }
+        }
+    }
+
+    /// A shooting star from a random dot in the upper two thirds, falling
+    /// to the left or the right, whose whole run lies inside the pane.
+    fn launch(&mut self) -> Option<Meteor> {
+        let width = f32::from(self.width) * CELL_WIDTH as f32;
+        let height = f32::from(self.height) * CELL_HEIGHT as f32;
+        if width < 1.0 || height < 1.0 {
+            return None;
+        }
+        for _ in 0..TRIES {
+            let from = (
+                self.rng.random_range(0.0..width),
+                self.rng.random_range(0.0..height * 2.0 / 3.0),
+            );
+            let slant = self.rng.random_range(METEOR_SLANT);
+            let across = if self.rng.random_bool(0.5) { 1.0 } else { -1.0 };
+            let direction = (across * slant.cos(), slant.sin());
+            let run = self.rng.random_range(METEOR_RUN);
+            let end = (from.0 + direction.0 * run, from.1 + direction.1 * run);
+            if (0.0..width - 0.5).contains(&end.0) && (0.0..height - 0.5).contains(&end.1) {
+                return Some(Meteor {
+                    from,
+                    direction,
+                    run,
+                    flown: 0.0,
+                });
+            }
+        }
+        None
+    }
+
     fn figure_tick(&mut self) {
         if let Some(figure) = &mut self.figure {
             figure.age += 1;
@@ -254,6 +348,9 @@ impl Constellations {
                 self.wait = self.rng.random_range(WAIT);
             }
         } else if self.wait == 0 {
+            if self.meteor.is_some() {
+                return;
+            }
             self.figure = self.join();
             match &self.figure {
                 Some(figure) => self.last_name = Some(figure.name),
@@ -350,6 +447,8 @@ impl Scene for Constellations {
             self.scatter();
             self.figure = None;
             self.wait = self.rng.random_range(FIRST_WAIT);
+            self.meteor = None;
+            self.meteor_wait = self.rng.random_range(METEOR_WAIT);
         }
         for star in &mut self.stars {
             star.twinkle = match star.twinkle {
@@ -368,6 +467,7 @@ impl Scene for Constellations {
             };
         }
         self.figure_tick();
+        self.meteor_tick();
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -376,9 +476,9 @@ impl Scene for Constellations {
         };
         let at = |x: i32, y: i32| Position::new(area.x + x as u16, area.y + y as u16);
 
-        if let Some(figure) = &self.figure {
+        let mut draw_dots = |dots: Vec<(i32, i32)>, colour: Color| {
             let mut cells = BTreeMap::new();
-            for (x, y) in figure.dots() {
+            for (x, y) in dots {
                 let (column, row) = (x / CELL_WIDTH as i32, y / CELL_HEIGHT as i32);
                 let bit = braille::dot(
                     (x % CELL_WIDTH as i32) as usize,
@@ -390,9 +490,15 @@ impl Scene for Constellations {
                 if inside(column, row) {
                     buf[at(column, row)]
                         .set_char(braille::glyph(dots))
-                        .set_fg(figure.colour);
+                        .set_fg(colour);
                 }
             }
+        };
+        if let Some(figure) = &self.figure {
+            draw_dots(figure.dots(), figure.colour);
+        }
+        if let Some(meteor) = &self.meteor {
+            draw_dots(meteor.dots(), self.palette.gold);
         }
 
         for star in &self.stars {
