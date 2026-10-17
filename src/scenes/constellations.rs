@@ -1,12 +1,31 @@
+use std::collections::{BTreeMap, HashSet};
 use std::ops::RangeInclusive;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
+use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
+use crate::dither;
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
+
+/// The names a figure takes, one at random.
+pub const NAMES: [&str; 12] = [
+    "the kettle",
+    "the lantern",
+    "the heron",
+    "the key",
+    "the ladder",
+    "the fox",
+    "the boat",
+    "the lamp",
+    "the anchor",
+    "the kite",
+    "the bell",
+    "the hearth",
+];
 
 /// A star in ASCII, so it is one cell wide on every terminal, from the
 /// dimmest to the brightest.
@@ -20,6 +39,27 @@ const BRIGHTNESS_WEIGHTS: [u32; 3] = [6, 3, 1];
 const TWINKLE_CHANCE: f64 = 1.0 / 400.0;
 /// How long a twinkle lasts, in ticks, about half a second.
 const TWINKLE_TICKS: RangeInclusive<u32> = 4..=12;
+
+/// Ticks before the first figure, about 2 to 6 seconds, so a new pane
+/// shows one soon.
+const FIRST_WAIT: RangeInclusive<u32> = 40..=100;
+/// Ticks from the end of one figure to the next, about 15 to 30 seconds.
+const WAIT: RangeInclusive<u32> = 250..=500;
+const FIGURE_STARS: RangeInclusive<usize> = 4..=6;
+/// The shortest and the longest line from one star of a figure to the
+/// next, in dots. A dot is about as wide as it is high. Without the
+/// shortest, the walk to the nearest star coils through a cluster and draws
+/// a scribble, and without the longest a figure crosses the sky.
+const HOP: RangeInclusive<f32> = 12.0..=32.0;
+/// The starts a figure tries before the scene waits for the next one, in a
+/// sky too sparse or too small for a figure and its name.
+const TRIES: usize = 20;
+/// Ticks for the line to draw itself, to hold, and to fade, about 2, 8 and
+/// 2 seconds.
+const DRAW_TICKS: u32 = 40;
+const HOLD_TICKS: u32 = 133;
+const FADE_TICKS: u32 = 40;
+const FIGURE_TICKS: u32 = DRAW_TICKS + HOLD_TICKS + FADE_TICKS;
 
 #[derive(Debug)]
 struct Star {
@@ -39,12 +79,26 @@ impl Star {
 }
 
 #[derive(Debug)]
+struct Figure {
+    /// The cells of its stars, in the order the line joins them.
+    stars: Vec<Position>,
+    name: &'static str,
+    name_at: Position,
+    colour: Color,
+    age: u32,
+}
+
+#[derive(Debug)]
 pub struct Constellations {
     rng: Rng,
     palette: &'static Palette,
     width: u16,
     height: u16,
     stars: Vec<Star>,
+    figure: Option<Figure>,
+    /// Ticks until the next figure joins.
+    wait: u32,
+    last_name: Option<&'static str>,
 }
 
 impl Constellations {
@@ -55,7 +109,18 @@ impl Constellations {
             width: 0,
             height: 0,
             stars: Vec::new(),
+            figure: None,
+            wait: 0,
+            last_name: None,
         }
+    }
+
+    /// The name and the star cells of the figure on show, from the top left
+    /// of the pane, so a test can hold a frame against it.
+    pub fn figure(&self) -> Option<(&'static str, Vec<Position>)> {
+        self.figure
+            .as_ref()
+            .map(|figure| (figure.name, figure.stars.clone()))
     }
 
     fn scatter(&mut self) {
@@ -87,6 +152,194 @@ impl Constellations {
             _ => self.palette.text,
         }
     }
+
+    /// A path from a random star through its nearest neighbours, and a
+    /// place for its name, or none when no start gives both.
+    fn join(&mut self) -> Option<Figure> {
+        if self.stars.len() < *FIGURE_STARS.start() {
+            return None;
+        }
+        for _ in 0..TRIES {
+            let length = self.rng.random_range(FIGURE_STARS);
+            let mut path = vec![self.rng.random_range(0..self.stars.len())];
+            while path.len() < length {
+                let last = &self.stars[path[path.len() - 1]];
+                let next = (0..self.stars.len())
+                    .filter(|index| !path.contains(index))
+                    .map(|index| (index, hop(last, &self.stars[index])))
+                    .filter(|(_, length)| HOP.contains(length))
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                match next {
+                    Some((index, _)) => path.push(index),
+                    None => break,
+                }
+            }
+            if path.len() < *FIGURE_STARS.start() {
+                continue;
+            }
+            let stars: Vec<Position> = path
+                .iter()
+                .map(|index| Position::new(self.stars[*index].x, self.stars[*index].y))
+                .collect();
+            let names: Vec<&'static str> = NAMES
+                .into_iter()
+                .filter(|name| Some(*name) != self.last_name)
+                .collect();
+            let name = names[self.rng.random_range(0..names.len())];
+            let Some(name_at) = self.name_place(&stars, name) else {
+                continue;
+            };
+            let colour = if self.rng.random_bool(0.5) {
+                self.palette.iris
+            } else {
+                self.palette.foam
+            };
+            return Some(Figure {
+                stars,
+                name,
+                name_at,
+                colour,
+                age: 0,
+            });
+        }
+        None
+    }
+
+    /// The first row just below or above the figure, then inside it, where
+    /// the name lies over the figure's columns, inside the pane, with no
+    /// star under it or beside it.
+    fn name_place(&self, figure: &[Position], name: &str) -> Option<Position> {
+        let width = i32::try_from(name.chars().count()).ok()?;
+        let top = i32::from(figure.iter().map(|star| star.y).min()?);
+        let bottom = i32::from(figure.iter().map(|star| star.y).max()?);
+        let left = i32::from(figure.iter().map(|star| star.x).min()?);
+        let right = i32::from(figure.iter().map(|star| star.x).max()?);
+        let taken: HashSet<(i32, i32)> = self
+            .stars
+            .iter()
+            .map(|star| (i32::from(star.x), i32::from(star.y)))
+            .collect();
+        let rows = [bottom + 1, top - 1, bottom + 2, top - 2]
+            .into_iter()
+            .chain((top..=bottom).rev());
+        let centred = (left + right + 1 - width) / 2;
+        let starts: Vec<i32> = (0..=width + right - left)
+            .flat_map(|shift| [centred - shift, centred + shift])
+            .filter(|start| *start <= right && start + width > left)
+            .collect();
+        for row in rows {
+            if row < 0 || row >= i32::from(self.height) {
+                continue;
+            }
+            for start in &starts {
+                if *start < 0 || start + width > i32::from(self.width) {
+                    continue;
+                }
+                if (start - 1..=start + width).all(|x| !taken.contains(&(x, row))) {
+                    return Some(Position::new(
+                        u16::try_from(*start).ok()?,
+                        u16::try_from(row).ok()?,
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    fn figure_tick(&mut self) {
+        if let Some(figure) = &mut self.figure {
+            figure.age += 1;
+            if figure.age >= FIGURE_TICKS {
+                self.figure = None;
+                self.wait = self.rng.random_range(WAIT);
+            }
+        } else if self.wait == 0 {
+            self.figure = self.join();
+            match &self.figure {
+                Some(figure) => self.last_name = Some(figure.name),
+                None => self.wait = self.rng.random_range(WAIT),
+            }
+        } else {
+            self.wait -= 1;
+        }
+    }
+}
+
+/// The length of a line between two stars, in dots.
+fn hop(from: &Star, to: &Star) -> f32 {
+    let across = (f32::from(to.x) - f32::from(from.x)) * CELL_WIDTH as f32;
+    let down = (f32::from(to.y) - f32::from(from.y)) * CELL_HEIGHT as f32;
+    across.hypot(down)
+}
+
+/// The dot in the middle of a star's cell.
+fn centre(star: Position) -> (i32, i32) {
+    (
+        i32::from(star.x) * CELL_WIDTH as i32 + 1,
+        i32::from(star.y) * CELL_HEIGHT as i32 + 2,
+    )
+}
+
+/// The dots of a line from one dot to another, in order, by Bresenham.
+fn line(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
+    let (across, down) = ((to.0 - from.0).abs(), -(to.1 - from.1).abs());
+    let (step_x, step_y) = ((to.0 - from.0).signum(), (to.1 - from.1).signum());
+    let (mut x, mut y, mut error) = (from.0, from.1, across + down);
+    let mut dots = vec![(x, y)];
+    while (x, y) != to {
+        let twice = 2 * error;
+        if twice >= down {
+            error += down;
+            x += step_x;
+        }
+        if twice <= across {
+            error += across;
+            y += step_y;
+        }
+        dots.push((x, y));
+    }
+    dots
+}
+
+impl Figure {
+    /// The dots the line shows at its age: a growing share of the path while
+    /// it draws, all of it while it holds, and a thinning dither while it
+    /// fades.
+    fn dots(&self) -> Vec<(i32, i32)> {
+        let segments: Vec<Vec<(i32, i32)>> = self
+            .stars
+            .windows(2)
+            .map(|pair| line(centre(pair[0]), centre(pair[1])))
+            .collect();
+        let total: usize = segments.iter().map(Vec::len).sum();
+        let drawn = if self.age < DRAW_TICKS {
+            total * (self.age as usize + 1) / DRAW_TICKS as usize
+        } else {
+            total
+        };
+        let left = FIGURE_TICKS.saturating_sub(self.age) as usize;
+        let sixteenths = if left < FADE_TICKS as usize {
+            (left * dither::SHADES).div_ceil(FADE_TICKS as usize)
+        } else {
+            dither::SHADES
+        };
+        segments
+            .into_iter()
+            .flatten()
+            .take(drawn)
+            .filter(|(x, y)| {
+                dither::lights(
+                    sixteenths,
+                    x.unsigned_abs() as usize,
+                    y.unsigned_abs() as usize,
+                )
+            })
+            .collect()
+    }
+
+    fn holding(&self) -> bool {
+        (DRAW_TICKS..DRAW_TICKS + HOLD_TICKS).contains(&self.age)
+    }
 }
 
 impl Scene for Constellations {
@@ -95,6 +348,8 @@ impl Scene for Constellations {
             self.width = area.width;
             self.height = area.height;
             self.scatter();
+            self.figure = None;
+            self.wait = self.rng.random_range(FIRST_WAIT);
         }
         for star in &mut self.stars {
             star.twinkle = match star.twinkle {
@@ -112,17 +367,57 @@ impl Scene for Constellations {
                 None => None,
             };
         }
+        self.figure_tick();
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        let inside = |x: i32, y: i32| {
+            (0..i32::from(area.width)).contains(&x) && (0..i32::from(area.height)).contains(&y)
+        };
+        let at = |x: i32, y: i32| Position::new(area.x + x as u16, area.y + y as u16);
+
+        if let Some(figure) = &self.figure {
+            let mut cells = BTreeMap::new();
+            for (x, y) in figure.dots() {
+                let (column, row) = (x / CELL_WIDTH as i32, y / CELL_HEIGHT as i32);
+                let bit = braille::dot(
+                    (x % CELL_WIDTH as i32) as usize,
+                    (y % CELL_HEIGHT as i32) as usize,
+                );
+                *cells.entry((column, row)).or_insert(0) |= bit;
+            }
+            for ((column, row), dots) in cells {
+                if inside(column, row) {
+                    buf[at(column, row)]
+                        .set_char(braille::glyph(dots))
+                        .set_fg(figure.colour);
+                }
+            }
+        }
+
         for star in &self.stars {
-            if star.x >= area.width || star.y >= area.height {
+            let (x, y) = (i32::from(star.x), i32::from(star.y));
+            if !inside(x, y) {
                 continue;
             }
             let brightness = star.shown();
-            buf[(area.x + star.x, area.y + star.y)]
+            buf[at(x, y)]
                 .set_char(GLYPHS[brightness])
                 .set_fg(self.role(brightness));
+        }
+
+        if let Some(figure) = &self.figure {
+            let colour = if figure.holding() {
+                self.palette.subtle
+            } else {
+                self.palette.muted
+            };
+            let (x, y) = (i32::from(figure.name_at.x), i32::from(figure.name_at.y));
+            for (offset, letter) in (0..).zip(figure.name.chars()) {
+                if inside(x + offset, y) {
+                    buf[at(x + offset, y)].set_char(letter).set_fg(colour);
+                }
+            }
         }
     }
 }
