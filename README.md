@@ -8,18 +8,18 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 
 | Scene | After | What it draws |
 |---|---|---|
-| `noise` | | Random glyphs over the whole terminal, a placeholder that proves the loop |
+| `embers` | | Logs on a grate over hearth stones glow at their ends and cracks and throw sparks that cool from gold to rose to grey as they rise. Each log burns down over a few minutes into coals, a new log drops onto the pile, and now and then a log settles with a burst |
+| `ink` | | Drops of ink in love, iris, foam, pine and rose fall into still water, seen from the side, in quadrant blocks. Each drop sinks and opens out, slow currents draw it into threads and curls that slide along the walls, and it thins by dither and fades over 20 to 40 seconds. A new drop falls every 5 to 12 seconds, never in the colour of the one before, and where two clouds meet they mix |
+| `tide` | | A beach seen from above, in quadrant blocks, with the sea along the bottom. Waves rush up the sand at a slant, stop at an uneven line of foam and drain away. The sand they leave is wet and dark and dries back over half a minute. Shells and pebbles lie where the sea reaches and hide when it returns, and over about four minutes the tide rises and falls |
 | `matrix` | [cmatrix](https://github.com/abishekvashok/cmatrix) by Chris Allegretta | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
 | `fire` | [the PSX Doom fire](https://fabiensanglard.net/doom_fire_psx/), via Fabien Sanglard | The doom fire, in half blocks: heat rises from a white-hot base through gold, rose, love and a grey smoke and dies into the background, in Rose Pine colours only, dithered where one meets the next |
-| `embers` | | Logs on a grate over hearth stones glow at their ends and cracks and throw sparks that cool from gold to rose to grey as they rise. Each log burns down over a few minutes into coals, a new log drops onto the pile, and now and then a log settles with a burst |
 | `life` | [John Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life) | Conway's game of life on a torus, newborn cells in rose and settled ones in iris, reseeded when the board goes still |
 | `pipes` | [pipes.sh](https://github.com/pipeseroni/pipes.sh) by Matthew Simpson | A few pipes in box-drawing runes walk and turn, wrap at the edges, and the screen clears once most of it is drawn |
 | `bonsai` | [cbonsai](https://gitlab.com/jallbrit/cbonsai) by John Allbritten | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
 | `aquarium` | [asciiquarium](https://robobunny.com/projects/asciiquarium/html/) by Kirk Baucom | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
 | `murmuration` | [the boids](https://www.red3d.com/cwr/boids/) of Craig Reynolds | A flock of starlings in braille dots folds, stretches, splits and joins in a dusk sky that lightens over a line of trees. The dense core of the flock is bright and its edges fade. Every 30 to 60 seconds a hawk crosses once, and the flock opens around it |
-| `ink` | | Drops of ink in love, iris, foam, pine and rose fall into still water, seen from the side, in quadrant blocks. Each drop sinks and opens out, slow currents draw it into threads and curls that slide along the walls, and it thins by dither and fades over 20 to 40 seconds. A new drop falls every 5 to 12 seconds, never in the colour of the one before, and where two clouds meet they mix |
-| `tide` | | A beach seen from above, in quadrant blocks, with the sea along the bottom. Waves rush up the sand at a slant, stop at an uneven line of foam and drain away. The sand they leave is wet and dark and dries back over half a minute. Shells and pebbles lie where the sea reaches and hide when it returns, and over about four minutes the tide rises and falls |
 | `typing` | [gittype](https://github.com/unhappychoice/gittype) by Yuji Ueki | Types one function at a time from a random file of a git repository, the way a person would, with a cursor and a pause at each line, at a speed you set, coloured by the grammar of each file's language, in a centred frame with line numbers, under a breadcrumb of the file's path and function and over a status line of the language, the cursor's line and column, and the speed, between a file tree open to the current file and a minimap of the whole file |
+| `noise` | | Random glyphs over the whole terminal, a placeholder that proves the loop |
 
 `hearth --help` lists every scene the build carries.
 
@@ -47,7 +47,7 @@ alias hth=hearth
 
 ```sh
 hearth              # open the picker
-hearth noise        # start one scene
+hearth tide         # start one scene
 hearth --seed 7     # replay the same frames
 ```
 
