@@ -91,8 +91,8 @@ fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; 4]>, String, Color, Col
 }
 
 /// With the terminal's background, hearth paints none of its own.
-/// Given: a file that asks for the terminal's background, on Rose Pine and
-/// on Dawn.
+/// Given: a file that asks for the terminal's background on Dawn, and a
+/// file that asks for it alone, on Rose Pine as the default theme.
 /// When: hearth starts the picker, and then each scene, and runs a while.
 /// Then: no cell has the theme's base or surface as its background, and no
 /// glyph draws in either.
@@ -103,10 +103,12 @@ fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; 4]>, String, Color, Col
 fn the_terminal_background_leaves_no_theme_background() {
     for name in THEMES {
         // Given:
-        let config = config(
-            name,
-            &format!("theme = \"{name}\"\nbackground = \"terminal\"\n"),
-        );
+        let text = if name == THEMES[0] {
+            "background = \"terminal\"\n".to_string()
+        } else {
+            format!("theme = \"{name}\"\nbackground = \"terminal\"\n")
+        };
+        let config = config(name, &text);
         let palette = palette(name);
         let theirs = [palette.base, palette.surface];
 
