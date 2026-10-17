@@ -20,6 +20,7 @@ A terminal screensaver. One app, several scenes, a picker to choose from, and on
 | `bonsai` | [cbonsai](https://gitlab.com/jallbrit/cbonsai) by John Allbritten | The cbonsai tree grows step by step from a pot, gold wood and leaves in pine and foam, then holds and a new one grows |
 | `aquarium` | [asciiquarium](https://robobunny.com/projects/asciiquarium/html/) by Kirk Baucom | Fish in three sizes swim at their own pace and depth, let out bubbles that rise to the waterline, over swaying seaweed |
 | `murmuration` | [the boids](https://www.red3d.com/cwr/boids/) of Craig Reynolds | A flock of starlings in braille dots folds, stretches, splits and joins in a dusk sky that lightens over a line of trees. The dense core of the flock is bright and its edges fade. Every 30 to 60 seconds a hawk crosses once, and the flock opens around it |
+| `hourglass` | [the Pomodoro Technique](https://en.wikipedia.org/wiki/Pomodoro_Technique) of Francesco Cirillo | An hourglass of two round bulbs in a rose frame keeps a Pomodoro cycle on the real clock: by default a work round of 25 minutes in gold sand, a break of 5 in foam, and a long break of 15 after the fourth round. The sand falls grain by grain through the neck and piles at its natural slope, and the top empties as the phase ends. Then the glass turns over and the next phase starts. Four marks beside the glass count the rounds. The cycle starts when the scene does |
 | `typing` | [gittype](https://github.com/unhappychoice/gittype) by Yuji Ueki | Types one function at a time from a random file of a git repository, the way a person would, with a cursor and a pause at each line, at a speed you set, coloured by the grammar of each file's language, in a centred frame with line numbers, under a breadcrumb of the file's path and function and over a status line of the language, the cursor's line and column, and the speed, between a file tree open to the current file and a minimap of the whole file |
 | `noise` | | Random glyphs over the whole terminal, a placeholder that proves the loop |
 
@@ -80,9 +81,12 @@ background = "terminal"   # theme or terminal. Absent: theme
 [speed]
 typing = 50     # keystrokes per second, from 1 to 1000
 fire = 1.5      # times the normal pace: 0.25, 0.5, 0.75, 1, 1.5, 2, 3 or 4
+
+[hourglass]
+work = 50       # minutes, from 1 to 180. Also break and long_break. Absent: 25, 5 and 15
 ```
 
-The theme colours every scene and the picker. `t` moves to the next theme, starts each scene again in its colours, and saves the theme to the file the way `+` and `-` save a speed. Dawn, Latte, Tokyo Night Day, Kanagawa Lotus, Alucard and Solarized Light are light themes, so their fire grows from the gold role and not from white. `background = "terminal"` leaves out the theme's base colour, its panels and the murmuration dusk, so the terminal's own background shows behind every scene and the picker, and a transparent or translucent terminal stays so. The other colours stay as the theme draws them, the grey of the fire's smoke included. A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
+The theme colours every scene and the picker. `t` moves to the next theme, starts each scene again in its colours, and saves the theme to the file the way `+` and `-` save a speed. Dawn, Latte, Tokyo Night Day, Kanagawa Lotus, Alucard and Solarized Light are light themes, so their fire grows from the gold role and not from white. `background = "terminal"` leaves out the theme's base colour, its panels and the murmuration dusk, so the terminal's own background shows behind every scene and the picker, and a transparent or translucent terminal stays so. The other colours stay as the theme draws them, the grey of the fire's smoke included. A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. The hourglass keeps real time, so `[speed]` has no key for it, and on the hourglass `+` and `-` show the phase and the time left and save nothing. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
 
 ### Picker
 
@@ -102,7 +106,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 |---|---|
 | `Tab` | Next scene |
 | `r` | Restart the scene with a new seed |
-| `+` / `-` | Run the scene on screen faster or slower |
+| `+` / `-` | Run the scene on screen faster or slower. On the hourglass, show the phase and the time left |
 | `Esc` | Back to the picker |
 | `v` / `s` | Split the pane side by side or stacked |
 | `x` | Close the pane |
