@@ -30,7 +30,7 @@ impl Lengths {
     };
     /// The range a length in the file can take, in whole minutes. Three
     /// hours is far past any useful round, so more is likely a slip.
-    pub const MINUTES: RangeInclusive<u64> = 1..=180;
+    const MINUTES: RangeInclusive<u64> = 1..=180;
 
     /// A length in whole minutes, or the reason it is refused.
     pub fn minutes(value: i64) -> Result<Duration, String> {
@@ -68,6 +68,7 @@ impl fmt::Display for Lengths {
         )
     }
 }
+
 /// Work rounds before the long break.
 const ROUNDS: u32 = 4;
 /// The share of a bulb that the sand fills. Under half, so the pile in the
