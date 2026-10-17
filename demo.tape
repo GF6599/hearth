@@ -32,6 +32,9 @@ Tab
 # constellations
 Sleep 8s
 Tab
+# solar
+Sleep 7s
+Tab
 # matrix
 Sleep 4s
 Tab
