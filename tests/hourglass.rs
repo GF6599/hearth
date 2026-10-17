@@ -264,3 +264,80 @@ fn hourglass_is_a_scene_by_name() {
     assert!(lit.iter().any(|(_, colour)| *colour == PALETTE.gold));
     assert!(lit.iter().any(|(_, colour)| *colour == PALETTE.muted));
 }
+
+/// The glass has round bulbs and stands in a frame.
+/// Given: a glass at a hundred by thirty.
+/// When: it renders.
+/// Then: the glass is narrowest on the middle row. Each bulb is widest on a
+/// row between its end and the neck, so it curves in at both ends. A rose
+/// plate lies across the rows above and below the glass, wider than the
+/// glass, and a rose post stands either side of every row of the glass.
+///
+/// Why it matters: two straight cones read as a diagram, not as an
+/// hourglass.
+#[test]
+fn the_glass_has_round_bulbs_in_a_frame() {
+    // Given:
+    let (mut scene, _) = hourglass(7);
+    scene.tick(AREA);
+
+    // When:
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let cells = |row: u16, colour: Color| -> Vec<u16> {
+        (0..AREA.width)
+            .filter(|&column| {
+                buffer[(column, row)].fg == colour && buffer[(column, row)].symbol() != " "
+            })
+            .collect()
+    };
+    let glass: Vec<(u16, u16, u16)> = (0..AREA.height)
+        .filter_map(|row| {
+            let walls = cells(row, PALETTE.muted);
+            Some((row, *walls.first()?, *walls.last()?))
+        })
+        .collect();
+    let (first, last) = (glass.first().unwrap().0, glass.last().unwrap().0);
+    let width = |row: u16| {
+        glass
+            .iter()
+            .find(|(at, _, _)| *at == row)
+            .map(|(_, left, right)| right - left)
+            .unwrap()
+    };
+    let neck = AREA.height / 2;
+    assert!(
+        glass.iter().all(|(row, _, _)| width(*row) >= width(neck)),
+        "the neck is not the narrowest row: {glass:?}"
+    );
+    for bulb in [first..neck, neck + 1..last + 1] {
+        let widest = bulb.clone().map(width).max().unwrap();
+        let ends = [bulb.start, bulb.end - 1];
+        for end in ends {
+            assert!(
+                width(end) < widest,
+                "row {end} is as wide as the bulb's widest row: {glass:?}"
+            );
+        }
+    }
+    let (outer_left, outer_right) = (
+        glass.iter().map(|(_, left, _)| *left).min().unwrap(),
+        glass.iter().map(|(_, _, right)| *right).max().unwrap(),
+    );
+    for plate in [first - 1, last + 1] {
+        let rose = cells(plate, PALETTE.rose);
+        assert!(
+            rose.first().is_some_and(|left| *left < outer_left)
+                && rose.last().is_some_and(|right| *right > outer_right),
+            "no plate across row {plate}"
+        );
+    }
+    for (row, left, right) in &glass {
+        let rose = cells(*row, PALETTE.rose);
+        assert!(
+            rose.iter().any(|post| post < left) && rose.iter().any(|post| post > right),
+            "no post beside row {row}"
+        );
+    }
+}
