@@ -124,7 +124,7 @@ fn the_road_bends_with_the_track_both_ways() {
     let middle = f32::from(AREA.width);
     let (mut straight, mut left, mut right) = (0, 0, 0);
 
-    for tick in 0..RUN {
+    for tick in 0..RUN * 2 {
         // When:
         scene.tick(AREA);
         if tick % 10 != 0 {
@@ -167,49 +167,56 @@ fn the_road_bends_with_the_track_both_ways() {
 
 /// The stripes move toward the car.
 /// Given: the scene at a hundred by thirty.
-/// When: it ticks, and the colour at the road's centre is read on a far row
-/// and on a nearer row below it.
-/// Then: the nearer row repeats what the far row showed a few ticks before,
-/// and not the other way round.
+/// When: it ticks, and the rows where the colour at the road's centre
+/// changes, the ends of the stripes, are read in the lower half of the road
+/// in each frame.
+/// Then: three ends in four are at the same row or lower in the next frame,
+/// and on average an end moves down. Where two ends are as near, the
+/// nearer one is taken, which can pair an end with the one above it.
 ///
 /// Why it matters: stripes that run up the screen show the car reversing.
 #[test]
 fn the_stripes_move_toward_the_car() {
     // Given:
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
-    let height = usize::from(AREA.height) * 2;
-    let (far, near) = (height * 3 / 4, height * 3 / 4 + 3);
-    let mut series: Vec<(Color, Color)> = Vec::new();
+    let ends = |scene: &Drive| -> Vec<usize> {
+        let rows = pixels(&render(scene, AREA, AREA), AREA);
+        let road = road(&rows);
+        let lower = &road[road.len() / 2..];
+        let centre: Vec<(usize, Color)> = lower
+            .iter()
+            .map(|(y, left, right)| (*y, rows[*y][(left + right) / 2]))
+            .collect();
+        centre
+            .windows(2)
+            .filter(|pair| pair[0].1 != pair[1].1)
+            .map(|pair| pair[1].0)
+            .collect()
+    };
+    let bottom = usize::from(AREA.height) * 2 - 1;
+    scene.tick(AREA);
+    let mut before = ends(&scene);
+    let mut moves: Vec<isize> = Vec::new();
 
     // When:
     for _ in 0..400 {
         scene.tick(AREA);
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
-        let at = |y: usize| {
-            let (_, left, right) = road(&rows)
-                .into_iter()
-                .find(|(row, _, _)| *row == y)
-                .expect("road on the row");
-            rows[y][(left + right) / 2]
-        };
-        series.push((at(far), at(near)));
+        let after = ends(&scene);
+        for end in before.iter().filter(|end| bottom - **end > 3) {
+            if let Some(next) = after.iter().min_by_key(|next| next.abs_diff(*end)) {
+                moves.push(*next as isize - *end as isize);
+            }
+        }
+        before = after;
     }
 
     // Then:
-    let agreement = |lag: isize| {
-        (0..series.len())
-            .filter_map(|t| {
-                let later = usize::try_from(t as isize + lag).ok()?;
-                Some(series.get(later)?.1 == series[t].0)
-            })
-            .filter(|same| *same)
-            .count()
-    };
-    let ahead = (1..=8).map(agreement).max().unwrap();
-    let behind = (1..=8).map(|lag| agreement(-lag)).max().unwrap();
+    let down = moves.iter().filter(|step| **step >= 0).count();
+    let mean = moves.iter().sum::<isize>() as f32 / moves.len() as f32;
     assert!(
-        ahead > behind + 20,
-        "{ahead} the right way, {behind} the wrong way"
+        down * 4 >= moves.len() * 3 && mean > 0.3,
+        "{down} of {} ends at the same row or lower, {mean} rows on average",
+        moves.len()
     );
 }
 
