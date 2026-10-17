@@ -140,6 +140,16 @@ fn a_bad_value_names_the_file_and_the_key() {
         ("unknown", "[speed]\nfyre = 2\n", "speed.fyre"),
         ("scene", "scene = \"nope\"\n", "scene"),
         ("theme", "theme = \"nope\"\n", "theme"),
+        ("long-work", "[hourglass]\nwork = 181\n", "hourglass.work"),
+        ("no-break", "[hourglass]\nbreak = 0\n", "hourglass.break"),
+        (
+            "words",
+            "[hourglass]\nlong_break = \"x\"\n",
+            "hourglass.long_break",
+        ),
+        ("nap", "[hourglass]\nnap = 3\n", "hourglass.nap"),
+        ("flat", "hourglass = 5\n", "hourglass"),
+        ("rate", "[speed]\nhourglass = 2\n", "speed.hourglass"),
         ("broken", "[speed\n", ""),
     ];
     for (name, text, key) in cases {
@@ -531,4 +541,85 @@ fn a_failed_theme_save_shows_in_the_notice() {
     assert!(shown.contains(next), "{shown}");
     assert!(shown.contains("not saved"), "{shown}");
     assert_eq!(fs::read_to_string(&path).unwrap(), "[speed]\nfire = 2.0\n");
+}
+
+/// The picker shows the hourglass lengths from the file.
+/// Given: a file whose `[hourglass]` table sets work to 50 minutes and the
+/// break to 10, and a file with no table.
+/// When: hearth starts on the picker with each.
+/// Then: the hourglass row reads 50/10/15 min with the first, so the long
+/// break keeps its default, and 25/5/15 min with the second.
+///
+/// Why it matters: a length in the file that does not reach the hourglass
+/// is a preference the user saved for nothing.
+#[test]
+fn the_picker_shows_the_hourglass_lengths_from_the_file() {
+    for (name, text, expected) in [
+        (
+            "lengths",
+            "[hourglass]\nwork = 50\nbreak = 10\n",
+            "hourglass 50/10/15 min",
+        ),
+        ("no-lengths", "", "hourglass 25/5/15 min"),
+    ] {
+        // Given:
+        let path = config_file(name, Some(text));
+        let config = Config::load(&path).unwrap();
+        let app = app(&["hearth"], &config);
+
+        // When:
+        let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+        let area = Rect::new(0, 0, 100, tall);
+        let mut buffer = Buffer::empty(area);
+        app.render(area, &mut buffer);
+
+        // Then:
+        let rows: Vec<String> = (0..area.height)
+            .map(|y| {
+                let row: String = (0..area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect();
+                row.split_whitespace()
+                    .filter(|word| *word != "│")
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .replace(['[', ']'], "")
+            })
+            .collect();
+        assert!(
+            rows.iter().any(|row| row == expected),
+            "{expected}: {rows:#?}"
+        );
+    }
+}
+
+/// `+` and `-` on the hourglass show the time left and save nothing.
+/// Given: hearth on the hourglass, saving to a file that holds a comment.
+/// When: `+` is pressed, then `-`.
+/// Then: the notice each time reads the first work round with 25 minutes
+/// left, and the file is as it was.
+///
+/// Why it matters: the hourglass keeps real time, so a speed for it would
+/// mean nothing, and a save of one would put a key in the file that the
+/// next start refuses.
+#[test]
+fn plus_and_minus_on_the_hourglass_show_the_time_left() {
+    // Given:
+    let text = "# my settings\n";
+    let path = config_file("hourglass-keys", Some(text));
+    let config = Config::load(&path).unwrap();
+    let mut app = app(&["hearth", "hourglass"], &config).saving_to(path.clone());
+
+    for press in [App::faster, App::slower] {
+        // When:
+        press(&mut app);
+
+        // Then:
+        assert!(
+            header(&app).contains("work 1/4, 25:00 left"),
+            "{}",
+            header(&app)
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
 }

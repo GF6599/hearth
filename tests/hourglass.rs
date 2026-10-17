@@ -10,7 +10,7 @@ use hearth::clock::Clock;
 use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind, TICK_RATE};
-use hearth::scenes::hourglass::{BREAK, Hourglass, LONG_BREAK, WORK};
+use hearth::scenes::hourglass::{Hourglass, Lengths};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -20,17 +20,24 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
+const WORK: Duration = Lengths::DEFAULT.work;
+const BREAK: Duration = Lengths::DEFAULT.r#break;
+const LONG_BREAK: Duration = Lengths::DEFAULT.long_break;
 /// Ticks with the clock held still, enough for the last grain to fall the
 /// height of the glass and settle.
 const SETTLE: u32 = 300;
 
 /// A scene on a clock that the test moves by hand.
 fn hourglass(seed: u64) -> (Hourglass, Rc<Cell<Duration>>) {
+    hourglass_with(seed, Lengths::DEFAULT)
+}
+
+fn hourglass_with(seed: u64, lengths: Lengths) -> (Hourglass, Rc<Cell<Duration>>) {
     let now = Rc::new(Cell::new(Duration::ZERO));
     let hand = Rc::clone(&now);
     let clock = Clock::new(move || hand.get());
     (
-        Hourglass::new(Rng::seed_from_u64(seed), PALETTE, clock),
+        Hourglass::new(Rng::seed_from_u64(seed), PALETTE, clock, lengths),
         now,
     )
 }
@@ -464,4 +471,74 @@ fn the_long_break_drains_over_its_own_length() {
         (share - left).abs() < 0.02,
         "{share} of the sand in the top, {left} of the long break left"
     );
+}
+
+/// The lengths set how long each phase runs.
+/// Given: a glass whose work round lasts two minutes, its break one and its
+/// long break three.
+/// When: the clock runs three seconds past the end of the first round, and
+/// three seconds past the end of the first break.
+/// Then: the first time the sand is foam, and the second time it is gold
+/// again with one round marked.
+///
+/// Why it matters: lengths set in the file that the glass ignores are a
+/// setting the user saved for nothing.
+#[test]
+fn the_lengths_set_how_long_each_phase_runs() {
+    // Given:
+    let minute = Duration::from_secs(60);
+    let lengths = Lengths {
+        work: minute * 2,
+        r#break: minute,
+        long_break: minute * 3,
+    };
+    let (mut scene, now) = hourglass_with(7, lengths);
+    let past = Duration::from_secs(3);
+
+    for (at, colour, done) in [
+        (lengths.work + past, PALETTE.foam, 0),
+        (lengths.work + lengths.r#break + past, PALETTE.gold, 1),
+    ] {
+        // When:
+        run(&mut scene, &now, at, AREA);
+
+        // Then:
+        let buffer = render(&scene, AREA, AREA);
+        let (top, _) = sand_in(&buffer, AREA, colour);
+        assert!(
+            top > 100,
+            "the top is not full of sand in its colour at {at:?}"
+        );
+        assert_eq!(rounds_done(&buffer, AREA), done, "rounds done at {at:?}");
+    }
+}
+
+/// The time left names the phase, the round and the minutes and seconds.
+/// Given: a glass on the default lengths.
+/// When: the clock reads the start, a second into the first work round,
+/// halfway through the first break, and the start of the long break.
+/// Then: the time left reads "work 1/4, 25:00 left", "work 1/4, 24:59
+/// left", "break 1/4, 2:30 left" and "long break, 15:00 left".
+///
+/// Why it matters: `+` and `-` show this on the hourglass, and a count
+/// that rounds down shows a second less than is left.
+#[test]
+fn the_time_left_names_the_phase_and_the_round() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    let checks = [
+        (Duration::ZERO, "work 1/4, 25:00 left"),
+        (Duration::from_millis(1_000), "work 1/4, 24:59 left"),
+        (WORK + BREAK / 2, "break 1/4, 2:30 left"),
+        (WORK * 4 + BREAK * 3, "long break, 15:00 left"),
+    ];
+
+    for (at, expected) in checks {
+        // When:
+        run(&mut scene, &now, at, AREA);
+        scene.tick(AREA);
+
+        // Then:
+        assert_eq!(scene.time_left().as_deref(), Some(expected), "at {at:?}");
+    }
 }
