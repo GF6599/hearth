@@ -182,7 +182,7 @@ impl SceneKind {
             SceneKind::Ink => "drops of ink that open out in still water",
             SceneKind::Tide => "waves on a beach as the tide comes and goes",
             SceneKind::Constellations => "stars that join into named figures",
-            SceneKind::Solar => "the eight planets on their orbits round the sun",
+            SceneKind::Solar => "eight planets with trails round the sun",
             SceneKind::Typing => "functions typed from a git repository",
         }
     }
