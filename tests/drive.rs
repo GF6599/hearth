@@ -55,9 +55,9 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
 }
 
 /// The left and right ends of the road in each pixel row that has road, from
-/// the top: the first and last pixel that is not grass or sky.
+/// the top: the first and last pixel that is not grass, sky or a post.
 fn road(rows: &[Vec<Color>]) -> Vec<(usize, usize, usize)> {
-    let off_road = |colour: &Color| *colour == PALETTE.pine || *colour == PALETTE.base;
+    let off_road = |colour: &Color| [PALETTE.pine, PALETTE.base, PALETTE.muted].contains(colour);
     rows.iter()
         .enumerate()
         .filter(|(_, row)| row.contains(&PALETTE.overlay))
@@ -499,9 +499,12 @@ fn the_car_keeps_its_lane_and_leans_into_a_curve() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over the track.
 /// Then: posts, upright runs of muted pixels, stand in every frame on both
-/// sides of the road. On each side a post lower on the screen is no
-/// shorter and no nearer the road's middle than one above it, and the
-/// lowest post on the right moves in most sampled frames.
+/// sides of the road. On each side a post four rows or more lower on the
+/// screen is no shorter and no nearer the road's middle than one above it,
+/// and the lowest is taller and further out than the highest. The lowest
+/// post on the right moves in most sampled frames. Posts nearer than four
+/// rows are at about one distance, and whole pixels can order them either
+/// way.
 ///
 /// Why it matters: posts that do not grow and spread as they come near
 /// stop reading as passing by, and the speed goes with them.
@@ -555,12 +558,23 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
             for pair in side.windows(2) {
                 let ((upper, upper_height, upper_out), (lower, lower_height, lower_out)) =
                     (pair[0], pair[1]);
-                if lower > upper {
+                if lower >= upper + 4 {
                     assert!(
                         lower_height + 1 >= upper_height && lower_out + 1.0 >= upper_out,
                         "tick {tick}: a post at row {lower} is smaller or nearer the middle than one at row {upper}"
                     );
                 }
+            }
+        }
+        for side in &sides {
+            let (high, low) = (side[0], side[side.len() - 1]);
+            if low.0 >= high.0 + 8 {
+                assert!(
+                    low.1 > high.1 && low.2 > high.2 + 4.0,
+                    "tick {tick}: the post at row {} is no taller or no further out than the one at row {}",
+                    low.0,
+                    high.0
+                );
             }
         }
         let low = sides[1]

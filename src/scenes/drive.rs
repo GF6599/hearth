@@ -41,6 +41,32 @@ const HILL_WAVES: [f64; 2] = [0.06, 0.023];
 const STARS: usize = 120;
 /// The share of the pane's width the sky slides in a tick in a full curve.
 const SKY: f64 = 0.004;
+/// The track units from one post beside the road to the next.
+const POST_GAP: f64 = 2.0;
+/// A post's height as a share of the pane's height, its width as a share
+/// of the pane's width, and how far out it stands as a share of the road's
+/// half width, all on the bottom row and shrinking with distance.
+const POST: (f64, f64, f64) = (0.3, 0.01, 1.25);
+/// The pixels a post keeps clear of the road's edge. A far post nearer
+/// than this would stand on the edge, so it is left out, like a post lost
+/// in the dark.
+const CLEAR: f64 = 2.0;
+/// The car from behind, a pixel to a letter: body, window, tail light,
+/// plate and tyre. A dot is clear.
+const CAR: [&str; 9] = [
+    ".......BBBBBBBBBB.......",
+    "......BWWWWWWWWWWB......",
+    ".....BWWWWWWWWWWWWB.....",
+    "..BBBBBBBBBBBBBBBBBBBB..",
+    ".BBBBBBBBBBBBBBBBBBBBBB.",
+    "BLLLBBBBBBBBBBBBBBBBLLLB",
+    "BLLLBBBBBBPPPPBBBBBBLLLB",
+    "BBBBBBBBBBBBBBBBBBBBBBBB",
+    ".TTTT..............TTTT.",
+];
+/// Where the car's middle runs, as a share of the road's half width right
+/// of its middle.
+const LANE: f64 = 0.45;
 /// The moon's radius and the height of its middle, as shares of the pane's
 /// height. A pixel is half a cell across and half a cell down, so twice as
 /// tall as wide, and the moon spans twice its radius in pixels across.
@@ -199,6 +225,9 @@ impl Drive {
         let eye = self.altitude(self.travelled);
         let (mut shift, mut drift) = (0.0, 0.0);
         let mut drawn = down;
+        // The row, middle and half width of each stretch in view, by its
+        // step from the horizon, for the posts to stand on.
+        let mut stretches: Vec<Option<(usize, f64, f64)>> = vec![None; road_rows + 1];
         for step in (1..=road_rows).rev() {
             let near = step as f64 / road_rows as f64;
             let ahead = self.travelled + 1.0 / near;
@@ -213,6 +242,7 @@ impl Drive {
             }
             let centre = width / 2.0 + shift * width * BEND;
             let half = width * ROAD / 2.0 * near;
+            stretches[step] = Some((top, centre, half));
             let band = (ahead / STRIPE).floor() as i64 & 1 == 0;
             for row in &mut rows[top..drawn] {
                 for (x, pixel) in row.iter_mut().enumerate() {
@@ -237,7 +267,93 @@ impl Drive {
         if drawn % 2 == 1 && drawn < down {
             rows[drawn - 1] = rows[drawn].clone();
         }
+        self.draw_posts(&mut rows, &stretches);
+        self.draw_car(&mut rows);
         rows
+    }
+
+    /// The posts on both sides of the road, from far to near, so a nearer
+    /// post stands in front. A post on a stretch hidden behind a crest is
+    /// hidden with it.
+    fn draw_posts(&self, rows: &mut [Vec<Color>], stretches: &[Option<(usize, f64, f64)>]) {
+        let road_rows = stretches.len() - 1;
+        let (down, across) = (rows.len() as f64, rows.first().map_or(0, Vec::len) as f64);
+        let first = (self.travelled + 1.0) / POST_GAP;
+        let last = (self.travelled + road_rows as f64) / POST_GAP;
+        for post in (first.ceil() as i64..=last.floor() as i64).rev() {
+            let ahead = post as f64 * POST_GAP - self.travelled;
+            let step = (road_rows as f64 / ahead).round() as usize;
+            let Some(Some((base, centre, half))) = stretches.get(step).copied() else {
+                continue;
+            };
+            let near = step as f64 / road_rows as f64;
+            let height = (POST.0 * down * near).round().max(1.0) as usize;
+            let thick = (POST.1 * across * near).round().max(1.0) as usize;
+            if (POST.2 - 1.0) * half < thick as f64 / 2.0 + CLEAR {
+                continue;
+            }
+            // A post covers whole cells, from an even column and row to the
+            // end of a cell, so no cell holds a post, grass of one band and
+            // grass of the other.
+            let thick = thick.div_ceil(2) * 2;
+            let bottom = (base | 1).min(rows.len() - 1);
+            let top = base.saturating_sub(height - 1) & !1;
+            for side in [-1.0, 1.0] {
+                let middle = centre + side * half * POST.2;
+                let left = (middle - thick as f64 / 2.0).round() as i64 & !1;
+                for x in left..left + thick as i64 {
+                    let Ok(x) = usize::try_from(x) else {
+                        continue;
+                    };
+                    for row in &mut rows[top..=bottom] {
+                        if let Some(pixel) = row.get_mut(x) {
+                            *pixel = self.palette.muted;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The car at the bottom of the pane in the right lane. In a curve its
+    /// roof leans two pixels toward it and its upper body one.
+    fn draw_car(&self, rows: &mut [Vec<Color>]) {
+        let (down, across) = (rows.len(), rows.first().map_or(0, Vec::len));
+        let wide = CAR[0].len();
+        if down < CAR.len() || across < wide {
+            return;
+        }
+        let curve = self.curve(self.travelled + 2.0);
+        let lean = if curve > 0.25 {
+            1
+        } else if curve < -0.25 {
+            -1
+        } else {
+            0
+        };
+        let middle = across as f64 / 2.0 * (1.0 + ROAD * LANE);
+        let left = middle.round() as i64 - wide as i64 / 2;
+        for (line, pattern) in CAR.iter().enumerate() {
+            let shift = match line {
+                0..=2 => 2 * lean,
+                3..=4 => lean,
+                _ => 0,
+            };
+            let y = down - CAR.len() + line;
+            for (offset, letter) in pattern.chars().enumerate() {
+                let colour = match letter {
+                    'B' => self.palette.iris,
+                    'W' | 'T' => self.palette.base,
+                    'L' => self.palette.love,
+                    'P' => self.palette.text,
+                    _ => continue,
+                };
+                let x = left + offset as i64 + shift;
+                if let Some(pixel) = usize::try_from(x).ok().and_then(|x| rows[y].get_mut(x)) {
+                    *pixel = colour;
+                }
+            }
+        }
     }
 }
 
