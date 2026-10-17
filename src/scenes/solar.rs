@@ -20,22 +20,38 @@ const ORBITS: [f32; 8] = [0.2, 0.31, 0.43, 0.54, 0.66, 0.77, 0.89, 1.0];
 /// minute and a half.
 const MERCURY_TICKS: f32 = 133.0;
 /// The height of each orbit as a share of its width, for a view from above
-/// at a slant.
-const TILT: f32 = 0.5;
+/// at a slant. Low enough that Mercury passes in front of the sun and
+/// behind it.
+const TILT: f32 = 0.4;
 /// Dots between the outermost orbit and the edge of the pane.
 const MARGIN: f32 = 2.0;
-const SUN_RADIUS: f32 = 4.0;
+/// The sun's radius as a share of the outermost orbit's half width.
+const SUN_SHARE: f32 = 0.13;
 /// Dots along an orbit from one drawn dot to the next.
 const ORBIT_GAP: f32 = 3.0;
+/// Each planet's radius in dots, Mercury to Neptune, round a core of two by
+/// two dots: the rocky four small, the gas giants large.
+const RADII: [f32; 8] = [1.0, 1.3, 1.3, 1.0, 2.2, 1.8, 1.5, 1.5];
+const SATURN: usize = 5;
+const EARTH: usize = 2;
+/// Saturn's ring, as a half width in dots and a height as a share of it.
+const RING_ACROSS: f32 = 4.5;
+const RING_TILT: f32 = 0.3;
+/// The Moon's orbit round Earth, as a half width in dots, and its period.
+const MOON_ACROSS: f32 = 4.4;
+const MOON_TICKS: f32 = 40.0;
 
 /// What a cell shows when more than one thing falls in it, from the
 /// lowest. One braille cell holds one colour, so a cell shows the dots of
-/// its highest layer alone.
+/// its highest layer alone. A body on the far half of its orbit is behind
+/// the sun and one on the near half in front of it, and between two
+/// bodies the nearer wins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
     Orbit,
-    Planet,
+    Behind(i32),
     Sun,
+    Front(i32),
 }
 
 #[derive(Debug)]
@@ -57,6 +73,12 @@ impl Solar {
             time: 0,
             phases: std::array::from_fn(|_| rng.random_range(0.0..TAU)),
         }
+    }
+
+    /// Where the Moon is, in dots from the top left of the pane.
+    pub fn moon(&self) -> (f32, f32) {
+        let angle = TAU * self.time as f32 / MOON_TICKS;
+        place(self.planets()[EARTH], MOON_ACROSS, angle)
     }
 
     /// Each planet's middle, Mercury first, in dots from the top left of
@@ -94,6 +116,33 @@ fn place(centre: (f32, f32), across: f32, angle: f32) -> (f32, f32) {
         centre.0 + across * angle.cos(),
         centre.1 - across * TILT * angle.sin(),
     )
+}
+
+/// The dots of a body of `radius` round `middle`: a core of two by two dots
+/// round the middle, so the smallest body still shows, and every dot within
+/// the radius.
+fn disc(middle: (f32, f32), radius: f32) -> Vec<(i32, i32)> {
+    let (left, top) = (
+        (middle.0 - 0.5).floor() as i32,
+        (middle.1 - 0.5).floor() as i32,
+    );
+    let mut dots = vec![
+        (left, top),
+        (left + 1, top),
+        (left, top + 1),
+        (left + 1, top + 1),
+    ];
+    let reach = radius.ceil() as i32;
+    let (x, y) = (middle.0.round() as i32, middle.1.round() as i32);
+    for dot_y in y - reach..=y + reach {
+        for dot_x in x - reach..=x + reach {
+            let (dx, dy) = (dot_x as f32 - middle.0, dot_y as f32 - middle.1);
+            if dx * dx + dy * dy <= radius * radius {
+                dots.push((dot_x, dot_y));
+            }
+        }
+    }
+    dots
 }
 
 impl Scene for Solar {
@@ -137,21 +186,48 @@ impl Scene for Solar {
                 );
             }
         }
-        for (x, y) in self.planets() {
-            let (left, top) = ((x - 0.5).floor() as i32, (y - 0.5).floor() as i32);
-            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                plot(left + dx, top + dy, Layer::Planet, self.palette.text);
+        let depth = |place: (f32, f32)| {
+            let nearness = place.1.round() as i32;
+            if place.1 > centre.1 {
+                Layer::Front(nearness)
+            } else {
+                Layer::Behind(nearness)
             }
-        }
-        let reach = SUN_RADIUS.ceil() as i32;
-        let (middle_x, middle_y) = (centre.0.round() as i32, centre.1.round() as i32);
-        for y in middle_y - reach..=middle_y + reach {
-            for x in middle_x - reach..=middle_x + reach {
-                let (dx, dy) = (x as f32 - centre.0, y as f32 - centre.1);
-                if dx * dx + dy * dy <= SUN_RADIUS * SUN_RADIUS {
-                    plot(x, y, Layer::Sun, self.palette.gold);
+        };
+        let planets = self.planets();
+        let colours = [
+            self.palette.subtle,
+            self.palette.text,
+            self.palette.foam,
+            self.palette.love,
+            self.palette.rose,
+            self.palette.gold,
+            self.palette.pine,
+            self.palette.iris,
+        ];
+        for (index, &body) in planets.iter().enumerate() {
+            let layer = depth(body);
+            for (x, y) in disc(body, RADII[index]) {
+                plot(x, y, layer, colours[index]);
+            }
+            if index == SATURN {
+                let steps = 24;
+                for step in 0..steps {
+                    let angle = TAU * step as f32 / steps as f32;
+                    let (x, y) = (
+                        body.0 + RING_ACROSS * angle.cos(),
+                        body.1 - RING_ACROSS * RING_TILT * angle.sin(),
+                    );
+                    plot(x.round() as i32, y.round() as i32, layer, colours[index]);
                 }
             }
+        }
+        let moon = self.moon();
+        for (x, y) in disc(moon, 0.0) {
+            plot(x, y, depth(moon), self.palette.subtle);
+        }
+        for (x, y) in disc(centre, across * SUN_SHARE) {
+            plot(x, y, Layer::Sun, self.palette.gold);
         }
 
         for ((column, row), (_, dots, colour)) in cells {
