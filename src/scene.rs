@@ -15,7 +15,7 @@ use crate::scenes::bonsai::Bonsai;
 use crate::scenes::constellations::Constellations;
 use crate::scenes::embers::Embers;
 use crate::scenes::fire::Fire;
-use crate::scenes::hourglass::Hourglass;
+use crate::scenes::hourglass::{Hourglass, Lengths};
 use crate::scenes::ink::Ink;
 use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
@@ -108,6 +108,13 @@ pub trait Scene {
     /// Only the typing scene counts its speed in keystrokes per second. The
     /// others run at a `Rate` that `App` applies, so they ignore this.
     fn set_speed(&mut self, _speed: Speed) {}
+
+    /// What a scene that keeps real time has left to run, for `+` and `-`
+    /// to show. The rate means nothing to such a scene. The others have
+    /// none.
+    fn time_left(&self) -> Option<String> {
+        None
+    }
 }
 
 /// In the order of `ALL`, because `--help` lists the scenes in the order
@@ -226,6 +233,7 @@ impl SceneKind {
         background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
+        lengths: Lengths,
     ) -> Box<dyn Scene> {
         let rng = Rng::seed_from_u64(seed);
         match self {
@@ -244,7 +252,9 @@ impl SceneKind {
             SceneKind::Tide => Box::new(Tide::new(rng, palette)),
             SceneKind::Constellations => Box::new(Constellations::new(rng, palette)),
             SceneKind::Solar => Box::new(Solar::new(rng, palette)),
-            SceneKind::Hourglass => Box::new(Hourglass::new(rng, palette, Clock::monotonic())),
+            SceneKind::Hourglass => {
+                Box::new(Hourglass::new(rng, palette, Clock::monotonic(), lengths))
+            }
             SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
         }
     }

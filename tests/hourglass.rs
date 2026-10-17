@@ -251,6 +251,7 @@ fn hourglass_is_a_scene_by_name() {
         Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
+        Lengths::DEFAULT,
     );
     scene.tick(AREA);
 
@@ -479,7 +480,7 @@ fn the_long_break_drains_over_its_own_length() {
 /// When: the clock runs three seconds past the end of the first round, and
 /// three seconds past the end of the first break.
 /// Then: the first time the sand is foam, and the second time it is gold
-/// again with one round marked.
+/// again, with the first round marked both times.
 ///
 /// Why it matters: lengths set in the file that the glass ignores are a
 /// setting the user saved for nothing.
@@ -496,7 +497,7 @@ fn the_lengths_set_how_long_each_phase_runs() {
     let past = Duration::from_secs(3);
 
     for (at, colour, done) in [
-        (lengths.work + past, PALETTE.foam, 0),
+        (lengths.work + past, PALETTE.foam, 1),
         (lengths.work + lengths.r#break + past, PALETTE.gold, 1),
     ] {
         // When:
@@ -515,10 +516,11 @@ fn the_lengths_set_how_long_each_phase_runs() {
 
 /// The time left names the phase, the round and the minutes and seconds.
 /// Given: a glass on the default lengths.
-/// When: the clock reads the start, a second into the first work round,
-/// halfway through the first break, and the start of the long break.
-/// Then: the time left reads "work 1/4, 25:00 left", "work 1/4, 24:59
-/// left", "break 1/4, 2:30 left" and "long break, 15:00 left".
+/// When: the clock reads the start, half a second and a second and a half
+/// into the first work round, halfway through the first break, and the
+/// start of the long break.
+/// Then: the time left reads "work 1/4, 25:00 left" twice, "work 1/4,
+/// 24:59 left", "break 1/4, 2:30 left" and "long break, 15:00 left".
 ///
 /// Why it matters: `+` and `-` show this on the hourglass, and a count
 /// that rounds down shows a second less than is left.
@@ -528,7 +530,8 @@ fn the_time_left_names_the_phase_and_the_round() {
     let (mut scene, now) = hourglass(7);
     let checks = [
         (Duration::ZERO, "work 1/4, 25:00 left"),
-        (Duration::from_millis(1_000), "work 1/4, 24:59 left"),
+        (Duration::from_millis(500), "work 1/4, 25:00 left"),
+        (Duration::from_millis(1_500), "work 1/4, 24:59 left"),
         (WORK + BREAK / 2, "break 1/4, 2:30 left"),
         (WORK * 4 + BREAK * 3, "long break, 15:00 left"),
     ];

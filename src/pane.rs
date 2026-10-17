@@ -7,6 +7,7 @@ use ratatui::style::Style;
 use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind};
+use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
 
@@ -328,22 +329,23 @@ impl Pane {
         background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
+        lengths: Lengths,
     ) -> Self {
         Self {
             kind,
             seed,
             palette,
             background,
-            scene: kind.build(seed, palette, background, corpus, speed),
+            scene: kind.build(seed, palette, background, corpus, speed, lengths),
             credit: 0,
         }
     }
 
     /// Rebuilds the scene from the next seed in the chain, so a run with
     /// `--seed` replays the same sequence of restarts.
-    pub fn restart(&mut self, corpus: &Arc<Corpus>, speed: Speed) {
+    pub fn restart(&mut self, corpus: &Arc<Corpus>, speed: Speed, lengths: Lengths) {
         self.seed = self.seed.wrapping_add(1);
-        self.rebuild(corpus, speed);
+        self.rebuild(corpus, speed, lengths);
     }
 
     pub fn repaint(
@@ -352,17 +354,27 @@ impl Pane {
         background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
+        lengths: Lengths,
     ) {
         self.palette = palette;
         self.background = background;
-        self.rebuild(corpus, speed);
+        self.rebuild(corpus, speed, lengths);
     }
 
-    pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed) {
+    pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed, lengths: Lengths) {
         self.credit = 0;
-        self.scene = self
-            .kind
-            .build(self.seed, self.palette, self.background, corpus, speed);
+        self.scene = self.kind.build(
+            self.seed,
+            self.palette,
+            self.background,
+            corpus,
+            speed,
+            lengths,
+        );
+    }
+
+    pub fn time_left(&self) -> Option<String> {
+        self.scene.time_left()
     }
 
     pub fn set_speed(&mut self, speed: Speed) {

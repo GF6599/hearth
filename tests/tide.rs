@@ -5,6 +5,7 @@ use std::sync::Arc;
 use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
+use hearth::scenes::hourglass::Lengths;
 use hearth::scenes::tide::{DRY_TICKS, GRAINS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
@@ -379,6 +380,7 @@ fn tide_is_a_scene_by_name() {
         Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
+        Lengths::DEFAULT,
     );
     scene.tick(AREA);
 

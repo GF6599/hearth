@@ -12,6 +12,7 @@ use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::quadrant;
 use crate::scene::{ALL, Rate, Scene, SceneKind};
+use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
 use toml_edit::Value;
@@ -32,6 +33,8 @@ pub struct App {
     panes: Panes,
     corpus: Arc<Corpus>,
     speed: Speed,
+    /// The hourglass phase lengths, from the file or the defaults.
+    lengths: Lengths,
     /// One for each scene in `ALL`, so each keeps its own through a
     /// restart, Tab and the picker.
     rates: [Rate; ALL.len()],
@@ -84,9 +87,11 @@ impl App {
                 Background::Theme,
                 &corpus,
                 Speed::DEFAULT,
+                Lengths::DEFAULT,
             )),
             corpus,
             speed: Speed::DEFAULT,
+            lengths: Lengths::DEFAULT,
             rates: [Rate::NORMAL; ALL.len()],
             notice: 0,
             notice_text: String::new(),
@@ -111,7 +116,9 @@ impl App {
 
     fn with_speed(mut self, speed: Speed) -> Self {
         self.speed = speed;
-        self.panes.focused_mut().rebuild(&self.corpus, speed);
+        self.panes
+            .focused_mut()
+            .rebuild(&self.corpus, speed, self.lengths);
         if self.mode == Mode::Picking {
             self.build_preview();
         }
@@ -131,6 +138,15 @@ impl App {
         if config.theme.is_some() || self.background != Background::Theme {
             self.repaint();
         }
+        if config.hourglass != self.lengths {
+            self.lengths = config.hourglass;
+            self.panes
+                .focused_mut()
+                .rebuild(&self.corpus, self.speed, self.lengths);
+            if self.mode == Mode::Picking {
+                self.build_preview();
+            }
+        }
         match config.typing {
             Some(speed) => self.with_speed(speed),
             None => self,
@@ -149,7 +165,13 @@ impl App {
     fn repaint(&mut self) {
         let palette = self.palette();
         for pane in self.panes.iter_mut() {
-            pane.repaint(palette, self.background, &self.corpus, self.speed);
+            pane.repaint(
+                palette,
+                self.background,
+                &self.corpus,
+                self.speed,
+                self.lengths,
+            );
         }
         if self.mode == Mode::Picking {
             self.build_preview();
@@ -294,10 +316,10 @@ impl App {
     }
 
     fn speed_label(&self, kind: SceneKind) -> String {
-        if kind == SceneKind::Typing {
-            format!("{} cps", self.speed)
-        } else {
-            self.rates[slot_of(kind)].to_string()
+        match kind {
+            SceneKind::Typing => format!("{} cps", self.speed),
+            SceneKind::Hourglass => self.lengths.to_string(),
+            _ => self.rates[slot_of(kind)].to_string(),
         }
     }
 
@@ -306,7 +328,9 @@ impl App {
     }
 
     pub fn restart(&mut self) {
-        self.panes.focused_mut().restart(&self.corpus, self.speed);
+        self.panes
+            .focused_mut()
+            .restart(&self.corpus, self.speed, self.lengths);
     }
 
     pub fn next_scene(&mut self) {
@@ -321,7 +345,15 @@ impl App {
         self.change_speed(Speed::slower, Rate::slower);
     }
 
+    /// A scene that keeps real time has no speed to change, so it shows
+    /// the time it has left instead, and nothing is saved.
     fn change_speed(&mut self, speed: fn(Speed) -> Speed, rate: fn(Rate) -> Rate) {
+        if let Some(left) = self.panes.focused().time_left() {
+            self.unsaved = None;
+            self.notice_text = left;
+            self.notice = NOTICE_TICKS;
+            return;
+        }
         let saved = if self.panes.focused().kind == SceneKind::Typing {
             self.speed = speed(self.speed);
             for pane in self.panes.iter_mut() {
@@ -373,6 +405,7 @@ impl App {
             self.background,
             &self.corpus,
             self.speed,
+            self.lengths,
         ));
         self.preview_credit = 0;
     }
@@ -402,6 +435,7 @@ impl App {
             self.background,
             &self.corpus,
             self.speed,
+            self.lengths,
         );
         self.panes.split(split, pane);
         self.selected = slot_of(kind);

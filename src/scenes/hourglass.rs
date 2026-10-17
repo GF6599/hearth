@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Range;
+use std::fmt;
+use std::ops::{Range, RangeInclusive};
 use std::time::Duration;
 
 use rand::RngExt;
@@ -12,9 +13,61 @@ use crate::clock::Clock;
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
-pub const WORK: Duration = Duration::from_secs(25 * 60);
-pub const BREAK: Duration = Duration::from_secs(5 * 60);
-pub const LONG_BREAK: Duration = Duration::from_secs(15 * 60);
+/// How long each phase of the cycle runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Lengths {
+    pub work: Duration,
+    pub r#break: Duration,
+    pub long_break: Duration,
+}
+
+impl Lengths {
+    /// The lengths of the Pomodoro Technique.
+    pub const DEFAULT: Lengths = Lengths {
+        work: Duration::from_secs(25 * 60),
+        r#break: Duration::from_secs(5 * 60),
+        long_break: Duration::from_secs(15 * 60),
+    };
+    /// The range a length in the file can take, in whole minutes. Three
+    /// hours is far past any useful round, so more is likely a slip.
+    pub const MINUTES: RangeInclusive<u64> = 1..=180;
+
+    /// A length in whole minutes, or the reason it is refused.
+    pub fn minutes(value: i64) -> Result<Duration, String> {
+        u64::try_from(value)
+            .ok()
+            .filter(|minutes| Self::MINUTES.contains(minutes))
+            .map(|minutes| Duration::from_secs(minutes * 60))
+            .ok_or_else(Self::range_message)
+    }
+
+    pub fn range_message() -> String {
+        format!(
+            "must be a whole number of minutes from {} to {}",
+            Self::MINUTES.start(),
+            Self::MINUTES.end()
+        )
+    }
+}
+
+impl Default for Lengths {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl fmt::Display for Lengths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let minutes = |length: Duration| length.as_secs() / 60;
+        write!(
+            f,
+            "{}/{}/{} min",
+            minutes(self.work),
+            minutes(self.r#break),
+            minutes(self.long_break)
+        )
+    }
+}
 /// Work rounds before the long break.
 const ROUNDS: u32 = 4;
 /// The share of a bulb that the sand fills. Under half, so the pile in the
@@ -185,11 +238,18 @@ impl Phase {
     /// The phase running at `elapsed`. A cycle is a work round and a break
     /// `ROUNDS` times, the long break after the last, and then it starts
     /// again.
-    fn at(elapsed: Duration) -> Phase {
+    fn at(elapsed: Duration, lengths: Lengths) -> Phase {
         let phases: Vec<(Kind, Duration, u32)> = (1..=ROUNDS)
             .flat_map(|round| {
-                let rest = if round == ROUNDS { LONG_BREAK } else { BREAK };
-                [(Kind::Work, WORK, round - 1), (Kind::Break, rest, round)]
+                let rest = if round == ROUNDS {
+                    lengths.long_break
+                } else {
+                    lengths.r#break
+                };
+                [
+                    (Kind::Work, lengths.work, round - 1),
+                    (Kind::Break, rest, round),
+                ]
             })
             .collect();
         let cycle: Duration = phases.iter().map(|(_, length, _)| *length).sum();
@@ -209,7 +269,7 @@ impl Phase {
         Phase {
             kind: Kind::Work,
             start,
-            length: WORK,
+            length: lengths.work,
             done: 0,
         }
     }
@@ -226,6 +286,7 @@ pub struct Hourglass {
     palette: &'static Palette,
     rng: Rng,
     clock: Clock,
+    lengths: Lengths,
     width: u16,
     height: u16,
     glass: Option<Glass>,
@@ -244,15 +305,16 @@ pub struct Hourglass {
 }
 
 impl Hourglass {
-    pub fn new(rng: Rng, palette: &'static Palette, clock: Clock) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette, clock: Clock, lengths: Lengths) -> Self {
         Self {
             palette,
             rng,
             clock,
+            lengths,
             width: 0,
             height: 0,
             glass: None,
-            phase: Phase::at(Duration::ZERO),
+            phase: Phase::at(Duration::ZERO, lengths),
             sand: Vec::new(),
             total: 0,
             top: 0,
@@ -290,7 +352,7 @@ impl Hourglass {
         let dots = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
         self.sand = vec![false; dots];
         self.moving.clear();
-        self.phase = Phase::at(self.clock.elapsed());
+        self.phase = Phase::at(self.clock.elapsed(), self.lengths);
         self.glass = Glass::fit(self.width, self.height);
         let Some(glass) = self.glass else {
             self.total = 0;
@@ -428,13 +490,28 @@ impl Scene for Hourglass {
         let Some(glass) = self.glass else {
             return;
         };
-        let phase = Phase::at(self.clock.elapsed());
+        let phase = Phase::at(self.clock.elapsed(), self.lengths);
         if phase.start != self.phase.start {
             self.phase = phase;
             self.turn(glass);
         }
         self.release(glass);
         self.fall(glass);
+    }
+
+    /// The phase, its round and the time left, rounded up to the second,
+    /// such as "work 2/4, 18:32 left".
+    fn time_left(&self) -> Option<String> {
+        let elapsed = self.clock.elapsed();
+        let phase = Phase::at(elapsed, self.lengths);
+        let left = (phase.start + phase.length).saturating_sub(elapsed);
+        let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+        let name = match phase.kind {
+            Kind::Work => format!("work {}/{ROUNDS}", phase.done + 1),
+            Kind::Break if phase.done == ROUNDS => "long break".to_string(),
+            Kind::Break => format!("break {}/{ROUNDS}", phase.done),
+        };
+        Some(format!("{name}, {}:{:02} left", seconds / 60, seconds % 60))
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {

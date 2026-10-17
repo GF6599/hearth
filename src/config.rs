@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::scene::{ALL, Rate, SceneKind};
+use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::Speed;
 use crate::theme;
 
@@ -30,6 +31,7 @@ pub struct Config {
     pub theme: Option<usize>,
     pub background: Background,
     pub typing: Option<Speed>,
+    pub hourglass: Lengths,
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
 }
@@ -96,9 +98,10 @@ impl Config {
                     };
                 }
                 "speed" => config.read_speeds(item).map_err(fail)?,
+                "hourglass" => config.read_lengths(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo, theme, background and speed"
+                        "{other} is not a setting. The settings are scene, repo, theme, background, speed and hourglass"
                     )));
                 }
             }
@@ -119,6 +122,11 @@ impl Config {
                 self.typing = Some(speed.map_err(|e| format!("speed.{name}: {e}"))?);
                 continue;
             }
+            if name == SceneKind::Hourglass.name() {
+                return Err(format!(
+                    "speed.{name}: the hourglass keeps real time, so it has no speed. Its lengths are in [hourglass]"
+                ));
+            }
             let Some(kind) = SceneKind::from_name(name) else {
                 return Err(format!(
                     "speed.{name} is not a scene. The scenes are {}",
@@ -133,6 +141,30 @@ impl Config {
                 .ok_or_else(|| format!("speed.{name} must be one of {}", Rate::all_times()))?;
             if let Some(slot) = ALL.iter().position(|each| *each == kind) {
                 self.rates[slot] = Some(rate);
+            }
+        }
+        Ok(())
+    }
+
+    fn read_lengths(&mut self, item: &Item) -> Result<(), String> {
+        let table = item
+            .as_table_like()
+            .ok_or_else(|| "hourglass must be a table of work, break and long_break".to_string())?;
+        for (name, value) in table.iter() {
+            let length = value
+                .as_integer()
+                .ok_or_else(Lengths::range_message)
+                .and_then(Lengths::minutes)
+                .map_err(|e| format!("hourglass.{name} {e}"));
+            match name {
+                "work" => self.hourglass.work = length?,
+                "break" => self.hourglass.r#break = length?,
+                "long_break" => self.hourglass.long_break = length?,
+                other => {
+                    return Err(format!(
+                        "hourglass.{other} is not a length. The lengths are work, break and long_break"
+                    ));
+                }
             }
         }
         Ok(())
