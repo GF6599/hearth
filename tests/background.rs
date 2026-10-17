@@ -9,7 +9,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::scene::ALL;
+use hearth::scene::{ALL, SceneKind};
 use hearth::theme::{self, Palette};
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -139,7 +139,8 @@ fn the_terminal_background_leaves_no_theme_background() {
 /// each file, and runs a while.
 /// Then: every cell shows the same glyph and colours, and every quarter of
 /// a block glyph the same colour, when the theme's base and surface read as
-/// the terminal's.
+/// the terminal's, and murmuration's overlay too, because its whole sky
+/// clears.
 ///
 /// Why it matters: a half block whose top was the base, cleared and not
 /// turned over, draws its lower colour over the whole cell and doubles the
@@ -162,13 +163,78 @@ fn the_terminal_background_keeps_every_picture() {
             let after = frame(&args, &clear);
 
             // Then:
+            let mut behind = theirs.to_vec();
+            if args.contains(&SceneKind::Murmuration.name()) {
+                behind.push(palette.overlay);
+            }
             for position in AREA.positions() {
                 assert_eq!(
                     seen(&after[position], &[]),
-                    seen(&before[position], &theirs),
+                    seen(&before[position], &behind),
                     "{name} {args:?} at {position:?}"
                 );
             }
         }
+    }
+}
+
+fn shows(buffer: &Buffer, colour: Color) -> bool {
+    AREA.positions().any(|position| {
+        let cell = &buffer[position];
+        cell.bg == colour || (cell.symbol() != " " && cell.fg == colour)
+    })
+}
+
+/// The overlay stays painted on every theme, even where it shares its
+/// colour with the surface.
+/// Given: a file that asks for the terminal's background, on each theme.
+/// When: hearth starts fire and typing, and runs a while.
+/// Then: each frame still shows the overlay: the smoke of the fire, and the
+/// outline of the code around the typed function in the minimap.
+///
+/// Why it matters: Solarized gives its surface and its overlay one colour,
+/// and a background known by its colour alone takes the smoke and the
+/// minimap away with the panels.
+#[test]
+fn the_overlay_stays_painted_on_every_theme() {
+    for (name, palette) in theme::THEMES {
+        // Given:
+        let config = config(
+            &format!("overlay-{name}"),
+            &format!("theme = \"{name}\"\nbackground = \"terminal\"\n"),
+        );
+
+        for kind in [SceneKind::Fire, SceneKind::Typing] {
+            // When:
+            let buffer = frame(&["hearth", kind.name(), "--seed", "7"], &config);
+
+            // Then:
+            assert!(shows(&buffer, palette.overlay), "{name} {}", kind.name());
+        }
+    }
+}
+
+/// Murmuration's whole sky shows the terminal.
+/// Given: a file that asks for the terminal's background, on Rose Pine and
+/// on Dawn.
+/// When: hearth starts murmuration, and runs a while.
+/// Then: no cell shows the overlay, the lightest third of the dusk sky.
+///
+/// Why it matters: a sky cleared in two thirds leaves the last third as a
+/// solid band over the trees, which reads as a fault and not as a dusk.
+#[test]
+fn the_whole_murmuration_sky_shows_the_terminal() {
+    for name in THEMES {
+        // Given:
+        let config = config(
+            &format!("sky-{name}"),
+            &format!("theme = \"{name}\"\nbackground = \"terminal\"\n"),
+        );
+
+        // When:
+        let buffer = frame(&["hearth", "murmuration", "--seed", "7"], &config);
+
+        // Then:
+        assert!(!shows(&buffer, palette(name).overlay), "{name}");
     }
 }
