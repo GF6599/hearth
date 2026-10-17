@@ -10,7 +10,7 @@ use hearth::clock::Clock;
 use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind, TICK_RATE};
-use hearth::scenes::hourglass::{Hourglass, WORK};
+use hearth::scenes::hourglass::{BREAK, Hourglass, LONG_BREAK, WORK};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -66,20 +66,9 @@ fn dots(buffer: &Buffer, area: Rect) -> Vec<((usize, usize), Color)> {
     dots
 }
 
-/// The grains above the neck and the grains below it. The neck is the
-/// middle row of the pane.
+/// The work sand above the neck and below it.
 fn sand(buffer: &Buffer, area: Rect) -> (usize, usize) {
-    let neck = usize::from(area.height / 2) * CELL_HEIGHT;
-    dots(buffer, area)
-        .into_iter()
-        .filter(|(_, colour)| *colour == PALETTE.gold)
-        .fold((0, 0), |(top, bottom), ((_, y), _)| {
-            if y < neck {
-                (top + 1, bottom)
-            } else {
-                (top, bottom + 1)
-            }
-        })
+    sand_in(buffer, area, PALETTE.gold)
 }
 
 /// Ticks the scene with the clock moving at the tick rate, until the clock
@@ -340,4 +329,138 @@ fn the_glass_has_round_bulbs_in_a_frame() {
             "no post beside row {row}"
         );
     }
+}
+
+/// The grains of one colour above the neck and below it. The neck is the
+/// middle row of the pane.
+fn sand_in(buffer: &Buffer, area: Rect, colour: Color) -> (usize, usize) {
+    let neck = usize::from(area.height / 2) * CELL_HEIGHT;
+    dots(buffer, area)
+        .into_iter()
+        .filter(|(_, lit)| *lit == colour)
+        .fold((0, 0), |(top, bottom), ((_, y), _)| {
+            if y < neck {
+                (top + 1, bottom)
+            } else {
+                (top, bottom + 1)
+            }
+        })
+}
+
+/// The finished rounds the marks beside the glass show: full cells in iris.
+fn rounds_done(buffer: &Buffer, area: Rect) -> usize {
+    area.positions()
+        .filter(|position| {
+            buffer[*position].fg == PALETTE.iris && buffer[*position].symbol() == "\u{28ff}"
+        })
+        .count()
+}
+
+/// The glass turns over at the end of the work phase and fills with break
+/// sand.
+/// Given: a glass at a hundred by thirty near the end of the work phase.
+/// When: the clock runs three seconds past the end.
+/// Then: before the end the sand is gold, and after it every grain is
+/// foam, and nearly all of it is back in the top.
+///
+/// Why it matters: a glass that does not turn stops keeping time, and sand
+/// in the work colour during a break shows the wrong phase.
+#[test]
+fn the_glass_turns_at_the_end_of_a_phase_to_break_sand() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    scene.tick(AREA);
+    let (total, _) = sand(&render(&scene, AREA, AREA), AREA);
+    run(&mut scene, &now, WORK - Duration::from_secs(1), AREA);
+    let (_, bottom) = sand(&render(&scene, AREA, AREA), AREA);
+    assert!(
+        bottom > total * 9 / 10,
+        "{bottom} of {total} below before the end"
+    );
+
+    // When:
+    run(&mut scene, &now, WORK + Duration::from_secs(3), AREA);
+
+    // Then:
+    let buffer = render(&scene, AREA, AREA);
+    assert_eq!(
+        sand_in(&buffer, AREA, PALETTE.gold),
+        (0, 0),
+        "work sand after the turn"
+    );
+    let (top, bottom) = sand_in(&buffer, AREA, PALETTE.foam);
+    assert_eq!(top + bottom, total, "break sand after the turn");
+    assert!(
+        top > total * 95 / 100,
+        "{top} of {total} in the top after the turn"
+    );
+}
+
+/// The marks count the rounds, and the long break follows the fourth.
+/// Given: a glass at a hundred by thirty.
+/// When: the clock runs through four work rounds, their breaks, the long
+/// break and into the next round, and the glass is read halfway through
+/// several phases.
+/// Then: the marks show the work rounds finished in the cycle, and the sand
+/// is gold in work and foam in a break, also ten seconds after a short
+/// break after the fourth round would have ended.
+///
+/// Why it matters: the long break is the point of counting rounds, and
+/// marks that count wrong lose the cycle.
+#[test]
+fn the_marks_count_the_rounds_and_the_long_break_follows_the_fourth() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    let long_break = WORK * 4 + BREAK * 3;
+    let checks = [
+        (WORK / 2, 0, PALETTE.gold),
+        (WORK + BREAK / 2, 1, PALETTE.foam),
+        (WORK + BREAK + WORK / 2, 1, PALETTE.gold),
+        (WORK * 3 + BREAK * 3 + WORK / 2, 3, PALETTE.gold),
+        (
+            long_break + BREAK + Duration::from_secs(10),
+            4,
+            PALETTE.foam,
+        ),
+        (long_break + LONG_BREAK + WORK / 2, 0, PALETTE.gold),
+    ];
+
+    for (at, done, colour) in checks {
+        // When:
+        run(&mut scene, &now, at, AREA);
+
+        // Then:
+        let buffer = render(&scene, AREA, AREA);
+        assert_eq!(rounds_done(&buffer, AREA), done, "rounds done at {at:?}");
+        let (top, bottom) = sand_in(&buffer, AREA, colour);
+        assert!(top + bottom > 100, "no sand in its colour at {at:?}");
+    }
+}
+
+/// The long break runs its own length.
+/// Given: a glass at a hundred by thirty, run to just past the time a short
+/// break after the fourth round would end.
+/// When: it renders.
+/// Then: the share of sand in the top is the share of the long break left.
+///
+/// Why it matters: a long break that drains at the pace of a short one
+/// ends ten minutes early.
+#[test]
+fn the_long_break_drains_over_its_own_length() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    let into = BREAK + Duration::from_secs(10);
+    run(&mut scene, &now, WORK * 4 + BREAK * 3 + into, AREA);
+
+    // When:
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let (top, bottom) = sand_in(&buffer, AREA, PALETTE.foam);
+    let share = top as f32 / (top + bottom) as f32;
+    let left = 1.0 - into.as_secs_f32() / LONG_BREAK.as_secs_f32();
+    assert!(
+        (share - left).abs() < 0.02,
+        "{share} of the sand in the top, {left} of the long break left"
+    );
 }
