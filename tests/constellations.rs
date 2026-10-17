@@ -7,7 +7,7 @@ use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
-use hearth::scenes::constellations::{Constellations, NAMES};
+use hearth::scenes::constellations::{Constellations, NAMES, TRAIL};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -249,8 +249,8 @@ fn every_line_dot_lies_between_two_stars_of_the_figure() {
             let dots = line_dots(&buffer, AREA);
             let Some((_, figure)) = scene.figure() else {
                 assert!(
-                    dots.is_empty(),
-                    "seed {seed}: dots with no figure at tick {tick}"
+                    dots.iter().all(|(_, colour)| *colour == PALETTE.gold),
+                    "seed {seed}: line dots with no figure at tick {tick}"
                 );
                 continue;
             };
@@ -372,7 +372,11 @@ fn a_faded_figure_leaves_only_stars() {
         }
 
         // Then:
-        let after = glyphs(&render(&scene, AREA, AREA), AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let after: BTreeMap<Position, String> = glyphs(&buffer, AREA)
+            .into_iter()
+            .filter(|(position, _)| buffer[*position].fg != PALETTE.gold)
+            .collect();
         for (position, glyph) in &after {
             assert!(
                 role(glyph).is_some(),
@@ -473,4 +477,102 @@ fn constellations_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     assert!(!glyphs(&buffer, AREA).is_empty());
+}
+
+/// Ticks enough for a few shooting stars, about three minutes.
+const SKY_RUN: u32 = 3000;
+/// The most ticks one shooting star shows, about three seconds.
+const STREAK_TICKS: u32 = 50;
+
+fn gold_dots(buffer: &Buffer) -> Vec<(f32, f32)> {
+    line_dots(buffer, AREA)
+        .into_iter()
+        .filter(|(_, colour)| *colour == PALETTE.gold)
+        .map(|(dot, _)| dot)
+        .collect()
+}
+
+fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
+    (to.0 - from.0).hypot(to.1 - from.1)
+}
+
+fn centroid(dots: &[(f32, f32)]) -> (f32, f32) {
+    let count = dots.len() as f32;
+    let (x, y) = dots
+        .iter()
+        .fold((0.0, 0.0), |sum, dot| (sum.0 + dot.0, sum.1 + dot.1));
+    (x / count, y / count)
+}
+
+/// A shooting star crosses part of the sky at a slant and burns out, with a
+/// short trail.
+/// Given: the scene at a hundred by thirty, for three minutes.
+/// When: it renders on every tick.
+/// Then: the gold dots of each frame lie on one line at a slant, no longer
+/// than the trail. Each shooting star moves along its line further than its
+/// trail and is gone within three seconds, and more than one shows.
+///
+/// Why it matters: a streak that lies flat or falls straight reads as a
+/// fault, a long trail reads as a line of a figure, and a streak that stays
+/// reads as a stray mark.
+#[test]
+fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+        let mut streak: Option<((f32, f32), (f32, f32), u32)> = None;
+        let mut streaks = 0;
+
+        for tick in 0..SKY_RUN {
+            // When:
+            scene.tick(AREA);
+            let dots = gold_dots(&render(&scene, AREA, AREA));
+
+            // Then:
+            if dots.is_empty() {
+                if let Some((first, last, ticks)) = streak.take() {
+                    assert!(
+                        ticks <= STREAK_TICKS,
+                        "seed {seed}: a streak shows {ticks} ticks, to tick {tick}"
+                    );
+                    assert!(
+                        distance(first, last) > TRAIL as f32,
+                        "seed {seed}: a streak moves {} dots, to tick {tick}",
+                        distance(first, last)
+                    );
+                    streaks += 1;
+                }
+                continue;
+            }
+            let ends = dots
+                .iter()
+                .flat_map(|from| dots.iter().map(move |to| (*from, *to)))
+                .max_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
+                .unwrap();
+            let span = distance(ends.0, ends.1);
+            assert!(
+                span <= TRAIL as f32 + 1.0,
+                "seed {seed}: a trail of {span} dots at tick {tick}"
+            );
+            for dot in &dots {
+                assert!(
+                    distance_to_segment(*dot, ends.0, ends.1) <= 1.0,
+                    "seed {seed}: {dot:?} off the streak at tick {tick}"
+                );
+            }
+            if span >= 4.0 {
+                let (across, down) = ((ends.1.0 - ends.0.0).abs(), (ends.1.1 - ends.0.1).abs());
+                assert!(
+                    down >= across * 0.2 && down <= across * 5.0,
+                    "seed {seed}: a streak {across} across and {down} down at tick {tick}"
+                );
+            }
+            let here = centroid(&dots);
+            streak = Some(match streak {
+                Some((first, _, ticks)) => (first, here, ticks + 1),
+                None => (here, here, 1),
+            });
+        }
+        assert!(streaks > 1, "seed {seed}: {streaks} shooting stars");
+    }
 }
