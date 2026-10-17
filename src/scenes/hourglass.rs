@@ -13,6 +13,10 @@ use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
 pub const WORK: Duration = Duration::from_secs(25 * 60);
+pub const BREAK: Duration = Duration::from_secs(5 * 60);
+pub const LONG_BREAK: Duration = Duration::from_secs(15 * 60);
+/// Work rounds before the long break.
+const ROUNDS: u32 = 4;
 /// The share of a bulb that the sand fills. Under half, so the pile in the
 /// bottom stays clear of the neck.
 const FILL: f32 = 0.45;
@@ -23,6 +27,8 @@ const MARGIN: i32 = 1;
 const ROUND: f32 = 0.8;
 /// Cells from the glass's widest wall out to a post of the frame.
 const POST: i32 = 2;
+/// Cells from the right post out to the round marks.
+const MARKS: i32 = 2;
 const WIDTH: i32 = CELL_WIDTH as i32;
 const HEIGHT: i32 = CELL_HEIGHT as i32;
 
@@ -49,7 +55,9 @@ impl Glass {
         let (width, height) = (i32::from(width), i32::from(height));
         let (centre, neck) = (width / 2, height / 2);
         let bulb = (neck - 2 - MARGIN).min(height - neck - 3 - MARGIN);
-        let reach = bulb.min(centre - POST - 1).min(width - centre - POST - 2);
+        let reach = bulb
+            .min(centre - POST - 1)
+            .min(width - centre - POST - MARKS - 2);
         (bulb >= 1 && reach >= 1).then_some(Glass {
             centre,
             neck,
@@ -157,6 +165,62 @@ impl Glass {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Work,
+    Break,
+}
+
+/// One phase of the cycle, placed in time.
+#[derive(Debug, Clone, Copy)]
+struct Phase {
+    kind: Kind,
+    start: Duration,
+    length: Duration,
+    /// The work rounds finished in the cycle.
+    done: u32,
+}
+
+impl Phase {
+    /// The phase running at `elapsed`. A cycle is a work round and a break
+    /// `ROUNDS` times, the long break after the last, and then it starts
+    /// again.
+    fn at(elapsed: Duration) -> Phase {
+        let phases: Vec<(Kind, Duration, u32)> = (1..=ROUNDS)
+            .flat_map(|round| {
+                let rest = if round == ROUNDS { LONG_BREAK } else { BREAK };
+                [(Kind::Work, WORK, round - 1), (Kind::Break, rest, round)]
+            })
+            .collect();
+        let cycle: Duration = phases.iter().map(|(_, length, _)| *length).sum();
+        let cycles = u32::try_from(elapsed.as_nanos() / cycle.as_nanos()).unwrap_or(u32::MAX);
+        let mut start = cycle.saturating_mul(cycles);
+        for (kind, length, done) in phases {
+            if elapsed < start + length {
+                return Phase {
+                    kind,
+                    start,
+                    length,
+                    done,
+                };
+            }
+            start += length;
+        }
+        Phase {
+            kind: Kind::Work,
+            start,
+            length: WORK,
+            done: 0,
+        }
+    }
+
+    /// The share of the phase still to run at `elapsed`.
+    fn left(&self, elapsed: Duration) -> f64 {
+        let run = elapsed.saturating_sub(self.start).as_secs_f64() / self.length.as_secs_f64();
+        1.0 - run.min(1.0)
+    }
+}
+
 #[derive(Debug)]
 pub struct Hourglass {
     palette: &'static Palette,
@@ -165,6 +229,9 @@ pub struct Hourglass {
     width: u16,
     height: u16,
     glass: Option<Glass>,
+    /// The phase the sand shows. The glass turns when the clock moves on
+    /// to the next.
+    phase: Phase,
     /// Whether each dot of the pane holds a grain, row by row.
     sand: Vec<bool>,
     total: usize,
@@ -185,6 +252,7 @@ impl Hourglass {
             width: 0,
             height: 0,
             glass: None,
+            phase: Phase::at(Duration::ZERO),
             sand: Vec::new(),
             total: 0,
             top: 0,
@@ -195,8 +263,7 @@ impl Hourglass {
     /// The grains the top holds at this time: all of them at the start of
     /// the phase and none at its end.
     fn due(&self) -> usize {
-        let run = self.clock.elapsed().as_secs_f64() / WORK.as_secs_f64();
-        (self.total as f64 * (1.0 - run.min(1.0))).ceil() as usize
+        (self.total as f64 * self.phase.left(self.clock.elapsed())).ceil() as usize
     }
 
     fn grain(&self, x: i32, y: i32) -> bool {
@@ -223,6 +290,7 @@ impl Hourglass {
         let dots = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
         self.sand = vec![false; dots];
         self.moving.clear();
+        self.phase = Phase::at(self.clock.elapsed());
         self.glass = Glass::fit(self.width, self.height);
         let Some(glass) = self.glass else {
             self.total = 0;
@@ -242,6 +310,36 @@ impl Hourglass {
             self.moving.insert((y, x));
         }
         self.top = due;
+    }
+
+    /// Turns the glass over: each grain moves to the same place on the
+    /// other side of the neck, and then falls toward the neck.
+    fn turn(&mut self, glass: Glass) {
+        let across = usize::from(self.width) * CELL_WIDTH;
+        let grains: Vec<(i32, i32)> = self
+            .sand
+            .iter()
+            .enumerate()
+            .filter(|(_, grain)| **grain)
+            .filter_map(|(index, _)| {
+                Some((
+                    i32::try_from(index % across).ok()?,
+                    i32::try_from(index / across).ok()?,
+                ))
+            })
+            .collect();
+        self.sand.fill(false);
+        self.moving.clear();
+        let gate = glass.gate();
+        self.top = 0;
+        for (x, y) in grains {
+            let y = 2 * gate + HEIGHT - 1 - y;
+            self.set(x, y, true);
+            self.moving.insert((y, x));
+            if y < gate {
+                self.top += 1;
+            }
+        }
     }
 
     /// Lets grains into the neck until the top holds what is due, at most
@@ -330,6 +428,11 @@ impl Scene for Hourglass {
         let Some(glass) = self.glass else {
             return;
         };
+        let phase = Phase::at(self.clock.elapsed());
+        if phase.start != self.phase.start {
+            self.phase = phase;
+            self.turn(glass);
+        }
         self.release(glass);
         self.fall(glass);
     }
@@ -359,7 +462,11 @@ impl Scene for Hourglass {
             let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
                 continue;
             };
-            plot(&mut cells, x, y, self.palette.gold);
+            let colour = match self.phase.kind {
+                Kind::Work => self.palette.gold,
+                Kind::Break => self.palette.foam,
+            };
+            plot(&mut cells, x, y, colour);
         }
         let mut glyphs: Vec<((i32, i32), char, Color)> = cells
             .into_iter()
@@ -377,6 +484,15 @@ impl Scene for Hourglass {
         for row in top..=bottom {
             glyphs.push(((left, row), '┃', self.palette.rose));
             glyphs.push(((right, row), '┃', self.palette.rose));
+        }
+        for round in 0..ROUNDS {
+            let row = glass.neck - 3 + 2 * i32::try_from(round).unwrap_or(0);
+            let mark = if round < self.phase.done {
+                '⣿'
+            } else {
+                '⠶'
+            };
+            glyphs.push(((right + MARKS, row), mark, self.palette.iris));
         }
 
         for ((column, row), glyph, colour) in glyphs {
