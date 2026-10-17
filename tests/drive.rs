@@ -342,11 +342,7 @@ fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
             }
         }
         let centre = (moon.len() > 20).then(|| moon.iter().sum::<f32>() / moon.len() as f32);
-        let road = road(&rows);
-        let bend = {
-            let middle = |(_, left, right): (usize, usize, usize)| (left + right) as f32 / 2.0;
-            middle(road[0]) - middle(*road.last().unwrap())
-        };
+        let bend = bend(&rows);
         if let (Some(now), Some(before)) = (centre, last) {
             shown += 1;
             let step = now - before;
