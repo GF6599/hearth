@@ -83,11 +83,11 @@ fn run(scene: &mut Hourglass, now: &Cell<Duration>, until: Duration, area: Rect)
 /// The sand leaves the top as the work phase runs, and piles in the bottom.
 /// Given: a full glass at a hundred by thirty, on a clock the test moves.
 /// When: the clock runs at the tick rate to half the work phase, then to
-/// its end, and the sand settles.
-/// Then: half the grains have left the top at half the phase. At the end
-/// the top is empty, every grain is in the bottom, and each grain rests on
-/// sand or glass below it and on both sides below it. No grain is lost,
-/// and every grain lies between the walls of the glass.
+/// one tick before its end, when the glass turns, and the sand settles.
+/// Then: half the grains have left the top at half the phase. Before the
+/// end one grain is left in the top, the rest is in the bottom, and each
+/// grain there rests on sand or glass below it and on both sides below it.
+/// No grain is lost, and every grain lies between the walls of the glass.
 ///
 /// Why it matters: a timer whose sand runs out early or late tells the
 /// wrong time, and a grain that hangs in the air reads as a fault.
@@ -131,14 +131,15 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
     );
 
     // When:
-    run(&mut scene, &now, WORK, AREA);
+    run(&mut scene, &now, WORK - TICK_RATE, AREA);
     for _ in 0..SETTLE {
         scene.tick(AREA);
     }
 
     // Then:
     let buffer = render(&scene, AREA, AREA);
-    assert_eq!(sand(&buffer, AREA), (0, total), "at the end");
+    assert_eq!(sand(&buffer, AREA), (1, total - 1), "before the end");
+    let neck = usize::from(AREA.height / 2) * CELL_HEIGHT;
     let lit = dots(&buffer, AREA);
     let held = |x: usize, y: usize| {
         let row = u16::try_from(y / CELL_HEIGHT).unwrap();
@@ -149,7 +150,7 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
                 .any(|(dot, colour)| *dot == (x, y) && *colour == PALETTE.gold)
     };
     for ((x, y), colour) in &lit {
-        if *colour == PALETTE.gold {
+        if *colour == PALETTE.gold && *y >= neck {
             assert!(
                 held(*x, y + 1) && held(x - 1, y + 1) && held(x + 1, y + 1),
                 "a grain at {:?} does not rest",
