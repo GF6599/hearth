@@ -88,7 +88,7 @@ impl Solar {
 
     /// Where the Moon is, in dots from the top left of the pane.
     pub fn moon(&self) -> (f32, f32) {
-        let angle = TAU * self.time as f32 / MOON_TICKS;
+        let angle = TAU * turned(self.time, MOON_TICKS);
         place(self.planets()[EARTH], MOON_ACROSS, angle)
     }
 
@@ -107,7 +107,7 @@ impl Solar {
     fn angles(&self) -> [f32; ORBITS.len()] {
         std::array::from_fn(|index| {
             let period = MERCURY_TICKS * (ORBITS[index] / ORBITS[0]).powf(1.5);
-            (self.phases[index] + TAU * self.time as f32 / period).rem_euclid(TAU)
+            (self.phases[index] + TAU * turned(self.time, period)).rem_euclid(TAU)
         })
     }
 
@@ -149,6 +149,13 @@ fn fill(dots: &[(i32, i32)]) -> Vec<(i32, i32)> {
             })
         })
         .collect()
+}
+
+/// The share of a turn made after `time` ticks, at `period` ticks a turn.
+/// Whole turns come off in f64 first, because an angle that grows without
+/// end in f32 loses the precision of one tick within a day.
+fn turned(time: u32, period: f32) -> f32 {
+    (f64::from(time) / f64::from(period)).fract() as f32
 }
 
 fn place(centre: (f32, f32), across: f32, angle: f32) -> (f32, f32) {
