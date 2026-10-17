@@ -199,7 +199,7 @@ impl SceneKind {
             SceneKind::Tide => "waves on a beach as the tide comes and goes",
             SceneKind::Constellations => "stars that join into named figures",
             SceneKind::Solar => "eight planets with trails round the sun",
-            SceneKind::Drive => "a night drive down a winding road",
+            SceneKind::Drive => "a night drive over hills and bends, past slower cars",
             SceneKind::Hourglass => "an hourglass that keeps a Pomodoro cycle",
             SceneKind::Typing => "functions typed from a git repository",
         }
