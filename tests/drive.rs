@@ -289,3 +289,112 @@ fn drive_is_a_scene_by_name() {
     );
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.pine));
 }
+
+/// The row of the topmost road pixel, the far end of the road in view.
+fn road_top(rows: &[Vec<Color>]) -> usize {
+    road(rows).first().expect("road").0
+}
+
+/// The moon and stars stay above the road, and the sky slides against a
+/// curve.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over straights and curves both ways.
+/// Then: every star, and every pixel of the moon, lies above the road's top
+/// row, the moon shows in some frames, and the moon moves left in a right
+/// bend and right in a left bend.
+///
+/// Why it matters: a moon on the grass reads as a fault, and a sky that
+/// stays put in a curve takes away the turn.
+#[test]
+fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let width = usize::from(AREA.width) * 2;
+    let (mut shown, mut in_right, mut in_left) = (0, 0.0_f32, 0.0_f32);
+    let mut last: Option<f32> = None;
+
+    for tick in 0..RUN * 2 {
+        // When:
+        scene.tick(AREA);
+        if tick % 3 != 0 {
+            continue;
+        }
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let top = road_top(&rows);
+
+        // Then:
+        let mut moon = Vec::new();
+        for (y, row) in rows.iter().enumerate() {
+            if row.contains(&PALETTE.overlay) {
+                continue;
+            }
+            for (x, colour) in row.iter().enumerate() {
+                if *colour == PALETTE.text || *colour == PALETTE.subtle {
+                    assert!(
+                        y < top,
+                        "tick {tick}: sky at {:?} below the road top {top}",
+                        (x, y)
+                    );
+                }
+                if *colour == PALETTE.text {
+                    moon.push(x as f32);
+                }
+            }
+        }
+        let centre = (moon.len() > 20).then(|| moon.iter().sum::<f32>() / moon.len() as f32);
+        let road = road(&rows);
+        let bend = {
+            let middle = |(_, left, right): (usize, usize, usize)| (left + right) as f32 / 2.0;
+            middle(road[0]) - middle(*road.last().unwrap())
+        };
+        if let (Some(now), Some(before)) = (centre, last) {
+            shown += 1;
+            let step = now - before;
+            if step.abs() < width as f32 / 4.0 {
+                if bend > 10.0 {
+                    in_right += step;
+                } else if bend < -10.0 {
+                    in_left += step;
+                }
+            }
+        }
+        last = centre;
+    }
+    assert!(shown > 100, "the moon showed in {shown} frames");
+    assert!(
+        in_right < -5.0 && in_left > 5.0,
+        "the moon moved {in_right} in right bends and {in_left} in left bends"
+    );
+}
+
+/// The road rises and falls over hills.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over the track.
+/// Then: the road's top row moves over at least four pixel rows, and the
+/// road always reaches the bottom row.
+///
+/// Why it matters: a road that never leaves the flat reads as a picture
+/// slid down the screen, and a gap under the road reads as a fault.
+#[test]
+fn the_road_rises_and_falls_over_hills() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let bottom = usize::from(AREA.height) * 2 - 1;
+    let (mut highest, mut lowest) = (usize::MAX, 0);
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let top = road_top(&rows);
+        highest = highest.min(top);
+        lowest = lowest.max(top);
+        assert_eq!(road(&rows).last().unwrap().0, bottom, "tick {tick}");
+    }
+    assert!(
+        lowest - highest >= 4,
+        "the road's top only moved from {highest} to {lowest}"
+    );
+}
