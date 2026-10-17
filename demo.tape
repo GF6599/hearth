@@ -56,6 +56,9 @@ Tab
 # murmuration
 Sleep 5s
 Tab
+# hourglass
+Sleep 5s
+Tab
 # typing
 Sleep 5s
 
