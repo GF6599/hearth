@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::TAU;
 
 use rand::RngExt;
@@ -29,16 +29,17 @@ const MARGIN: f32 = 2.0;
 const SUN_SHARE: f32 = 0.13;
 /// Dots along an orbit from one drawn dot to the next.
 const ORBIT_GAP: f32 = 3.0;
-/// Each planet's radius in dots, Mercury to Neptune, round a core of two by
-/// two dots: the rocky four small, the gas giants large.
-const RADII: [f32; 8] = [1.0, 1.3, 1.3, 1.0, 2.2, 1.8, 1.5, 1.5];
+/// Each planet's radius in dots, Mercury to Neptune: the rocky four small,
+/// the gas giants large. A radius of 2.6 or more always lights five rows of
+/// dots, so every planet spans two rows of cells.
+const RADII: [f32; 8] = [2.6, 2.8, 2.8, 2.6, 4.4, 3.8, 3.2, 3.2];
 const SATURN: usize = 5;
 const EARTH: usize = 2;
 /// Saturn's ring, as a half width in dots and a height as a share of it.
-const RING_ACROSS: f32 = 4.5;
+const RING_ACROSS: f32 = 8.0;
 const RING_TILT: f32 = 0.3;
 /// The Moon's orbit round Earth, as a half width in dots, and its period.
-const MOON_ACROSS: f32 = 4.4;
+const MOON_ACROSS: f32 = 7.0;
 const MOON_TICKS: f32 = 40.0;
 /// How far a trail reaches behind its planet, as a share of a turn.
 const TRAIL_TURN: f32 = 1.0 / 8.0;
@@ -52,7 +53,8 @@ const GOLDEN: f32 = 0.618_034;
 /// lowest. One braille cell holds one colour, so a cell shows the dots of
 /// its highest layer alone. A body or a trail on the far half of its orbit
 /// is behind the sun and one on the near half in front of it, a body is
-/// over every trail on its side, and between two bodies the nearer wins.
+/// over every trail on its side and over its own trail, and between two
+/// bodies the nearer wins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
     Orbit,
@@ -124,6 +126,31 @@ impl Solar {
 /// centre. The angle grows the way the planets go, against the clock seen
 /// from above, so a planet crosses the near side, the bottom of the pane,
 /// from left to right.
+fn cell(dot: (i32, i32)) -> (i32, i32) {
+    (
+        dot.0.div_euclid(CELL_WIDTH as i32),
+        dot.1.div_euclid(CELL_HEIGHT as i32),
+    )
+}
+
+fn touched(dots: &[(i32, i32)]) -> BTreeSet<(i32, i32)> {
+    dots.iter().copied().map(cell).collect()
+}
+
+/// Every dot of each cell that `dots` touch, so a body shows as solid cells
+/// and stands out from the single dots of its trail.
+fn fill(dots: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let (width, height) = (CELL_WIDTH as i32, CELL_HEIGHT as i32);
+    touched(dots)
+        .into_iter()
+        .flat_map(|(column, row)| {
+            (0..width).flat_map(move |dx| {
+                (0..height).map(move |dy| (column * width + dx, row * height + dy))
+            })
+        })
+        .collect()
+}
+
 fn place(centre: (f32, f32), across: f32, angle: f32) -> (f32, f32) {
     (
         centre.0 + across * angle.cos(),
@@ -224,6 +251,9 @@ impl Scene for Solar {
             let steps = ((TAU * reach / TRAIL_GAP) as i32).max(1);
             let gap = TAU / steps as f32;
             let newest = (angle / gap).floor() as i32;
+            // Near the side of an orbit the trail is on the near half while
+            // the planet is on the far half, and would draw over it.
+            let body = touched(&disc(planets[index], RADII[index]));
             for step in (newest - (TRAIL_TURN * steps as f32) as i32..=newest).rev() {
                 // Each place keeps its threshold as the planet moves on, so a
                 // lit dot stays lit until the fade passes its threshold.
@@ -233,6 +263,10 @@ impl Scene for Solar {
                     continue;
                 }
                 let (x, y) = place(centre, reach, step as f32 * gap);
+                let dot = (x.round() as i32, y.round() as i32);
+                if body.contains(&cell(dot)) {
+                    continue;
+                }
                 let layer = if y > centre.1 {
                     Layer::TrailFront
                 } else {
@@ -243,7 +277,7 @@ impl Scene for Solar {
         }
         for (index, &body) in planets.iter().enumerate() {
             let layer = depth(body);
-            for (x, y) in disc(body, RADII[index]) {
+            for (x, y) in fill(&disc(body, RADII[index])) {
                 plot(x, y, layer, colours[index]);
             }
             if index == SATURN {
