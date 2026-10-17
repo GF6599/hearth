@@ -1,5 +1,6 @@
 pub mod aquarium;
 pub mod bonsai;
+pub mod constellations;
 pub mod embers;
 pub mod fire;
 pub mod ink;
