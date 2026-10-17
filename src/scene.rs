@@ -177,7 +177,7 @@ impl SceneKind {
             SceneKind::Murmuration => "a flock of starlings that folds at dusk",
             SceneKind::Ink => "drops of ink that open out in still water",
             SceneKind::Tide => "waves on a beach as the tide comes and goes",
-            SceneKind::Constellations => "a night sky of stars that twinkle",
+            SceneKind::Constellations => "stars that join into named figures",
             SceneKind::Typing => "functions typed from a git repository",
         }
     }
