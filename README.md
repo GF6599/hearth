@@ -73,13 +73,14 @@ hearth reads `~/.config/hearth/config.toml` (or `$XDG_CONFIG_HOME/hearth/config.
 scene = "fire"            # the scene a bare `hearth` starts. Absent: the picker
 repo = "rust-lang/rust"   # what the typing scene types. Absent: hearth's own source
 theme = "rose-pine-dawn"  # rose-pine, rose-pine-moon, rose-pine-dawn, catppuccin-mocha, catppuccin-latte, tokyo-night, tokyo-night-day, kanagawa-wave, kanagawa-lotus, dracula, dracula-alucard, solarized-dark or solarized-light. Absent: rose-pine
+background = "terminal"   # theme or terminal. Absent: theme
 
 [speed]
 typing = 50     # keystrokes per second, from 1 to 1000
 fire = 1.5      # times the normal pace: 0.25, 0.5, 0.75, 1, 1.5, 2, 3 or 4
 ```
 
-The theme colours every scene and the picker. `t` moves to the next theme, starts each scene again in its colours, and saves the theme to the file the way `+` and `-` save a speed. Dawn, Latte, Tokyo Night Day, Kanagawa Lotus, Alucard and Solarized Light are light themes, so their fire grows from the gold role and not from white. A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
+The theme colours every scene and the picker. `t` moves to the next theme, starts each scene again in its colours, and saves the theme to the file the way `+` and `-` save a speed. Dawn, Latte, Tokyo Night Day, Kanagawa Lotus, Alucard and Solarized Light are light themes, so their fire grows from the gold role and not from white. `background = "terminal"` leaves the theme's base and surface colours out, so the terminal's own background shows behind every scene and the picker, and a transparent or translucent terminal stays so. The other colours stay as the theme draws them, the grey of the fire's smoke included. A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
 
 ### Picker
 
