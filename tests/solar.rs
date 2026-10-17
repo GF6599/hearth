@@ -19,6 +19,24 @@ const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
 /// Ticks enough for Neptune to go round about twice.
 const RUN: u32 = 3000;
+const SATURN: usize = 5;
+const EARTH: usize = 2;
+/// The furthest Saturn's ring reaches from its middle, in dots, with room
+/// to spare.
+const SATURN_REACH: f32 = 9.0;
+/// The role each planet draws in, Mercury to Neptune.
+fn roles() -> [Color; 8] {
+    [
+        PALETTE.subtle,
+        PALETTE.text,
+        PALETTE.foam,
+        PALETTE.love,
+        PALETTE.rose,
+        PALETTE.gold,
+        PALETTE.pine,
+        PALETTE.iris,
+    ]
+}
 
 fn ticked(seed: u64, area: Rect, ticks: u32) -> Solar {
     let mut scene = Solar::new(Rng::seed_from_u64(seed), PALETTE);
@@ -59,19 +77,38 @@ fn dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
     dots
 }
 
-/// The middle of the gold dots, which only the sun draws.
-fn sun(buffer: &Buffer, area: Rect) -> (f32, f32) {
-    let gold: Vec<(f32, f32)> = dots(buffer, area)
+/// The gold dots of a render that are not Saturn or its ring, which are
+/// gold too.
+fn sun_dots(scene: &Solar, buffer: &Buffer, area: Rect) -> Vec<(f32, f32)> {
+    let saturn = scene.planets()[SATURN];
+    dots(buffer, area)
         .into_iter()
-        .filter(|(_, colour)| *colour == PALETTE.gold)
+        .filter(|(dot, colour)| *colour == PALETTE.gold && distance(*dot, saturn) > SATURN_REACH)
         .map(|(dot, _)| dot)
-        .collect();
+        .collect()
+}
+
+/// The middle of the sun's dots.
+fn sun(scene: &Solar, buffer: &Buffer, area: Rect) -> (f32, f32) {
+    let gold = sun_dots(scene, buffer, area);
     assert!(!gold.is_empty(), "no sun in {area:?}");
     let count = gold.len() as f32;
     let (x, y) = gold
         .iter()
         .fold((0.0, 0.0), |sum, dot| (sum.0 + dot.0, sum.1 + dot.1));
     (x / count, y / count)
+}
+
+fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
+    (to.0 - from.0).hypot(to.1 - from.1)
+}
+
+/// The cell a place in dots falls in.
+fn cell_of(place: (f32, f32)) -> (u16, u16) {
+    (
+        (place.0 / CELL_WIDTH as f32) as u16,
+        (place.1 / CELL_HEIGHT as f32) as u16,
+    )
 }
 
 /// The middle of the pane, in dots.
@@ -97,7 +134,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
     for seed in 0..3 {
         // Given:
         let mut scene = ticked(seed, AREA, 1);
-        let centre = sun(&render(&scene, AREA, AREA), AREA);
+        let centre = sun(&scene, &render(&scene, AREA, AREA), AREA);
         let mut paths: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 8];
         let mut orbit_dots = Vec::new();
 
@@ -187,7 +224,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
 fn an_inner_planet_goes_round_faster_than_an_outer_one() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
-    let centre = sun(&render(&scene, AREA, AREA), AREA);
+    let centre = sun(&scene, &render(&scene, AREA, AREA), AREA);
     let angle = |planet: (f32, f32)| (planet.1 - centre.1).atan2(planet.0 - centre.0);
     let mut last: Vec<f32> = scene.planets().into_iter().map(angle).collect();
     let mut turned = vec![0.0_f32; last.len()];
@@ -231,7 +268,7 @@ fn the_sun_stays_in_the_middle_after_a_resize() {
     for area in [AREA, Rect::new(0, 0, 60, 20)] {
         // When:
         scene.tick(area);
-        let centre = sun(&render(&scene, area, area), area);
+        let centre = sun(&scene, &render(&scene, area, area), area);
 
         // Then:
         let middle = middle(area);
@@ -297,5 +334,166 @@ fn solar_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    sun(&buffer, AREA);
+    assert!(
+        dots(&buffer, AREA)
+            .iter()
+            .any(|(_, colour)| *colour == PALETTE.gold)
+    );
+}
+
+/// Each planet draws in its own colour, the Moon goes round Earth, and
+/// Saturn wears a flat ring.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders for a minute and a half.
+/// Then: where a planet stands clear of the sun and of every other body,
+/// its cell shows its own colour. The Moon stays within a few dots of Earth,
+/// goes round it more than twice, and shows in its colour where it stands
+/// clear. Every gold dot away from the sun lies near Saturn, and those dots
+/// reach further across than up and down.
+///
+/// Why it matters: planets in one colour read as dots and not as a solar
+/// system, a Moon that wanders off reads as a stray planet, and a ring that
+/// stands up reads as a fault.
+#[test]
+fn each_planet_has_its_colour_the_moon_and_the_ring() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let centre = sun(&scene, &render(&scene, AREA, AREA), AREA);
+    let reach = sun_dots(&scene, &render(&scene, AREA, AREA), AREA)
+        .iter()
+        .map(|dot| distance(*dot, centre))
+        .fold(0.0, f32::max);
+    let mut checked = [0; 8];
+    let mut moon_checked = 0;
+    let mut moon_turned = 0.0_f32;
+    let earth_angle =
+        |moon: (f32, f32), earth: (f32, f32)| (moon.1 - earth.1).atan2(moon.0 - earth.0);
+    let mut moon_last = earth_angle(scene.moon(), scene.planets()[EARTH]);
+
+    for tick in 0..1500 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let planets = scene.planets();
+        let moon = scene.moon();
+
+        // Then:
+        let mut bodies: Vec<(f32, f32)> = planets.clone();
+        bodies.push(moon);
+        let clear = |index: usize| {
+            let cell = cell_of(bodies[index]);
+            distance(bodies[index], centre) > reach + 4.0
+                && bodies.iter().enumerate().all(|(other, place)| {
+                    let near = cell_of(*place);
+                    other == index || (near.0.abs_diff(cell.0) > 2 || near.1.abs_diff(cell.1) > 1)
+                })
+        };
+        for (index, role) in roles().iter().enumerate() {
+            if clear(index) {
+                let cell = cell_of(planets[index]);
+                assert_eq!(buffer[cell].fg, *role, "planet {index} at tick {tick}");
+                checked[index] += 1;
+            }
+        }
+        assert!(
+            distance(moon, planets[EARTH]) <= 4.5,
+            "the Moon {moon:?} far from Earth {:?} at tick {tick}",
+            planets[EARTH]
+        );
+        if clear(8) {
+            assert_eq!(
+                buffer[cell_of(moon)].fg,
+                PALETTE.subtle,
+                "the Moon at tick {tick}"
+            );
+            moon_checked += 1;
+        }
+        let now = earth_angle(moon, planets[EARTH]);
+        let mut step = now - moon_last;
+        if step > TAU / 2.0 {
+            step -= TAU;
+        } else if step < -TAU / 2.0 {
+            step += TAU;
+        }
+        moon_turned += step;
+        moon_last = now;
+
+        let saturn = planets[SATURN];
+        let away: Vec<(f32, f32)> = dots(&buffer, AREA)
+            .into_iter()
+            .filter(|(dot, colour)| *colour == PALETTE.gold && distance(*dot, centre) > reach + 1.0)
+            .map(|(dot, _)| dot)
+            .collect();
+        for dot in &away {
+            assert!(
+                distance(*dot, saturn) <= SATURN_REACH,
+                "a gold dot {dot:?} away from Saturn {saturn:?} at tick {tick}"
+            );
+        }
+        let across = away
+            .iter()
+            .map(|dot| (dot.0 - saturn.0).abs())
+            .fold(0.0, f32::max);
+        let down = away
+            .iter()
+            .map(|dot| (dot.1 - saturn.1).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            across > down * 1.5,
+            "Saturn {across} across and {down} down at tick {tick}"
+        );
+    }
+    for (index, count) in checked.iter().enumerate() {
+        assert!(*count > 50, "planet {index} checked {count} times");
+    }
+    assert!(moon_checked > 50, "the Moon checked {moon_checked} times");
+    assert!(
+        moon_turned.abs() > 2.0 * TAU,
+        "the Moon turned {moon_turned}"
+    );
+}
+
+/// Mercury passes in front of the sun and behind it.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders while Mercury goes round several times.
+/// Then: where Mercury stands well inside the sun's disc, its cell shows
+/// Mercury on the near side, the lower half, and the sun on the far side.
+///
+/// Why it matters: a planet seen through the sun breaks the depth of the
+/// tilted view, and a planet that vanishes in front of it reads as a fault.
+#[test]
+fn mercury_passes_in_front_of_the_sun_and_behind_it() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let first = render(&scene, AREA, AREA);
+    let centre = sun(&scene, &first, AREA);
+    let reach = sun_dots(&scene, &first, AREA)
+        .iter()
+        .map(|dot| distance(*dot, centre))
+        .fold(0.0, f32::max);
+    let (mut in_front, mut behind) = (0, 0);
+
+    for tick in 0..1000 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let mercury = scene.planets()[0];
+
+        // Then:
+        if distance(mercury, centre) > reach - 3.0 {
+            continue;
+        }
+        let shown = buffer[cell_of(mercury)].fg;
+        if mercury.1 > centre.1 {
+            assert_eq!(shown, PALETTE.subtle, "Mercury in front at tick {tick}");
+            in_front += 1;
+        } else {
+            assert_eq!(shown, PALETTE.gold, "Mercury behind at tick {tick}");
+            behind += 1;
+        }
+    }
+    assert!(
+        in_front > 0 && behind > 0,
+        "{in_front} in front, {behind} behind"
+    );
 }
