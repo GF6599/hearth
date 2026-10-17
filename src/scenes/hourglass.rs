@@ -16,8 +16,13 @@ pub const WORK: Duration = Duration::from_secs(25 * 60);
 /// The share of a bulb that the sand fills. Under half, so the pile in the
 /// bottom stays clear of the neck.
 const FILL: f32 = 0.45;
-/// Rows of cells kept free above and below the glass.
+/// Rows of cells kept free above and below the frame.
 const MARGIN: i32 = 1;
+/// How far round a sine each bulb runs from the neck. Past the peak, so a
+/// bulb is widest a little beyond its middle and curves in toward its cap.
+const ROUND: f32 = 0.8;
+/// Cells from the glass's widest wall out to a post of the frame.
+const POST: i32 = 2;
 const WIDTH: i32 = CELL_WIDTH as i32;
 const HEIGHT: i32 = CELL_HEIGHT as i32;
 
@@ -29,29 +34,36 @@ struct Glass {
     centre: i32,
     /// The row of the neck.
     neck: i32,
-    /// The rows in each bulb, which is also the half width of its widest
-    /// row.
     bulb: i32,
+    /// The half width of a bulb at its widest row. As many cells as the
+    /// bulb has rows makes it round, because a cell holds two dots across
+    /// and four down.
+    reach: i32,
 }
 
 impl Glass {
-    /// The largest glass that fits the pane with its neck on the middle
-    /// row, or `None` when not even one row a bulb fits.
+    /// The largest glass that fits the pane in its frame with its neck on
+    /// the middle row, or `None` when not even one row a bulb fits. A cap
+    /// and a plate lie past each end of the glass.
     fn fit(width: u16, height: u16) -> Option<Glass> {
         let (width, height) = (i32::from(width), i32::from(height));
         let (centre, neck) = (width / 2, height / 2);
-        let bulb = (neck - 1 - MARGIN)
-            .min(height - neck - 2 - MARGIN)
-            .min(centre - 1)
-            .min(width - centre - 2);
-        (bulb >= 1).then_some(Glass { centre, neck, bulb })
+        let bulb = (neck - 2 - MARGIN).min(height - neck - 3 - MARGIN);
+        let reach = bulb.min(centre - POST - 1).min(width - centre - POST - 2);
+        (bulb >= 1 && reach >= 1).then_some(Glass {
+            centre,
+            neck,
+            bulb,
+            reach,
+        })
     }
 
-    /// The half width of the inside at a row, from the neck's one cell
-    /// out to a bulb's widest row.
+    /// The half width of the inside at a row: one cell at the neck, out
+    /// along a sine to the widest row and in again toward the cap.
     fn half_width(&self, row: i32) -> Option<i32> {
         let from_neck = (row - self.neck).abs();
-        (from_neck <= self.bulb).then_some(from_neck)
+        let turn = std::f32::consts::PI * ROUND * from_neck as f32 / self.bulb as f32;
+        (from_neck <= self.bulb).then(|| (self.reach as f32 * turn.sin()).round() as i32)
     }
 
     /// Whether a dot is inside the glass, where sand can go.
@@ -66,9 +78,53 @@ impl Glass {
     /// The columns and rows of dots that the inside spans.
     fn span(&self) -> (Range<i32>, Range<i32>) {
         (
-            (self.centre - self.bulb) * WIDTH..(self.centre + self.bulb + 1) * WIDTH,
+            (self.centre - self.reach) * WIDTH..(self.centre + self.reach + 1) * WIDTH,
             (self.neck - self.bulb) * HEIGHT..(self.neck + self.bulb + 1) * HEIGHT,
         )
+    }
+
+    /// The dots of the left wall and the caps, as far as the middle. Where
+    /// two rows differ in width, the slant between them lies in the
+    /// narrower row, whose outer cells are free, so a wall never enters a
+    /// cell of the inside. The neck is narrower than both its neighbours,
+    /// so it takes both slants and pinches in.
+    fn walls(&self) -> Vec<(i32, i32)> {
+        let edge = |half: i32| (self.centre - half - 1) * WIDTH + 1;
+        let mut dots = Vec::new();
+        let mut slant = |from: i32, to: i32, y: i32| {
+            let xs: Vec<i32> = if from <= to {
+                (from..=to).collect()
+            } else {
+                (to..=from).rev().collect()
+            };
+            let split = xs.len().div_ceil(2);
+            for (step, x) in xs.into_iter().enumerate() {
+                dots.push((x, if step < split { y } else { y + 1 }));
+            }
+        };
+        for row in self.neck - self.bulb..=self.neck + self.bulb {
+            let Some(half) = self.half_width(row) else {
+                continue;
+            };
+            let y = row * HEIGHT;
+            let above = self.half_width(row - 1).filter(|&wider| wider > half);
+            let below = self.half_width(row + 1).filter(|&wider| wider > half);
+            slant(edge(above.unwrap_or(half)), edge(half), y);
+            slant(edge(half), edge(below.unwrap_or(half)), y + 2);
+        }
+        for (row, y) in [
+            (self.neck - self.bulb, (self.neck - self.bulb) * HEIGHT - 1),
+            (self.neck + self.bulb, (self.neck + self.bulb + 1) * HEIGHT),
+        ] {
+            let half = self.half_width(row).unwrap_or(0);
+            dots.extend((edge(half)..=self.centre * WIDTH).map(|x| (x, y)));
+        }
+        dots
+    }
+
+    /// The dot at the same height on the other side of the middle.
+    fn mirror(&self, x: i32) -> i32 {
+        2 * self.centre * WIDTH + 1 - x
     }
 
     /// The first row of dots in the neck. A grain above it is in the top.
@@ -282,44 +338,48 @@ impl Scene for Hourglass {
         let Some(glass) = self.glass else {
             return;
         };
-        let column = |dots: &[(usize, usize)]| {
-            dots.iter()
-                .fold(0, |bits, &(x, y)| bits | braille::dot(x, y))
-        };
-        let falling = column(&[(0, 0), (0, 1), (1, 2), (1, 3)]);
-        let rising = column(&[(1, 0), (1, 1), (0, 2), (0, 3)]);
-        let (left_upright, right_upright) = (
-            column(&[(1, 0), (1, 1), (1, 2), (1, 3)]),
-            column(&[(0, 0), (0, 1), (0, 2), (0, 3)]),
-        );
         let mut cells: BTreeMap<(i32, i32), (u32, Color)> = BTreeMap::new();
-        for row in glass.neck - glass.bulb..=glass.neck + glass.bulb {
-            let half = (row - glass.neck).abs();
-            let (left, right) = match row.cmp(&glass.neck) {
-                std::cmp::Ordering::Less => (falling, rising),
-                std::cmp::Ordering::Equal => (left_upright, right_upright),
-                std::cmp::Ordering::Greater => (rising, falling),
+        let plot =
+            |cells: &mut BTreeMap<(i32, i32), (u32, Color)>, x: i32, y: i32, colour: Color| {
+                let entry = cells
+                    .entry((x.div_euclid(WIDTH), y.div_euclid(HEIGHT)))
+                    .or_insert((0, colour));
+                entry.0 |= braille::dot(
+                    usize::try_from(x.rem_euclid(WIDTH)).unwrap_or(0),
+                    usize::try_from(y.rem_euclid(HEIGHT)).unwrap_or(0),
+                );
             };
-            cells.insert((glass.centre - half - 1, row), (left, self.palette.muted));
-            cells.insert((glass.centre + half + 1, row), (right, self.palette.muted));
-        }
-        let (rim, base) = (column(&[(0, 3), (1, 3)]), column(&[(0, 0), (1, 0)]));
-        for x in glass.centre - glass.bulb - 1..=glass.centre + glass.bulb + 1 {
-            cells.insert((x, glass.neck - glass.bulb - 1), (rim, self.palette.muted));
-            cells.insert((x, glass.neck + glass.bulb + 1), (base, self.palette.muted));
+        for (x, y) in glass.walls() {
+            plot(&mut cells, x, y, self.palette.muted);
+            plot(&mut cells, glass.mirror(x), y, self.palette.muted);
         }
         let across = usize::from(self.width) * CELL_WIDTH;
         for (index, _) in self.sand.iter().enumerate().filter(|(_, grain)| **grain) {
             let (x, y) = (index % across, index / across);
-            let cell = (
-                i32::try_from(x / CELL_WIDTH).unwrap_or(i32::MAX),
-                i32::try_from(y / CELL_HEIGHT).unwrap_or(i32::MAX),
-            );
-            let entry = cells.entry(cell).or_insert((0, self.palette.gold));
-            entry.0 |= braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
+            let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
+                continue;
+            };
+            plot(&mut cells, x, y, self.palette.gold);
+        }
+        let mut glyphs: Vec<((i32, i32), char, Color)> = cells
+            .into_iter()
+            .map(|(cell, (dots, colour))| (cell, braille::glyph(dots), colour))
+            .collect();
+        let (left, right) = (
+            glass.centre - glass.reach - POST - 1,
+            glass.centre + glass.reach + POST + 1,
+        );
+        let (top, bottom) = (glass.neck - glass.bulb - 1, glass.neck + glass.bulb + 1);
+        for column in left..=right {
+            glyphs.push(((column, top - 1), '▄', self.palette.rose));
+            glyphs.push(((column, bottom + 1), '▀', self.palette.rose));
+        }
+        for row in top..=bottom {
+            glyphs.push(((left, row), '┃', self.palette.rose));
+            glyphs.push(((right, row), '┃', self.palette.rose));
         }
 
-        for ((column, row), (dots, colour)) in cells {
+        for ((column, row), glyph, colour) in glyphs {
             let (Ok(column), Ok(row)) = (u16::try_from(column), u16::try_from(row)) else {
                 continue;
             };
@@ -327,7 +387,7 @@ impl Scene for Hourglass {
                 continue;
             }
             buf[Position::new(area.x + column, area.y + row)]
-                .set_char(braille::glyph(dots))
+                .set_char(glyph)
                 .set_fg(colour);
         }
     }
