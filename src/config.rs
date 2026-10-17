@@ -1,5 +1,6 @@
 //! The preferences a user keeps between runs: the scene to start, the
-//! repository to type, the colour theme, and the speed of each scene.
+//! repository to type, the colour theme and its background, and the speed
+//! of each scene.
 
 use std::fs;
 use std::io::{self, Write};
@@ -11,12 +12,23 @@ use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::typing::Speed;
 use crate::theme;
 
+/// What shows where a scene is empty.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Background {
+    /// The theme's own background colour.
+    #[default]
+    Theme,
+    /// The terminal's background, so a transparent terminal shows through.
+    Terminal,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub scene: Option<SceneKind>,
     pub repo: Option<String>,
     /// The place of the theme in `theme::THEMES`.
     pub theme: Option<usize>,
+    pub background: Background,
     pub typing: Option<Speed>,
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
@@ -76,10 +88,17 @@ impl Config {
                         fail(format!("theme must be one of {}", names.join(", ")))
                     })?);
                 }
+                "background" => {
+                    config.background = match item.as_str() {
+                        Some("theme") => Background::Theme,
+                        Some("terminal") => Background::Terminal,
+                        _ => return Err(fail("background must be theme or terminal".into())),
+                    };
+                }
                 "speed" => config.read_speeds(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo, theme and speed"
+                        "{other} is not a setting. The settings are scene, repo, theme, background and speed"
                     )));
                 }
             }
