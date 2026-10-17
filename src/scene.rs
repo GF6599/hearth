@@ -20,6 +20,7 @@ use crate::scenes::matrix::Matrix;
 use crate::scenes::murmuration::Murmuration;
 use crate::scenes::noise::Noise;
 use crate::scenes::pipes::Pipes;
+use crate::scenes::solar::Solar;
 use crate::scenes::tide::Tide;
 use crate::scenes::typing::{Speed, Typing};
 use crate::theme::Palette;
@@ -115,6 +116,7 @@ pub enum SceneKind {
     Ink,
     Tide,
     Constellations,
+    Solar,
     Matrix,
     Fire,
     Life,
@@ -132,6 +134,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Ink,
     SceneKind::Tide,
     SceneKind::Constellations,
+    SceneKind::Solar,
     SceneKind::Matrix,
     SceneKind::Fire,
     SceneKind::Life,
@@ -158,6 +161,7 @@ impl SceneKind {
             SceneKind::Ink => "ink",
             SceneKind::Tide => "tide",
             SceneKind::Constellations => "constellations",
+            SceneKind::Solar => "solar",
             SceneKind::Typing => "typing",
         }
     }
@@ -178,6 +182,7 @@ impl SceneKind {
             SceneKind::Ink => "drops of ink that open out in still water",
             SceneKind::Tide => "waves on a beach as the tide comes and goes",
             SceneKind::Constellations => "stars that join into named figures",
+            SceneKind::Solar => "the eight planets on their orbits round the sun",
             SceneKind::Typing => "functions typed from a git repository",
         }
     }
@@ -198,6 +203,7 @@ impl SceneKind {
             SceneKind::Ink => None,
             SceneKind::Tide => None,
             SceneKind::Constellations => None,
+            SceneKind::Solar => None,
             SceneKind::Typing => Some("after gittype by Yuji Ueki"),
         }
     }
@@ -230,6 +236,7 @@ impl SceneKind {
             SceneKind::Ink => Box::new(Ink::new(rng, palette)),
             SceneKind::Tide => Box::new(Tide::new(rng, palette)),
             SceneKind::Constellations => Box::new(Constellations::new(rng, palette)),
+            SceneKind::Solar => Box::new(Solar::new(rng, palette)),
             SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
         }
     }
