@@ -7,7 +7,7 @@ use std::sync::Arc;
 use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene, SceneKind};
+use hearth::scene::{Rng, Scene, SceneKind, TICK_RATE};
 use hearth::scenes::solar::Solar;
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
@@ -697,5 +697,79 @@ fn each_planet_is_a_solid_cluster_of_full_cells() {
     }
     for (index, count) in checked.iter().enumerate() {
         assert!(*count > 50, "planet {index} checked {count} times");
+    }
+}
+
+/// The planets and the Moon still move evenly after a week of running.
+/// Given: the scene at a hundred by thirty, with the size of Mercury's orbit
+/// and of the Moon's orbit round Earth measured over their first turns.
+/// When: it ticks for a week at the tick rate.
+/// Then: each tick still turns Mercury, and the Moon round Earth, by the
+/// same angle as at the start, to within a twentieth.
+///
+/// Why it matters: a screensaver runs for days, and a planet that jerks
+/// forward and stalls reads as a fault.
+#[test]
+fn the_planets_move_evenly_after_a_week() {
+    // Given:
+    let mut scene = ticked(7, AREA, 0);
+    let bodies = |scene: &Solar| {
+        let earth = scene.planets()[EARTH];
+        let moon = scene.moon();
+        [scene.planets()[0], (moon.0 - earth.0, moon.1 - earth.1)]
+    };
+    let mut early: Vec<[(f32, f32); 2]> = Vec::new();
+    for _ in 0..200 {
+        scene.tick(AREA);
+        early.push(bodies(&scene));
+    }
+    let ellipses: Vec<((f32, f32), f32, f32)> = (0..2)
+        .map(|body| {
+            let (left, right) = early.iter().fold((f32::MAX, f32::MIN), |(l, r), p| {
+                (l.min(p[body].0), r.max(p[body].0))
+            });
+            let (top, bottom) = early.iter().fold((f32::MAX, f32::MIN), |(t, b), p| {
+                (t.min(p[body].1), b.max(p[body].1))
+            });
+            (
+                ((left + right) / 2.0, (top + bottom) / 2.0),
+                (right - left) / 2.0,
+                (bottom - top) / 2.0,
+            )
+        })
+        .collect();
+    let steps = |path: &[[(f32, f32); 2]], body: usize| -> Vec<f32> {
+        let (centre, across, down) = ellipses[body];
+        let angles: Vec<f32> = path
+            .iter()
+            .map(|p| (-(p[body].1 - centre.1) / down).atan2((p[body].0 - centre.0) / across))
+            .collect();
+        angles
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).rem_euclid(TAU))
+            .collect()
+    };
+    let week = 7 * 24 * 60 * 60 * 1000 / TICK_RATE.as_millis() as u32;
+
+    // When:
+    for _ in 200..week {
+        scene.tick(AREA);
+    }
+    let mut late = Vec::new();
+    for _ in 0..40 {
+        scene.tick(AREA);
+        late.push(bodies(&scene));
+    }
+
+    // Then:
+    for body in 0..2 {
+        let first = steps(&early, body);
+        let even = first.iter().sum::<f32>() / first.len() as f32;
+        for step in steps(&late, body) {
+            assert!(
+                (step / even - 1.0).abs() < 0.05,
+                "body {body} turns {step} a tick, not {even}"
+            );
+        }
     }
 }
