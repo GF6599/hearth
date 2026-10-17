@@ -171,6 +171,33 @@ fn a_smaller_area_draws_only_inside_it() {
     }
 }
 
+/// A frame drawn right after the terminal shrinks stays inside the new
+/// size.
+/// Given: a scene that ticked on a hundred by thirty area.
+/// When: it renders on a twenty by six area inside a larger canvas, before
+/// it ticks at that size.
+/// Then: it draws without a panic, and no star lands outside the area.
+///
+/// Why it matters: the main loop draws a frame before the next tick, so the
+/// first frame after a resize draws the stars of the old size.
+#[test]
+fn a_frame_after_a_resize_and_before_a_tick_stays_inside() {
+    // Given:
+    let scene = ticked(7, AREA, 10);
+    let canvas = Rect::new(0, 0, 40, 12);
+    let area = Rect::new(3, 2, 20, 6);
+
+    // When:
+    let buffer = render(&scene, area, canvas);
+
+    // Then:
+    for position in canvas.positions() {
+        if !area.contains(position) {
+            assert_eq!(buffer[position].symbol(), " ", "star at {position:?}");
+        }
+    }
+}
+
 /// Given: the scene name `constellations`.
 /// When: it is looked up and built, then ticked and rendered.
 /// Then: the name finds a scene, and its first frame already shows stars.
