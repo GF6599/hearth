@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
-use hearth::scenes::constellations::Constellations;
+use hearth::scenes::constellations::{Constellations, NAMES};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -15,6 +16,12 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
+/// Ticks enough for several figures, about a minute and a half.
+const RUN: u32 = 1500;
+/// The furthest a lit dot lies from the line between the centres of two
+/// stars, in dots: half a dot of rounding at each end, and half a dot of
+/// stepping along the line.
+const LINE_TOLERANCE: f32 = 1.5;
 
 fn ticked(seed: u64, area: Rect, ticks: u32) -> Constellations {
     let mut scene = Constellations::new(Rng::seed_from_u64(seed), PALETTE);
@@ -30,11 +37,20 @@ fn render(scene: &Constellations, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The stars of a render, by their place.
-fn stars(buffer: &Buffer, area: Rect) -> BTreeMap<Position, String> {
+/// Every glyph of a render, by its place.
+fn glyphs(buffer: &Buffer, area: Rect) -> BTreeMap<Position, String> {
     area.positions()
         .filter(|position| buffer[*position].symbol() != " ")
         .map(|position| (position, buffer[position].symbol().to_string()))
+        .collect()
+}
+
+/// The stars of a render, by their place, without the lines and the name
+/// of a figure.
+fn stars(buffer: &Buffer, area: Rect) -> BTreeMap<Position, String> {
+    glyphs(buffer, area)
+        .into_iter()
+        .filter(|(_, glyph)| role(glyph).is_some())
         .collect()
 }
 
@@ -46,6 +62,70 @@ fn role(glyph: &str) -> Option<Color> {
         "*" => Some(PALETTE.text),
         _ => None,
     }
+}
+
+/// The lit braille dots of a render, in dots from the top left of the
+/// area, each with the colour of its cell.
+fn line_dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
+    let mut dots = Vec::new();
+    for position in area.positions() {
+        let cell = &buffer[position];
+        let Some(code) = cell.symbol().chars().next().map(u32::from) else {
+            continue;
+        };
+        if !(0x2801..=0x28ff).contains(&code) {
+            continue;
+        }
+        for column in 0..CELL_WIDTH {
+            for row in 0..CELL_HEIGHT {
+                if (code - 0x2800) & braille::dot(column, row) != 0 {
+                    let x = usize::from(position.x - area.x) * CELL_WIDTH + column;
+                    let y = usize::from(position.y - area.y) * CELL_HEIGHT + row;
+                    dots.push(((x as f32, y as f32), cell.fg));
+                }
+            }
+        }
+    }
+    dots
+}
+
+/// The centre of a star's cell, in dots.
+fn centre(star: Position) -> (f32, f32) {
+    (
+        f32::from(star.x) * CELL_WIDTH as f32 + 0.5,
+        f32::from(star.y) * CELL_HEIGHT as f32 + 1.5,
+    )
+}
+
+fn distance_to_segment(point: (f32, f32), from: (f32, f32), to: (f32, f32)) -> f32 {
+    let (along_x, along_y) = (to.0 - from.0, to.1 - from.1);
+    let length = along_x * along_x + along_y * along_y;
+    let share = if length == 0.0 {
+        0.0
+    } else {
+        (((point.0 - from.0) * along_x + (point.1 - from.1) * along_y) / length).clamp(0.0, 1.0)
+    };
+    let nearest = (from.0 + share * along_x, from.1 + share * along_y);
+    ((point.0 - nearest.0).powi(2) + (point.1 - nearest.1).powi(2)).sqrt()
+}
+
+/// Each name of a figure that a render shows, with its row and its first
+/// column.
+fn names_shown(buffer: &Buffer, area: Rect) -> Vec<(u16, u16, &'static str)> {
+    let mut shown = Vec::new();
+    for y in area.top()..area.bottom() {
+        let row: Vec<&str> = (area.left()..area.right())
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+        let text = row.concat();
+        for name in NAMES {
+            for (byte, _) in text.match_indices(name) {
+                let column = text[..byte].chars().count() as u16;
+                shown.push((y - area.y, column, name));
+            }
+        }
+    }
+    shown
 }
 
 /// Every star is a dot, a cross or an asterisk in its own brightness.
@@ -68,7 +148,7 @@ fn every_star_draws_in_its_own_brightness() {
 
         // Then:
         let mut seen = BTreeSet::new();
-        for (position, glyph) in stars(&buffer, AREA) {
+        for (position, glyph) in glyphs(&buffer, AREA) {
             let colour =
                 role(&glyph).unwrap_or_else(|| panic!("seed {seed}: {glyph:?} at {position:?}"));
             assert_eq!(
@@ -143,6 +223,177 @@ fn stars_twinkle_but_stay_in_place() {
     }
 }
 
+/// A figure's line runs only between its own stars.
+/// Given: the scene at a hundred by thirty, for a minute and a half.
+/// When: it renders on every tick.
+/// Then: each figure joins four to six stars of the sky, every lit dot lies
+/// on a segment between two of them, in iris or foam, and no dot shows
+/// without a figure.
+///
+/// Why it matters: a dot off the figure reads as a stray mark, and a line
+/// that ends where no star is reads as a fault.
+#[test]
+fn every_line_dot_lies_between_two_stars_of_the_figure() {
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+        let mut lit = 0;
+
+        for tick in 0..RUN {
+            // When:
+            scene.tick(AREA);
+            let buffer = render(&scene, AREA, AREA);
+
+            // Then:
+            let dots = line_dots(&buffer, AREA);
+            let Some((_, figure)) = scene.figure() else {
+                assert!(
+                    dots.is_empty(),
+                    "seed {seed}: dots with no figure at tick {tick}"
+                );
+                continue;
+            };
+            assert!(
+                (4..=6).contains(&figure.len()),
+                "seed {seed}: {} stars at tick {tick}",
+                figure.len()
+            );
+            let sky = stars(&buffer, AREA);
+            for star in &figure {
+                assert!(sky.contains_key(star), "seed {seed}: no star at {star:?}");
+            }
+            for (dot, colour) in &dots {
+                assert!(
+                    *colour == PALETTE.iris || *colour == PALETTE.foam,
+                    "seed {seed}: a dot in {colour:?} at tick {tick}"
+                );
+                let on_a_segment = figure.iter().enumerate().any(|(index, from)| {
+                    figure[index + 1..].iter().any(|to| {
+                        distance_to_segment(*dot, centre(*from), centre(*to)) <= LINE_TOLERANCE
+                    })
+                });
+                assert!(
+                    on_a_segment,
+                    "seed {seed}: a stray dot at {dot:?} at tick {tick}"
+                );
+            }
+            lit += dots.len();
+        }
+        assert!(lit > 0, "seed {seed}: no figure drew a line");
+    }
+}
+
+/// The name of a figure shows beside it, and only while the figure shows.
+/// Given: the scene at a hundred by thirty, for a minute and a half.
+/// When: it renders on every tick.
+/// Then: while a figure shows, its name shows once and whole, on a row
+/// within two rows of the figure and over its columns. With no figure, no
+/// name shows.
+///
+/// Why it matters: a name far from its figure names nothing, and a name
+/// with no figure is a stray label.
+#[test]
+fn the_name_shows_beside_the_figure_only_while_it_shows() {
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+        let mut named = 0;
+
+        for tick in 0..RUN {
+            // When:
+            scene.tick(AREA);
+            let buffer = render(&scene, AREA, AREA);
+
+            // Then:
+            let shown = names_shown(&buffer, AREA);
+            let Some((name, figure)) = scene.figure() else {
+                assert!(
+                    shown.is_empty(),
+                    "seed {seed}: {shown:?} with no figure at tick {tick}"
+                );
+                continue;
+            };
+            assert_eq!(
+                shown.iter().map(|(_, _, each)| *each).collect::<Vec<_>>(),
+                [name],
+                "seed {seed} at tick {tick}"
+            );
+            let (row, column, _) = shown[0];
+            let top = figure.iter().map(|star| star.y).min().unwrap();
+            let bottom = figure.iter().map(|star| star.y).max().unwrap();
+            let left = figure.iter().map(|star| star.x).min().unwrap();
+            let right = figure.iter().map(|star| star.x).max().unwrap();
+            assert!(
+                row + 2 >= top && row <= bottom + 2,
+                "seed {seed}: {name:?} on row {row}, the figure on rows {top} to {bottom}"
+            );
+            let width = name.chars().count() as u16;
+            assert!(
+                column <= right && column + width > left,
+                "seed {seed}: {name:?} from column {column}, the figure on {left} to {right}"
+            );
+            named += 1;
+        }
+        assert!(named > 0, "seed {seed}: no figure was named");
+    }
+}
+
+/// A figure that fades leaves the sky as it found it, and another follows.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks until a figure has shown and faded, then on for a minute.
+/// Then: the frame after the fade holds only stars, in the places they held
+/// before the figure, and a new figure shows within the minute.
+///
+/// Why it matters: a dot or a letter left behind builds up into clutter, and
+/// a sky that shows one figure and no more stays still after it.
+#[test]
+fn a_faded_figure_leaves_only_stars() {
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+
+        // When:
+        let mut before;
+        let mut ticks = 0;
+        loop {
+            before = stars(&render(&scene, AREA, AREA), AREA);
+            scene.tick(AREA);
+            ticks += 1;
+            if scene.figure().is_some() {
+                break;
+            }
+            assert!(ticks < RUN, "seed {seed}: no figure");
+        }
+        while scene.figure().is_some() {
+            scene.tick(AREA);
+            ticks += 1;
+            assert!(ticks < RUN, "seed {seed}: the figure never fades");
+        }
+
+        // Then:
+        let after = glyphs(&render(&scene, AREA, AREA), AREA);
+        for (position, glyph) in &after {
+            assert!(
+                role(glyph).is_some(),
+                "seed {seed}: {glyph:?} left at {position:?}"
+            );
+        }
+        assert_eq!(
+            after.keys().collect::<BTreeSet<_>>(),
+            before.keys().collect::<BTreeSet<_>>(),
+            "seed {seed}"
+        );
+        let next = (0..1000).find(|_| {
+            scene.tick(AREA);
+            scene.figure().is_some()
+        });
+        assert!(
+            next.is_some(),
+            "seed {seed}: no second figure within a minute"
+        );
+    }
+}
+
 /// Given: a scene that ticked on a hundred by thirty area.
 /// When: it ticks and renders on a twenty by six area inside a larger
 /// canvas, then on one cell, then on a row of no height, then on none.
@@ -214,5 +465,5 @@ fn constellations_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    assert!(!stars(&buffer, AREA).is_empty());
+    assert!(!glyphs(&buffer, AREA).is_empty());
 }
