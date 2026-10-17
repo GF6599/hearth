@@ -11,6 +11,16 @@ const QUADRANTS: [char; 16] = [
     ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
 ];
 
+/// The quadrant glyph that draws the quarters `glyph` leaves out, or none
+/// for a glyph that is not a quadrant. With its colours swapped it draws
+/// the same cell.
+pub fn complement(glyph: &str) -> Option<char> {
+    let bits = QUADRANTS
+        .iter()
+        .position(|each| glyph.chars().eq([*each]))?;
+    Some(QUADRANTS[QUADRANTS.len() - 1 - bits])
+}
+
 /// The glyph, foreground and background for the pixels of one cell, in the
 /// order of the glyph's bits. A glyph holds two colours, the two most
 /// common, and a pixel of a third takes the foreground rather than `base`,

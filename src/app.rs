@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 
-use crate::config::{self, Config};
+use crate::config::{self, Background, Config};
 use crate::corpus::Corpus;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
+use crate::quadrant;
 use crate::scene::{ALL, Rate, Scene, SceneKind};
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
@@ -27,6 +28,7 @@ enum Mode {
 pub struct App {
     /// The place of the theme in `THEMES`, so `t` knows the next one.
     theme: usize,
+    background: Background,
     panes: Panes,
     corpus: Arc<Corpus>,
     speed: Speed,
@@ -74,6 +76,7 @@ impl App {
     pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
         Self {
             theme: 0,
+            background: Background::Theme,
             panes: Panes::new(Pane::new(
                 kind,
                 seed,
@@ -120,6 +123,7 @@ impl App {
                 *rate = *saved;
             }
         }
+        self.background = config.background;
         if let Some(theme) = config.theme {
             self.theme = theme;
             self.repaint();
@@ -238,6 +242,34 @@ impl App {
         }
         if picking.is_none() && self.notice > 0 {
             self.render_notice(focused, buf);
+        }
+        if self.background == Background::Terminal {
+            self.clear_background(area, buf);
+        }
+    }
+
+    /// Gives every cell in the theme's base or surface the terminal's own
+    /// background. A block glyph drawn in one of them turns over, so the
+    /// other colour stays in front and the picture holds.
+    fn clear_background(&self, area: Rect, buf: &mut Buffer) {
+        let palette = self.palette();
+        let clear = |colour: Color| colour == palette.base || colour == palette.surface;
+        for position in area.positions() {
+            let cell = &mut buf[position];
+            let turned = clear(cell.fg)
+                .then(|| quadrant::complement(cell.symbol()))
+                .flatten();
+            if let Some(glyph) = turned {
+                let front = if clear(cell.bg) {
+                    Color::Reset
+                } else {
+                    cell.bg
+                };
+                let symbol = if front == Color::Reset { ' ' } else { glyph };
+                cell.set_char(symbol).set_fg(front).set_bg(Color::Reset);
+            } else if clear(cell.bg) {
+                cell.set_bg(Color::Reset);
+            }
         }
     }
 
