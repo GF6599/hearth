@@ -105,36 +105,38 @@ pub trait Scene {
     fn set_speed(&mut self, _speed: Speed) {}
 }
 
+/// In the order of `ALL`, because `--help` lists the scenes in the order
+/// of this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SceneKind {
-    Noise,
+    Embers,
+    Ink,
+    Tide,
     Matrix,
     Fire,
-    Embers,
     Life,
     Pipes,
     Bonsai,
     Aquarium,
     Murmuration,
-    Ink,
-    Tide,
     Typing,
+    Noise,
 }
 
 /// The order the picker lists and Tab cycles.
 pub const ALL: &[SceneKind] = &[
-    SceneKind::Noise,
+    SceneKind::Embers,
+    SceneKind::Ink,
+    SceneKind::Tide,
     SceneKind::Matrix,
     SceneKind::Fire,
-    SceneKind::Embers,
     SceneKind::Life,
     SceneKind::Pipes,
     SceneKind::Bonsai,
     SceneKind::Aquarium,
     SceneKind::Murmuration,
-    SceneKind::Ink,
-    SceneKind::Tide,
     SceneKind::Typing,
+    SceneKind::Noise,
 ];
 
 impl SceneKind {
