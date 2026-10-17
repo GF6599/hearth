@@ -67,6 +67,19 @@ const CAR: [&str; 9] = [
 /// Where the car's middle runs, as a share of the road's half width right
 /// of its middle.
 const LANE: f64 = 0.45;
+/// The speed of a car ahead, as a share of the car's speed.
+const TRAFFIC: f64 = 0.4;
+/// The track units the car covers from one car ahead to the next, at the
+/// least and the most.
+const TRAFFIC_GAP: (f64, f64) = (30.0, 80.0);
+/// The fewest cell rows at which a car ahead shows its window, lights and
+/// plate. A smaller car is its outline in its body colour: its sampled
+/// rows miss the roof, and a window with no roof reads as two ears.
+const DETAIL: usize = 5;
+/// The letters of the car from the one a cell of a car ahead shows first,
+/// when its columns of the car hold more than one. The body comes before
+/// the window, so the pillars beside the window stay at any size.
+const SHOWN_FIRST: [u8; 6] = *b"LPBWT.";
 /// The moon's radius and the height of its middle, as shares of the pane's
 /// height. A pixel is half a cell across and half a cell down, so twice as
 /// tall as wide, and the moon spans twice its radius in pixels across.
@@ -100,6 +113,10 @@ pub struct Drive {
     stars: Vec<(f64, f64)>,
     /// How far the sky has slid, as a share of the pane's width.
     sky: f64,
+    /// Where each car ahead is on the track, the nearest first.
+    traffic: Vec<f64>,
+    /// How far the car has come when the next car ahead appears.
+    next_car: f64,
 }
 
 impl Drive {
@@ -121,7 +138,10 @@ impl Drive {
             hills,
             stars,
             sky: 0.0,
+            traffic: Vec::new(),
+            next_car: 0.0,
         };
+        drive.next_car = drive.rng.random_range(TRAFFIC_GAP.0..TRAFFIC_GAP.1);
         drive.track.push_back(Segment {
             start: -EASE,
             length: EASE + 40.0,
@@ -237,7 +257,7 @@ impl Drive {
             let top = (horizon as f64 + step as f64 * (1.0 - rise))
                 .round()
                 .max(0.0) as usize;
-            if top >= drawn {
+            if top > drawn {
                 continue;
             }
             let centre = width / 2.0 + shift * width * BEND;
@@ -268,6 +288,7 @@ impl Drive {
             rows[drawn - 1] = rows[drawn].clone();
         }
         self.draw_posts(&mut rows, &stretches);
+        self.draw_traffic(&mut rows, &stretches, horizon, eye);
         self.draw_car(&mut rows);
         rows
     }
@@ -308,6 +329,77 @@ impl Drive {
                     for row in &mut rows[top..=bottom] {
                         if let Some(pixel) = row.get_mut(x) {
                             *pixel = self.palette.muted;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The cars ahead in the left lane, from far to near, the same car as
+    /// the one driven, shrunk with distance. A car on a stretch hidden
+    /// behind a crest is hidden with it. Each covers whole cells, so no
+    /// cell holds a car and two colours of the road behind it.
+    fn draw_traffic(
+        &self,
+        rows: &mut [Vec<Color>],
+        stretches: &[Option<(usize, f64, f64)>],
+        horizon: usize,
+        eye: f64,
+    ) {
+        let road_rows = stretches.len() - 1;
+        let across = rows.first().map_or(0, Vec::len) as f64;
+        let (wide, tall) = (CAR[0].len() as f64, CAR.len() as f64);
+        for &car in self.traffic.iter().rev() {
+            let near = 1.0 / (car - self.travelled);
+            let step = road_rows as f64 * near;
+            // A car nearer than the bottom row stands on no stretch in
+            // view. The road has not turned yet there, so it is centred.
+            let (base, centre, half) = if step.round() as usize <= road_rows {
+                let Some(Some(stretch)) = stretches.get(step.round() as usize).copied() else {
+                    continue;
+                };
+                stretch
+            } else {
+                let rise = self.altitude(car) - eye;
+                let base = (horizon as f64 + step * (1.0 - rise)).round() as usize;
+                (base, across / 2.0, across * ROAD / 2.0 * near)
+            };
+            let cells_across = (wide * near / 2.0).ceil().max(1.0) as usize;
+            let cells_down = (tall * near / 2.0).ceil().max(1.0) as usize;
+            let middle = centre - half * LANE;
+            let left = ((middle - cells_across as f64) / 2.0).floor() as i64 * 2;
+            let top = (base | 1) as i64 + 1 - 2 * cells_down as i64;
+            for down in 0..cells_down {
+                let line = CAR[((down as f64 + 0.5) * tall / cells_down as f64) as usize];
+                for over in 0..cells_across {
+                    let from = (over as f64 * wide / cells_across as f64) as usize;
+                    let to = (((over + 1) as f64 * wide / cells_across as f64).ceil() as usize)
+                        .max(from + 1);
+                    let Some(letter) = line.as_bytes()[from..to]
+                        .iter()
+                        .min_by_key(|letter| SHOWN_FIRST.iter().position(|first| first == *letter))
+                    else {
+                        continue;
+                    };
+                    let colour = match *letter {
+                        b'.' => continue,
+                        _ if cells_down < DETAIL => self.palette.gold,
+                        b'W' | b'T' => self.palette.base,
+                        b'L' => self.palette.love,
+                        b'P' => self.palette.text,
+                        _ => self.palette.gold,
+                    };
+                    for y in 0..2 {
+                        for x in 0..2 {
+                            let (x, y) = (left + 2 * over as i64 + x, top + 2 * down as i64 + y);
+                            let pixel = usize::try_from(y)
+                                .ok()
+                                .zip(usize::try_from(x).ok())
+                                .and_then(|(y, x)| rows.get_mut(y)?.get_mut(x));
+                            if let Some(pixel) = pixel {
+                                *pixel = colour;
+                            }
                         }
                     }
                 }
@@ -365,6 +457,18 @@ impl Scene for Drive {
         self.sky -= self.curve(self.travelled) * SKY;
         let reach = self.travelled + f64::from(area.height) * 2.0 + EASE;
         self.lay(reach);
+        let travelled = self.travelled;
+        for car in &mut self.traffic {
+            *car += SPEED * TRAFFIC;
+        }
+        // A car a quarter unit ahead stands far below the bottom row.
+        self.traffic.retain(|car| car - travelled > 0.25);
+        if travelled >= self.next_car {
+            let down = usize::from(area.height) * 2;
+            let road_rows = down.saturating_sub((down as f64 * HORIZON) as usize + 1);
+            self.traffic.push(travelled + road_rows.max(1) as f64);
+            self.next_car = travelled + self.rng.random_range(TRAFFIC_GAP.0..TRAFFIC_GAP.1);
+        }
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
