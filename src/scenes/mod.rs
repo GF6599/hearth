@@ -3,6 +3,7 @@ pub mod bonsai;
 pub mod constellations;
 pub mod embers;
 pub mod fire;
+pub mod hourglass;
 pub mod ink;
 pub mod life;
 pub mod matrix;

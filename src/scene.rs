@@ -7,6 +7,7 @@ use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crate::clock::Clock;
 use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scenes::aquarium::Aquarium;
@@ -14,6 +15,7 @@ use crate::scenes::bonsai::Bonsai;
 use crate::scenes::constellations::Constellations;
 use crate::scenes::embers::Embers;
 use crate::scenes::fire::Fire;
+use crate::scenes::hourglass::Hourglass;
 use crate::scenes::ink::Ink;
 use crate::scenes::life::Life;
 use crate::scenes::matrix::Matrix;
@@ -124,6 +126,7 @@ pub enum SceneKind {
     Bonsai,
     Aquarium,
     Murmuration,
+    Hourglass,
     Typing,
     Noise,
 }
@@ -142,6 +145,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Bonsai,
     SceneKind::Aquarium,
     SceneKind::Murmuration,
+    SceneKind::Hourglass,
     SceneKind::Typing,
     SceneKind::Noise,
 ];
@@ -162,6 +166,7 @@ impl SceneKind {
             SceneKind::Tide => "tide",
             SceneKind::Constellations => "constellations",
             SceneKind::Solar => "solar",
+            SceneKind::Hourglass => "hourglass",
             SceneKind::Typing => "typing",
         }
     }
@@ -183,6 +188,7 @@ impl SceneKind {
             SceneKind::Tide => "waves on a beach as the tide comes and goes",
             SceneKind::Constellations => "stars that join into named figures",
             SceneKind::Solar => "eight planets with trails round the sun",
+            SceneKind::Hourglass => "an hourglass that keeps a Pomodoro cycle",
             SceneKind::Typing => "functions typed from a git repository",
         }
     }
@@ -204,6 +210,7 @@ impl SceneKind {
             SceneKind::Tide => None,
             SceneKind::Constellations => None,
             SceneKind::Solar => None,
+            SceneKind::Hourglass => Some("after the Pomodoro Technique by Francesco Cirillo"),
             SceneKind::Typing => Some("after gittype by Yuji Ueki"),
         }
     }
@@ -237,6 +244,7 @@ impl SceneKind {
             SceneKind::Tide => Box::new(Tide::new(rng, palette)),
             SceneKind::Constellations => Box::new(Constellations::new(rng, palette)),
             SceneKind::Solar => Box::new(Solar::new(rng, palette)),
+            SceneKind::Hourglass => Box::new(Hourglass::new(rng, palette, Clock::monotonic())),
             SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
         }
     }

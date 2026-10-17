@@ -1,0 +1,334 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+use std::time::Duration;
+
+use rand::RngExt;
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Position, Rect};
+use ratatui::style::Color;
+
+use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
+use crate::clock::Clock;
+use crate::scene::{Rng, Scene};
+use crate::theme::Palette;
+
+pub const WORK: Duration = Duration::from_secs(25 * 60);
+/// The share of a bulb that the sand fills. Under half, so the pile in the
+/// bottom stays clear of the neck.
+const FILL: f32 = 0.45;
+/// Rows of cells kept free above and below the glass.
+const MARGIN: i32 = 1;
+const WIDTH: i32 = CELL_WIDTH as i32;
+const HEIGHT: i32 = CELL_HEIGHT as i32;
+
+/// The glass in cells. Its walls and its inside are whole cells, so a wall
+/// and the sand never share a cell, which holds one colour.
+#[derive(Debug, Clone, Copy)]
+struct Glass {
+    /// The column of the neck, the middle of the glass.
+    centre: i32,
+    /// The row of the neck.
+    neck: i32,
+    /// The rows in each bulb, which is also the half width of its widest
+    /// row.
+    bulb: i32,
+}
+
+impl Glass {
+    /// The largest glass that fits the pane with its neck on the middle
+    /// row, or `None` when not even one row a bulb fits.
+    fn fit(width: u16, height: u16) -> Option<Glass> {
+        let (width, height) = (i32::from(width), i32::from(height));
+        let (centre, neck) = (width / 2, height / 2);
+        let bulb = (neck - 1 - MARGIN)
+            .min(height - neck - 2 - MARGIN)
+            .min(centre - 1)
+            .min(width - centre - 2);
+        (bulb >= 1).then_some(Glass { centre, neck, bulb })
+    }
+
+    /// The half width of the inside at a row, from the neck's one cell
+    /// out to a bulb's widest row.
+    fn half_width(&self, row: i32) -> Option<i32> {
+        let from_neck = (row - self.neck).abs();
+        (from_neck <= self.bulb).then_some(from_neck)
+    }
+
+    /// Whether a dot is inside the glass, where sand can go.
+    fn holds(&self, x: i32, y: i32) -> bool {
+        x >= 0
+            && y >= 0
+            && self
+                .half_width(y.div_euclid(HEIGHT))
+                .is_some_and(|half| (x.div_euclid(WIDTH) - self.centre).abs() <= half)
+    }
+
+    /// The columns and rows of dots that the inside spans.
+    fn span(&self) -> (Range<i32>, Range<i32>) {
+        (
+            (self.centre - self.bulb) * WIDTH..(self.centre + self.bulb + 1) * WIDTH,
+            (self.neck - self.bulb) * HEIGHT..(self.neck + self.bulb + 1) * HEIGHT,
+        )
+    }
+
+    /// The first row of dots in the neck. A grain above it is in the top.
+    fn gate(&self) -> i32 {
+        self.neck * HEIGHT
+    }
+
+    /// The dots of the inside between two rows of cells, from `first` on
+    /// toward `last`, and in each row from the middle out, the order in
+    /// which sand poured in settles.
+    fn room(&self, first: i32, last: i32) -> Vec<(i32, i32)> {
+        let rows: Vec<i32> = if first <= last {
+            (first * HEIGHT..(last + 1) * HEIGHT).collect()
+        } else {
+            (last * HEIGHT..(first + 1) * HEIGHT).rev().collect()
+        };
+        let middle = 2 * self.centre * WIDTH + 1;
+        rows.into_iter()
+            .flat_map(|y| {
+                let mut row: Vec<(i32, i32)> = self
+                    .span()
+                    .0
+                    .filter(|&x| self.holds(x, y))
+                    .map(|x| (x, y))
+                    .collect();
+                row.sort_by_key(|&(x, _)| (2 * x - middle).abs());
+                row
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug)]
+pub struct Hourglass {
+    palette: &'static Palette,
+    rng: Rng,
+    clock: Clock,
+    width: u16,
+    height: u16,
+    glass: Option<Glass>,
+    /// Whether each dot of the pane holds a grain, row by row.
+    sand: Vec<bool>,
+    total: usize,
+    /// The grains above the neck.
+    top: usize,
+    /// The grains that may move on the next tick, by row and column. A
+    /// grain at rest stays at rest until a dot below it empties, so the
+    /// rest of the pile needs no look.
+    moving: BTreeSet<(i32, i32)>,
+}
+
+impl Hourglass {
+    pub fn new(rng: Rng, palette: &'static Palette, clock: Clock) -> Self {
+        Self {
+            palette,
+            rng,
+            clock,
+            width: 0,
+            height: 0,
+            glass: None,
+            sand: Vec::new(),
+            total: 0,
+            top: 0,
+            moving: BTreeSet::new(),
+        }
+    }
+
+    /// The grains the top holds at this time: all of them at the start of
+    /// the phase and none at its end.
+    fn due(&self) -> usize {
+        let run = self.clock.elapsed().as_secs_f64() / WORK.as_secs_f64();
+        (self.total as f64 * (1.0 - run.min(1.0))).ceil() as usize
+    }
+
+    fn grain(&self, x: i32, y: i32) -> bool {
+        self.place(x, y).is_some_and(|index| self.sand[index])
+    }
+
+    fn set(&mut self, x: i32, y: i32, grain: bool) {
+        if let Some(index) = self.place(x, y) {
+            self.sand[index] = grain;
+        }
+    }
+
+    fn place(&self, x: i32, y: i32) -> Option<usize> {
+        let across = i32::from(self.width) * WIDTH;
+        let down = i32::from(self.height) * HEIGHT;
+        ((0..across).contains(&x) && (0..down).contains(&y))
+            .then(|| usize::try_from(y * across + x).ok())
+            .flatten()
+    }
+
+    /// Lays the glass out for the pane and pours the sand in again, with
+    /// the share in the top that the time left gives.
+    fn lay_out(&mut self) {
+        let dots = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
+        self.sand = vec![false; dots];
+        self.moving.clear();
+        self.glass = Glass::fit(self.width, self.height);
+        let Some(glass) = self.glass else {
+            self.total = 0;
+            self.top = 0;
+            return;
+        };
+        let top = glass.room(glass.neck - 1, glass.neck - glass.bulb);
+        self.total = (top.len() as f32 * FILL) as usize;
+        let due = self.due();
+        let bottom = glass.room(glass.neck + glass.bulb, glass.neck + 1);
+        for (x, y) in top
+            .into_iter()
+            .take(due)
+            .chain(bottom.into_iter().take(self.total - due))
+        {
+            self.set(x, y, true);
+            self.moving.insert((y, x));
+        }
+        self.top = due;
+    }
+
+    /// Lets grains into the neck until the top holds what is due, at most
+    /// one for each dot across the neck in a tick. The grain that goes is
+    /// the lowest in the top, nearest the middle.
+    fn release(&mut self, glass: Glass) {
+        let gate = glass.gate();
+        let due = self.due();
+        for entry in [glass.centre * WIDTH, glass.centre * WIDTH + 1] {
+            if self.top <= due {
+                break;
+            }
+            if self.grain(entry, gate) {
+                continue;
+            }
+            let Some((x, y)) = self.lowest(glass) else {
+                break;
+            };
+            self.set(x, y, false);
+            self.wake_above(x, y);
+            self.set(entry, gate, true);
+            self.moving.insert((gate, entry));
+            self.top -= 1;
+        }
+    }
+
+    /// Marks the grains over a dot that just emptied as free to move.
+    fn wake_above(&mut self, x: i32, y: i32) {
+        for over in x - 1..=x + 1 {
+            if self.grain(over, y - 1) {
+                self.moving.insert((y - 1, over));
+            }
+        }
+    }
+
+    fn lowest(&self, glass: Glass) -> Option<(i32, i32)> {
+        let middle = 2 * glass.centre * WIDTH + 1;
+        (0..glass.gate()).rev().find_map(|y| {
+            glass
+                .span()
+                .0
+                .filter(|&x| self.grain(x, y))
+                .min_by_key(|&x| (2 * x - middle).abs())
+                .map(|x| (x, y))
+        })
+    }
+
+    /// Moves each grain one dot down, or down to one side when the dot
+    /// below is full, so the sand settles at its natural slope. A grain in
+    /// the top cannot pass the gate by itself.
+    fn fall(&mut self, glass: Glass) {
+        let gate = glass.gate();
+        for (y, x) in std::mem::take(&mut self.moving).into_iter().rev() {
+            let below = y + 1;
+            if !self.grain(x, y) || (y < gate && below >= gate) {
+                continue;
+            }
+            let open = |s: &Self, to: i32| glass.holds(to, below) && !s.grain(to, below);
+            let to = if open(self, x) {
+                Some(x)
+            } else {
+                match (open(self, x - 1), open(self, x + 1)) {
+                    (true, true) if self.rng.random_bool(0.5) => Some(x - 1),
+                    (true, true) | (false, true) => Some(x + 1),
+                    (true, false) => Some(x - 1),
+                    (false, false) => None,
+                }
+            };
+            if let Some(to) = to {
+                self.set(x, y, false);
+                self.set(to, below, true);
+                self.moving.insert((below, to));
+                self.wake_above(x, y);
+            }
+        }
+    }
+}
+
+impl Scene for Hourglass {
+    fn tick(&mut self, area: Rect) {
+        if (area.width, area.height) != (self.width, self.height) {
+            self.width = area.width;
+            self.height = area.height;
+            self.lay_out();
+        }
+        let Some(glass) = self.glass else {
+            return;
+        };
+        self.release(glass);
+        self.fall(glass);
+    }
+
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let Some(glass) = self.glass else {
+            return;
+        };
+        let column = |dots: &[(usize, usize)]| {
+            dots.iter()
+                .fold(0, |bits, &(x, y)| bits | braille::dot(x, y))
+        };
+        let falling = column(&[(0, 0), (0, 1), (1, 2), (1, 3)]);
+        let rising = column(&[(1, 0), (1, 1), (0, 2), (0, 3)]);
+        let (left_upright, right_upright) = (
+            column(&[(1, 0), (1, 1), (1, 2), (1, 3)]),
+            column(&[(0, 0), (0, 1), (0, 2), (0, 3)]),
+        );
+        let mut cells: BTreeMap<(i32, i32), (u32, Color)> = BTreeMap::new();
+        for row in glass.neck - glass.bulb..=glass.neck + glass.bulb {
+            let half = (row - glass.neck).abs();
+            let (left, right) = match row.cmp(&glass.neck) {
+                std::cmp::Ordering::Less => (falling, rising),
+                std::cmp::Ordering::Equal => (left_upright, right_upright),
+                std::cmp::Ordering::Greater => (rising, falling),
+            };
+            cells.insert((glass.centre - half - 1, row), (left, self.palette.muted));
+            cells.insert((glass.centre + half + 1, row), (right, self.palette.muted));
+        }
+        let (rim, base) = (column(&[(0, 3), (1, 3)]), column(&[(0, 0), (1, 0)]));
+        for x in glass.centre - glass.bulb - 1..=glass.centre + glass.bulb + 1 {
+            cells.insert((x, glass.neck - glass.bulb - 1), (rim, self.palette.muted));
+            cells.insert((x, glass.neck + glass.bulb + 1), (base, self.palette.muted));
+        }
+        let across = usize::from(self.width) * CELL_WIDTH;
+        for (index, _) in self.sand.iter().enumerate().filter(|(_, grain)| **grain) {
+            let (x, y) = (index % across, index / across);
+            let cell = (
+                i32::try_from(x / CELL_WIDTH).unwrap_or(i32::MAX),
+                i32::try_from(y / CELL_HEIGHT).unwrap_or(i32::MAX),
+            );
+            let entry = cells.entry(cell).or_insert((0, self.palette.gold));
+            entry.0 |= braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
+        }
+
+        for ((column, row), (dots, colour)) in cells {
+            let (Ok(column), Ok(row)) = (u16::try_from(column), u16::try_from(row)) else {
+                continue;
+            };
+            if column >= area.width || row >= area.height {
+                continue;
+            }
+            buf[Position::new(area.x + column, area.y + row)]
+                .set_char(braille::glyph(dots))
+                .set_fg(colour);
+        }
+    }
+}

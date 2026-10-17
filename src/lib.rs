@@ -26,6 +26,7 @@
 pub mod app;
 pub mod braille;
 pub mod cli;
+pub mod clock;
 pub mod config;
 pub mod corpus;
 pub mod dither;
