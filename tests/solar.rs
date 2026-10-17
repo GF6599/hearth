@@ -176,11 +176,12 @@ fn middle(area: Rect) -> (f32, f32) {
     )
 }
 
-/// Each planet keeps to one ellipse round the sun, inside the ellipse of
-/// the next.
+/// Each planet keeps to one ellipse round the middle of the pane, inside
+/// the ellipse of the next.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders long enough for Neptune to go round twice.
-/// Then: each planet's place stays on one ellipse centred on the sun, each
+/// Then: each planet's place stays on one ellipse centred on the middle of
+/// the pane, where the sun stands, each
 /// ellipse lies inside the next, every frame draws each planet where it is,
 /// and every dotted orbit dot lies on one of the ellipses.
 ///
@@ -191,7 +192,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
     for seed in 0..3 {
         // Given:
         let mut scene = ticked(seed, AREA, 1);
-        let centre = sun(&render(&scene, AREA, AREA), AREA);
+        let centre = middle(AREA);
         let mut paths: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 8];
         let mut orbit_dots = Vec::new();
 
