@@ -169,17 +169,13 @@ fn a_bad_value_names_the_file_and_the_key() {
 #[test]
 fn the_background_is_the_themes_unless_the_file_asks_for_the_terminals() {
     for (name, text, expected) in [
-        ("background-none", "", Background::Theme),
+        ("bg-none", "", Background::Theme),
         (
-            "background-terminal",
+            "bg-set-t",
             "background = \"terminal\"\n",
             Background::Terminal,
         ),
-        (
-            "background-theme",
-            "background = \"theme\"\n",
-            Background::Theme,
-        ),
+        ("bg-set-p", "background = \"theme\"\n", Background::Theme),
     ] {
         // Given:
         let path = config_file(name, Some(text));
@@ -191,13 +187,13 @@ fn the_background_is_the_themes_unless_the_file_asks_for_the_terminals() {
         assert_eq!(config.background, expected, "{name}");
     }
 
-    let path = config_file("background-glass", Some("background = \"glass\"\n"));
+    let path = config_file("bg-glass", Some("background = \"glass\"\n"));
     let error = Config::load(&path).unwrap_err();
     for word in ["background", "theme", "terminal"] {
         assert!(error.contains(word), "{error}");
     }
 
-    let path = config_file("background-unknown", Some("backdrop = \"terminal\"\n"));
+    let path = config_file("bg-unknown", Some("backdrop = \"terminal\"\n"));
     let error = Config::load(&path).unwrap_err();
     assert!(error.contains("background"), "{error}");
 }
