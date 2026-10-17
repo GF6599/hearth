@@ -29,6 +29,9 @@ Tab
 # tide
 Sleep 6s
 Tab
+# constellations
+Sleep 8s
+Tab
 # matrix
 Sleep 4s
 Tab
