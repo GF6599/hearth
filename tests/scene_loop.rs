@@ -139,8 +139,8 @@ fn r_restarts_the_scene_with_a_new_seed() {
 
 /// Given: the noise scene, ticked once.
 /// When: Tab is pressed and the app ticks ten times.
-/// Then: the frame is the matrix scene's, started on the next seed, and no
-/// longer the noise scene's.
+/// Then: the frame is that of the scene after noise in the list, wrapping
+/// to the first, started on the next seed, and no longer the noise scene's.
 ///
 /// Why it matters: Tab is the only way to walk the scenes without the
 /// picker, and a cycle of one scene cannot show that it moves.
@@ -152,16 +152,20 @@ fn tab_moves_to_the_next_scene() {
 
     // When:
     send(&mut app, vec![press(KeyCode::Tab, KeyModifiers::NONE)]);
-    let mut matrix = App::new(SceneKind::Matrix, 8, corpus());
+    let noise_at = ALL
+        .iter()
+        .position(|kind| *kind == SceneKind::Noise)
+        .unwrap();
+    let mut next = App::new(ALL[(noise_at + 1) % ALL.len()], 8, corpus());
     for _ in 0..10 {
         app.tick(Rect::new(0, 0, WIDTH, HEIGHT));
-        matrix.tick(Rect::new(0, 0, WIDTH, HEIGHT));
+        next.tick(Rect::new(0, 0, WIDTH, HEIGHT));
     }
 
     // Then:
     let after = frame(&app, WIDTH, HEIGHT);
     assert_ne!(after, noise);
-    assert_eq!(after, frame(&matrix, WIDTH, HEIGHT));
+    assert_eq!(after, frame(&next, WIDTH, HEIGHT));
 }
 
 #[test]

@@ -655,6 +655,7 @@ fn a_new_typing_speed_reaches_every_typing_pane() {
         .iter()
         .position(|kind| *kind == SceneKind::Typing)
         .unwrap();
+    send(&mut app, &vec![KeyCode::Char('k'); ALL.len()]);
     send(&mut app, &vec![KeyCode::Char('j'); typing]);
     send(&mut app, &[KeyCode::Enter]);
 
