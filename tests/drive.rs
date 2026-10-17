@@ -398,3 +398,181 @@ fn the_road_rises_and_falls_over_hills() {
         "the road's top only moved from {highest} to {lowest}"
     );
 }
+
+/// The bend of the road in a frame: how far its centre moves from the
+/// bottom row to the top, in pixels, positive to the right.
+fn bend(rows: &[Vec<Color>]) -> f32 {
+    let road = road(rows);
+    let middle = |(_, left, right): (usize, usize, usize)| (left + right) as f32 / 2.0;
+    middle(road[0]) - middle(*road.last().unwrap())
+}
+
+/// The car keeps to its lane at the bottom and leans into a curve.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over straights and curves both ways.
+/// Then: the car, in iris, lies in the bottom fifth of the pane, inside
+/// the road and right of its middle. On a straight its top is over its
+/// bottom, and on average its top leans right in right bends and left in
+/// left bends.
+///
+/// Why it matters: a car off the road reads as a crash, and a car that
+/// stays upright in a curve takes away the turn.
+#[test]
+fn the_car_keeps_its_lane_and_leans_into_a_curve() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let height = usize::from(AREA.height) * 2;
+    let (mut right, mut left) = (Vec::new(), Vec::new());
+
+    for tick in 0..RUN * 2 {
+        // When:
+        scene.tick(AREA);
+        if tick % 5 != 0 {
+            continue;
+        }
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let car: Vec<(usize, usize)> = rows
+            .iter()
+            .enumerate()
+            .flat_map(|(y, row)| {
+                row.iter()
+                    .enumerate()
+                    .filter(|(_, colour)| **colour == PALETTE.iris)
+                    .map(move |(x, _)| (x, y))
+            })
+            .collect();
+        assert!(!car.is_empty(), "tick {tick}: no car");
+        let road = road(&rows);
+        for &(x, y) in &car {
+            assert!(
+                y >= height * 4 / 5,
+                "tick {tick}: car at {:?} above the bottom fifth",
+                (x, y)
+            );
+            let (_, left_edge, right_edge) =
+                road.iter().find(|(row, _, _)| *row == y).copied().unwrap();
+            let middle = (left_edge + right_edge) as f32 / 2.0;
+            assert!(
+                x >= left_edge && x <= right_edge && x as f32 > middle,
+                "tick {tick}: car at {:?} not in the right lane of {:?}",
+                (x, y),
+                (left_edge, right_edge)
+            );
+        }
+        let centre_of = |y: usize| {
+            let xs: Vec<usize> = car
+                .iter()
+                .filter(|(_, at)| *at == y)
+                .map(|(x, _)| *x)
+                .collect();
+            xs.iter().sum::<usize>() as f32 / xs.len() as f32
+        };
+        let (top, bottom) = (
+            car.iter().map(|(_, y)| *y).min().unwrap(),
+            car.iter().map(|(_, y)| *y).max().unwrap(),
+        );
+        let lean = centre_of(top) - centre_of(bottom);
+        let bend = bend(&rows);
+        if bend.abs() <= 2.0 {
+            assert!(
+                lean.abs() <= 0.5,
+                "tick {tick}: the car leans {lean} on a straight"
+            );
+        } else if bend > 10.0 {
+            right.push(lean);
+        } else if bend < -10.0 {
+            left.push(lean);
+        }
+    }
+    let mean = |leans: &[f32]| leans.iter().sum::<f32>() / leans.len() as f32;
+    assert!(
+        mean(&right) > 0.5 && mean(&left) < -0.5,
+        "the car leans {} in right bends and {} in left bends",
+        mean(&right),
+        mean(&left)
+    );
+}
+
+/// The posts beside the road grow as they come near and move outward.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over the track.
+/// Then: posts, upright runs of muted pixels, stand in every frame on both
+/// sides of the road. On each side a post lower on the screen is no
+/// shorter and no nearer the road's middle than one above it, and the
+/// lowest post on the right moves in most sampled frames.
+///
+/// Why it matters: posts that do not grow and spread as they come near
+/// stop reading as passing by, and the speed goes with them.
+#[test]
+fn the_posts_grow_as_they_come_near_and_move_outward() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let mut lowest: Vec<(usize, usize)> = Vec::new();
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 7 != 0 {
+            continue;
+        }
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let mut posts: Vec<(usize, usize, usize)> = Vec::new();
+        for x in 0..rows[0].len() {
+            let mut run = 0;
+            for (y, row) in rows.iter().enumerate() {
+                if row[x] == PALETTE.muted {
+                    run += 1;
+                } else if run > 0 {
+                    posts.push((x, y - 1, run));
+                    run = 0;
+                }
+            }
+            if run > 0 {
+                posts.push((x, rows.len() - 1, run));
+            }
+        }
+        let road = road(&rows);
+        let middle_at = |y: usize| {
+            road.iter()
+                .find(|(row, _, _)| *row == y)
+                .map(|(_, left, right)| (left + right) as f32 / 2.0)
+        };
+        let mut sides: [Vec<(usize, usize, f32)>; 2] = [Vec::new(), Vec::new()];
+        for (x, bottom, height) in posts {
+            let Some(middle) = middle_at(bottom) else {
+                continue;
+            };
+            let out = x as f32 - middle;
+            sides[usize::from(out > 0.0)].push((bottom, height, out.abs()));
+        }
+        for side in &mut sides {
+            assert!(!side.is_empty(), "tick {tick}: no post on a side");
+            side.sort_by_key(|(bottom, _, _)| *bottom);
+            for pair in side.windows(2) {
+                let ((upper, upper_height, upper_out), (lower, lower_height, lower_out)) =
+                    (pair[0], pair[1]);
+                if lower > upper {
+                    assert!(
+                        lower_height + 1 >= upper_height && lower_out + 1.0 >= upper_out,
+                        "tick {tick}: a post at row {lower} is smaller or nearer the middle than one at row {upper}"
+                    );
+                }
+            }
+        }
+        let low = sides[1]
+            .last()
+            .map(|(bottom, height, _)| (*bottom, *height))
+            .unwrap();
+        lowest.push(low);
+    }
+    let moves = lowest.windows(2).filter(|pair| pair[0] != pair[1]).count();
+    assert!(
+        moves * 2 > lowest.len(),
+        "the lowest post moved in {moves} of {} frames",
+        lowest.len()
+    );
+}
