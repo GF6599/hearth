@@ -590,3 +590,112 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
         lowest.len()
     );
 }
+
+/// The top, bottom, left and right pixel of each car ahead in a frame. A
+/// car ahead is a run of gold rows, and a gap of more than three rows
+/// starts the next car.
+fn cars_ahead(rows: &[Vec<Color>]) -> Vec<(usize, usize, usize, usize)> {
+    let mut cars: Vec<(usize, usize, usize, usize)> = Vec::new();
+    for (y, row) in rows.iter().enumerate() {
+        let (Some(left), Some(right)) = (
+            row.iter().position(|colour| *colour == PALETTE.gold),
+            row.iter().rposition(|colour| *colour == PALETTE.gold),
+        ) else {
+            continue;
+        };
+        match cars.last_mut() {
+            Some(car) if y <= car.1 + 4 => {
+                *car = (car.0, y, car.2.min(left), car.3.max(right));
+            }
+            _ => cars.push((y, y, left, right)),
+        }
+    }
+    cars
+}
+
+/// Slower cars ahead in the other lane come near and drop behind.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over the track, and each car ahead, in gold, is followed
+/// from frame to frame.
+/// Then: every pixel of a car lies on the road and left of its middle, at
+/// the car's lowest row. While a car is all in view it never narrows by
+/// more than a cell from one frame to the next. Several cars come from the
+/// far road at a cell or two wide and leave through the bottom row, wider
+/// than they came.
+///
+/// Why it matters: a car ahead that drifts into the car's lane reads as a
+/// crash, and one that shrinks or vanishes mid-road reads as a fault.
+#[test]
+fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let bottom = usize::from(AREA.height) * 2 - 1;
+    let width = |car: (usize, usize, usize, usize)| car.3 - car.2 + 1;
+    // The first and the last sighting of each car followed so far.
+    let mut followed: Vec<((usize, usize, usize, usize), (usize, usize, usize, usize))> =
+        Vec::new();
+    let mut passed = 0;
+
+    for tick in 0..RUN * 2 {
+        // When:
+        scene.tick(AREA);
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let cars = cars_ahead(&rows);
+
+        // Then:
+        let road = road(&rows);
+        for &(top, lowest, _, _) in &cars {
+            let (_, left_edge, right_edge) = road
+                .iter()
+                .find(|(row, _, _)| *row == lowest)
+                .copied()
+                .unwrap_or_else(|| panic!("tick {tick}: no road under the car at row {lowest}"));
+            let middle = (left_edge + right_edge) as f32 / 2.0;
+            for (y, row) in rows.iter().enumerate().take(lowest + 1).skip(top) {
+                for (x, colour) in row.iter().enumerate() {
+                    if *colour == PALETTE.gold {
+                        assert!(
+                            x >= left_edge && (x as f32) < middle,
+                            "tick {tick}: car ahead at {:?} not in the left lane of {:?}",
+                            (x, y),
+                            (left_edge, right_edge)
+                        );
+                    }
+                }
+            }
+        }
+        let mut next = Vec::new();
+        for &car in &cars {
+            let before = followed
+                .iter()
+                .position(|(_, last)| car.0 <= last.1 + 6 && last.0 <= car.1 + 6);
+            match before {
+                Some(index) => {
+                    let (first, last) = followed.swap_remove(index);
+                    if last.1 + 4 < bottom && car.1 + 4 < bottom {
+                        assert!(
+                            width(car) + 2 >= width(last),
+                            "tick {tick}: a car ahead narrowed from {last:?} to {car:?}"
+                        );
+                    }
+                    next.push((first, car));
+                }
+                None => next.push((car, car)),
+            }
+        }
+        for (first, last) in followed {
+            if last.1 == bottom && width(first) <= 4 {
+                assert!(
+                    width(last) > width(first) + 8,
+                    "tick {tick}: a car ahead left at {last:?} no wider than it came at {first:?}"
+                );
+                passed += 1;
+            }
+        }
+        followed = next;
+    }
+    assert!(
+        passed >= 3,
+        "{passed} cars ahead came near and dropped behind"
+    );
+}
