@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+use std::collections::HashSet;
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
@@ -24,6 +25,12 @@ const EARTH: usize = 2;
 /// The furthest Saturn's ring reaches from its middle, in dots, with room
 /// to spare.
 const SATURN_REACH: f32 = 9.0;
+/// The furthest any planet's body reaches from its middle, in dots, with
+/// room to spare.
+const BODY_REACH: f32 = 3.0;
+/// The planets that share their colour with no other body. Mercury shares
+/// subtle with the Moon, and Saturn shares gold with the sun.
+const OWN_COLOUR: [usize; 6] = [1, 2, 3, 4, 6, 7];
 /// The role each planet draws in, Mercury to Neptune.
 fn roles() -> [Color; 8] {
     [
@@ -77,20 +84,46 @@ fn dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
     dots
 }
 
-/// The gold dots of a render that are not Saturn or its ring, which are
-/// gold too.
-fn sun_dots(scene: &Solar, buffer: &Buffer, area: Rect) -> Vec<(f32, f32)> {
-    let saturn = scene.planets()[SATURN];
-    dots(buffer, area)
+/// The sun's dots: the largest group of touching gold dots. Saturn, its
+/// ring and its trail are gold too, and lie well apart from the sun.
+fn sun_dots(buffer: &Buffer, area: Rect) -> Vec<(f32, f32)> {
+    let gold: HashSet<(i32, i32)> = dots(buffer, area)
         .into_iter()
-        .filter(|(dot, colour)| *colour == PALETTE.gold && distance(*dot, saturn) > SATURN_REACH)
-        .map(|(dot, _)| dot)
+        .filter(|(_, colour)| *colour == PALETTE.gold)
+        .map(|(dot, _)| (dot.0 as i32, dot.1 as i32))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut largest = Vec::new();
+    for &start in &gold {
+        if !seen.insert(start) {
+            continue;
+        }
+        let mut group = vec![start];
+        let mut next = vec![start];
+        while let Some((x, y)) = next.pop() {
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let near = (x + dx, y + dy);
+                    if gold.contains(&near) && seen.insert(near) {
+                        group.push(near);
+                        next.push(near);
+                    }
+                }
+            }
+        }
+        if group.len() > largest.len() {
+            largest = group;
+        }
+    }
+    largest
+        .into_iter()
+        .map(|(x, y)| (x as f32, y as f32))
         .collect()
 }
 
 /// The middle of the sun's dots.
-fn sun(scene: &Solar, buffer: &Buffer, area: Rect) -> (f32, f32) {
-    let gold = sun_dots(scene, buffer, area);
+fn sun(buffer: &Buffer, area: Rect) -> (f32, f32) {
+    let gold = sun_dots(buffer, area);
     assert!(!gold.is_empty(), "no sun in {area:?}");
     let count = gold.len() as f32;
     let (x, y) = gold
@@ -134,7 +167,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
     for seed in 0..3 {
         // Given:
         let mut scene = ticked(seed, AREA, 1);
-        let centre = sun(&scene, &render(&scene, AREA, AREA), AREA);
+        let centre = sun(&render(&scene, AREA, AREA), AREA);
         let mut paths: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 8];
         let mut orbit_dots = Vec::new();
 
@@ -224,7 +257,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
 fn an_inner_planet_goes_round_faster_than_an_outer_one() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
-    let centre = sun(&scene, &render(&scene, AREA, AREA), AREA);
+    let centre = sun(&render(&scene, AREA, AREA), AREA);
     let angle = |planet: (f32, f32)| (planet.1 - centre.1).atan2(planet.0 - centre.0);
     let mut last: Vec<f32> = scene.planets().into_iter().map(angle).collect();
     let mut turned = vec![0.0_f32; last.len()];
@@ -268,7 +301,7 @@ fn the_sun_stays_in_the_middle_after_a_resize() {
     for area in [AREA, Rect::new(0, 0, 60, 20)] {
         // When:
         scene.tick(area);
-        let centre = sun(&scene, &render(&scene, area, area), area);
+        let centre = sun(&render(&scene, area, area), area);
 
         // Then:
         let middle = middle(area);
@@ -348,8 +381,8 @@ fn solar_is_a_scene_by_name() {
 /// Then: where a planet stands clear of the sun and of every other body,
 /// its cell shows its own colour. The Moon stays within a few dots of Earth,
 /// goes round it more than twice, and shows in its colour where it stands
-/// clear. Every gold dot away from the sun lies near Saturn, and those dots
-/// reach further across than up and down.
+/// clear. Where Saturn stands clear of every other body, its gold reaches
+/// past its body on both sides at its own height.
 ///
 /// Why it matters: planets in one colour read as dots and not as a solar
 /// system, a Moon that wanders off reads as a stray planet, and a ring that
@@ -358,13 +391,14 @@ fn solar_is_a_scene_by_name() {
 fn each_planet_has_its_colour_the_moon_and_the_ring() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
-    let centre = sun(&scene, &render(&scene, AREA, AREA), AREA);
-    let reach = sun_dots(&scene, &render(&scene, AREA, AREA), AREA)
+    let centre = sun(&render(&scene, AREA, AREA), AREA);
+    let reach = sun_dots(&render(&scene, AREA, AREA), AREA)
         .iter()
         .map(|dot| distance(*dot, centre))
         .fold(0.0, f32::max);
     let mut checked = [0; 8];
     let mut moon_checked = 0;
+    let mut ring_checked = 0;
     let mut moon_turned = 0.0_f32;
     let earth_angle =
         |moon: (f32, f32), earth: (f32, f32)| (moon.1 - earth.1).atan2(moon.0 - earth.0);
@@ -419,34 +453,32 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         moon_last = now;
 
         let saturn = planets[SATURN];
-        let away: Vec<(f32, f32)> = dots(&buffer, AREA)
-            .into_iter()
-            .filter(|(dot, colour)| *colour == PALETTE.gold && distance(*dot, centre) > reach + 1.0)
-            .map(|(dot, _)| dot)
-            .collect();
-        for dot in &away {
+        let saturn_clear = bodies
+            .iter()
+            .enumerate()
+            .all(|(other, place)| other == SATURN || distance(*place, saturn) > SATURN_REACH + 6.0);
+        if saturn_clear {
+            let gold = dots(&buffer, AREA);
+            let reaches = |side: f32| {
+                gold.iter().any(|(dot, colour)| {
+                    let across = side * (dot.0 - saturn.0);
+                    *colour == PALETTE.gold
+                        && (dot.1 - saturn.1).abs() <= 1.0
+                        && (3.5..=SATURN_REACH).contains(&across)
+                })
+            };
             assert!(
-                distance(*dot, saturn) <= SATURN_REACH,
-                "a gold dot {dot:?} away from Saturn {saturn:?} at tick {tick}"
+                reaches(-1.0) && reaches(1.0),
+                "no flat ring round Saturn {saturn:?} at tick {tick}"
             );
+            ring_checked += 1;
         }
-        let across = away
-            .iter()
-            .map(|dot| (dot.0 - saturn.0).abs())
-            .fold(0.0, f32::max);
-        let down = away
-            .iter()
-            .map(|dot| (dot.1 - saturn.1).abs())
-            .fold(0.0, f32::max);
-        assert!(
-            across > down * 1.5,
-            "Saturn {across} across and {down} down at tick {tick}"
-        );
     }
     for (index, count) in checked.iter().enumerate() {
         assert!(*count > 50, "planet {index} checked {count} times");
     }
     assert!(moon_checked > 50, "the Moon checked {moon_checked} times");
+    assert!(ring_checked > 50, "the ring checked {ring_checked} times");
     assert!(
         moon_turned.abs() > 2.0 * TAU,
         "the Moon turned {moon_turned}"
@@ -466,8 +498,8 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
     let first = render(&scene, AREA, AREA);
-    let centre = sun(&scene, &first, AREA);
-    let reach = sun_dots(&scene, &first, AREA)
+    let centre = sun(&first, AREA);
+    let reach = sun_dots(&first, AREA)
         .iter()
         .map(|dot| distance(*dot, centre))
         .fold(0.0, f32::max);
@@ -496,4 +528,90 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
         in_front > 0 && behind > 0,
         "{in_front} in front, {behind} behind"
     );
+}
+
+/// Each planet leaves a short trail behind it that thins toward its end.
+/// Given: the scene at a hundred by thirty, ticked until Neptune has gone
+/// round once, so each orbit's size is known.
+/// When: it ticks and renders for a while longer.
+/// Then: every dot in a planet's own colour away from its body lies on its
+/// orbit, behind it, and within an eighth of a turn. The second quarter of
+/// the trail holds more than twice the dots of the last quarter, and the
+/// last quarter is not empty.
+///
+/// Why it matters: a trail ahead of a planet or off its orbit reads as a
+/// fault, and a trail that ends in a hard edge reads as a second body.
+#[test]
+fn each_planet_leaves_a_trail_that_thins_behind_it() {
+    // Given:
+    let mut scene = ticked(7, AREA, 0);
+    let mut paths: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 8];
+    for _ in 0..1600 {
+        scene.tick(AREA);
+        for (path, planet) in paths.iter_mut().zip(scene.planets()) {
+            path.push(planet);
+        }
+    }
+    let orbits: Vec<((f32, f32), f32, f32)> = paths
+        .iter()
+        .map(|path| {
+            let (left, right) = path
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(l, r), p| (l.min(p.0), r.max(p.0)));
+            let (top, bottom) = path
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(t, b), p| (t.min(p.1), b.max(p.1)));
+            (
+                ((left + right) / 2.0, (top + bottom) / 2.0),
+                (right - left) / 2.0,
+                (bottom - top) / 2.0,
+            )
+        })
+        .collect();
+    let angle = |index: usize, place: (f32, f32)| {
+        let (centre, across, down) = orbits[index];
+        (-(place.1 - centre.1) / down).atan2((place.0 - centre.0) / across)
+    };
+    let eighth = TAU / 8.0;
+    let mut quarters = [[0; 4]; 8];
+
+    for tick in 0..600 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let planets = scene.planets();
+
+        // Then:
+        let lit = dots(&buffer, AREA);
+        for index in OWN_COLOUR {
+            let planet = planets[index];
+            let role = roles()[index];
+            let (centre, across, down) = orbits[index];
+            for (dot, _) in lit
+                .iter()
+                .filter(|(dot, colour)| *colour == role && distance(*dot, planet) > BODY_REACH)
+            {
+                let at = angle(index, *dot);
+                let on_orbit = (centre.0 + across * at.cos(), centre.1 - down * at.sin());
+                assert!(
+                    distance(*dot, on_orbit) <= 1.5,
+                    "planet {index}: {dot:?} off its orbit at tick {tick}"
+                );
+                let lag = (angle(index, planet) - at).rem_euclid(TAU);
+                assert!(
+                    lag <= eighth + 0.1,
+                    "planet {index}: {dot:?} is {lag} behind it at tick {tick}"
+                );
+                quarters[index][((lag / eighth * 4.0) as usize).min(3)] += 1;
+            }
+        }
+    }
+    for index in OWN_COLOUR {
+        let [_, second, _, last] = quarters[index];
+        assert!(
+            last > 0 && second > 2 * last,
+            "planet {index}: quarters {:?}",
+            quarters[index]
+        );
+    }
 }
