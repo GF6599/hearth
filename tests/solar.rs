@@ -22,12 +22,18 @@ const PALETTE: &Palette = &theme::ROSE_PINE;
 const RUN: u32 = 3000;
 const SATURN: usize = 5;
 const EARTH: usize = 2;
+const MOON: usize = 8;
 /// The furthest Saturn's ring reaches from its middle, in dots, with room
 /// to spare.
-const SATURN_REACH: f32 = 9.0;
-/// The furthest any planet's body reaches from its middle, in dots, with
-/// room to spare.
-const BODY_REACH: f32 = 3.0;
+const SATURN_REACH: f32 = 10.0;
+/// How far a body's cells reach from its middle, across and down, in dots,
+/// with room to spare. A planet lights every cell its disc touches, so it
+/// reaches up to a cell further than its disc.
+const PLANET_SPAN: (f32, f32) = (6.0, 8.0);
+const EARTH_SPAN: (f32, f32) = (4.0, 6.0);
+const MOON_SPAN: (f32, f32) = (1.5, 1.5);
+/// A braille cell with all eight dots lit.
+const FULL: &str = "\u{28ff}";
 /// The planets that share their colour with no other body. Mercury shares
 /// subtle with the Moon, and Saturn shares gold with the sun.
 const OWN_COLOUR: [usize; 6] = [1, 2, 3, 4, 6, 7];
@@ -130,6 +136,24 @@ fn sun(buffer: &Buffer, area: Rect) -> (f32, f32) {
         .iter()
         .fold((0.0, 0.0), |sum, dot| (sum.0 + dot.0, sum.1 + dot.1));
     (x / count, y / count)
+}
+
+/// Whether a body, a planet by its index or the Moon, stands far enough
+/// from the sun and from every other body that no other cell can cover its
+/// own.
+fn stands_clear(bodies: &[(f32, f32)], index: usize, centre: (f32, f32), reach: f32) -> bool {
+    let span = |body: usize| match body {
+        MOON => MOON_SPAN,
+        EARTH => EARTH_SPAN,
+        _ => PLANET_SPAN,
+    };
+    let place = bodies[index];
+    distance(place, centre) > reach + 4.0
+        && bodies.iter().enumerate().all(|(other, near)| {
+            other == index
+                || (near.0 - place.0).abs() > span(index).0 + span(other).0 + 1.0
+                || (near.1 - place.1).abs() > span(index).1 + span(other).1 + 1.0
+        })
 }
 
 fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
@@ -414,14 +438,7 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         // Then:
         let mut bodies: Vec<(f32, f32)> = planets.clone();
         bodies.push(moon);
-        let clear = |index: usize| {
-            let cell = cell_of(bodies[index]);
-            distance(bodies[index], centre) > reach + 4.0
-                && bodies.iter().enumerate().all(|(other, place)| {
-                    let near = cell_of(*place);
-                    other == index || (near.0.abs_diff(cell.0) > 2 || near.1.abs_diff(cell.1) > 1)
-                })
-        };
+        let clear = |index: usize| stands_clear(&bodies, index, centre, reach);
         for (index, role) in roles().iter().enumerate() {
             if clear(index) {
                 let cell = cell_of(planets[index]);
@@ -430,11 +447,11 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
             }
         }
         assert!(
-            distance(moon, planets[EARTH]) <= 4.5,
+            distance(moon, planets[EARTH]) <= 7.5,
             "the Moon {moon:?} far from Earth {:?} at tick {tick}",
             planets[EARTH]
         );
-        if clear(8) {
+        if clear(MOON) {
             assert_eq!(
                 buffer[cell_of(moon)].fg,
                 PALETTE.subtle,
@@ -456,7 +473,7 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         let saturn_clear = bodies
             .iter()
             .enumerate()
-            .all(|(other, place)| other == SATURN || distance(*place, saturn) > SATURN_REACH + 6.0);
+            .all(|(other, place)| other == SATURN || distance(*place, saturn) > SATURN_REACH + 8.0);
         if saturn_clear {
             let gold = dots(&buffer, AREA);
             let reaches = |side: f32| {
@@ -464,7 +481,7 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
                     let across = side * (dot.0 - saturn.0);
                     *colour == PALETTE.gold
                         && (dot.1 - saturn.1).abs() <= 1.0
-                        && (3.5..=SATURN_REACH).contains(&across)
+                        && (6.5..=SATURN_REACH).contains(&across)
                 })
             };
             assert!(
@@ -534,8 +551,8 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
 /// Given: the scene at a hundred by thirty, ticked until Neptune has gone
 /// round once, so each orbit's size is known.
 /// When: it ticks and renders for a while longer.
-/// Then: every dot in a planet's own colour away from its body lies on its
-/// orbit, behind it, and within an eighth of a turn. The second quarter of
+/// Then: every dot in a planet's own colour outside its full cells lies on
+/// its orbit, behind it, and within an eighth of a turn. The second quarter of
 /// the trail holds more than twice the dots of the last quarter, and the
 /// last quarter is not empty.
 ///
@@ -589,7 +606,7 @@ fn each_planet_leaves_a_trail_that_thins_behind_it() {
             let (centre, across, down) = orbits[index];
             for (dot, _) in lit
                 .iter()
-                .filter(|(dot, colour)| *colour == role && distance(*dot, planet) > BODY_REACH)
+                .filter(|(dot, colour)| *colour == role && buffer[cell_of(*dot)].symbol() != FULL)
             {
                 let at = angle(index, *dot);
                 let on_orbit = (centre.0 + across * at.cos(), centre.1 - down * at.sin());
@@ -613,5 +630,71 @@ fn each_planet_leaves_a_trail_that_thins_behind_it() {
             "planet {index}: quarters {:?}",
             quarters[index]
         );
+    }
+}
+
+/// Each planet stands out from its trail as a solid cluster of full cells.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders for a minute and a half.
+/// Then: where a planet stands clear of the sun and of every other body,
+/// the cell at its middle is full, and its full cells span at least two
+/// columns and two rows.
+///
+/// Why it matters: a planet drawn as a few dots reads as one more dot of
+/// its own trail.
+#[test]
+fn each_planet_is_a_solid_cluster_of_full_cells() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let first = render(&scene, AREA, AREA);
+    let centre = sun(&first, AREA);
+    let reach = sun_dots(&first, AREA)
+        .iter()
+        .map(|dot| distance(*dot, centre))
+        .fold(0.0, f32::max);
+    let mut checked = [0; 8];
+
+    for tick in 0..1500 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let planets = scene.planets();
+
+        // Then:
+        let mut bodies = planets.clone();
+        bodies.push(scene.moon());
+        for (index, role) in roles().iter().enumerate() {
+            if !stands_clear(&bodies, index, centre, reach) {
+                continue;
+            }
+            let middle = cell_of(planets[index]);
+            assert_eq!(
+                buffer[middle].symbol(),
+                FULL,
+                "planet {index} at tick {tick}"
+            );
+            let full: Vec<(u16, u16)> = AREA
+                .positions()
+                .filter(|position| {
+                    position.x.abs_diff(middle.0) <= 4
+                        && position.y.abs_diff(middle.1) <= 3
+                        && buffer[*position].symbol() == FULL
+                        && buffer[*position].fg == *role
+                })
+                .map(|position| (position.x, position.y))
+                .collect();
+            let columns: HashSet<u16> = full.iter().map(|cell| cell.0).collect();
+            let rows: HashSet<u16> = full.iter().map(|cell| cell.1).collect();
+            assert!(
+                columns.len() >= 2 && rows.len() >= 2,
+                "planet {index} spans {} columns and {} rows at tick {tick}",
+                columns.len(),
+                rows.len()
+            );
+            checked[index] += 1;
+        }
+    }
+    for (index, count) in checked.iter().enumerate() {
+        assert!(*count > 50, "planet {index} checked {count} times");
     }
 }
