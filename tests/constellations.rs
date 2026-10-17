@@ -484,6 +484,14 @@ const SKY_RUN: u32 = 3000;
 /// The most ticks one shooting star shows, about three seconds.
 const STREAK_TICKS: u32 = 50;
 
+/// One shooting star so far: the middle of its dots on its first frame
+/// and on its last, and its frames.
+struct Streak {
+    first: (f32, f32),
+    last: (f32, f32),
+    ticks: u32,
+}
+
 fn gold_dots(buffer: &Buffer) -> Vec<(f32, f32)> {
     line_dots(buffer, AREA)
         .into_iter()
@@ -520,7 +528,7 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
     for seed in 0..5 {
         // Given:
         let mut scene = ticked(seed, AREA, 1);
-        let mut streak: Option<((f32, f32), (f32, f32), u32)> = None;
+        let mut streak: Option<Streak> = None;
         let mut streaks = 0;
 
         for tick in 0..SKY_RUN {
@@ -530,7 +538,7 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
 
             // Then:
             if dots.is_empty() {
-                if let Some((first, last, ticks)) = streak.take() {
+                if let Some(Streak { first, last, ticks }) = streak.take() {
                     assert!(
                         ticks <= STREAK_TICKS,
                         "seed {seed}: a streak shows {ticks} ticks, to tick {tick}"
@@ -569,8 +577,16 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
             }
             let here = centroid(&dots);
             streak = Some(match streak {
-                Some((first, _, ticks)) => (first, here, ticks + 1),
-                None => (here, here, 1),
+                Some(Streak { first, ticks, .. }) => Streak {
+                    first,
+                    last: here,
+                    ticks: ticks + 1,
+                },
+                None => Streak {
+                    first: here,
+                    last: here,
+                    ticks: 1,
+                },
             });
         }
         assert!(streaks > 1, "seed {seed}: {streaks} shooting stars");
