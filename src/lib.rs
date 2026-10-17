@@ -7,6 +7,7 @@
 //!              ├── config    The preferences kept between runs
 //!              ├── dither    The ordered dither the scenes share
 //!              ├── app       The panes, the picker, and the keys
+//!              ├── braille   Eight dots to a cell, in braille glyphs
 //!              ├── events    Terminal events → App mutations
 //!              ├── mark      The {hearth} lockup above the picker
 //!              ├── pane      One scene, its seed, and the ticks it owes
@@ -23,6 +24,7 @@
 //! ```
 
 pub mod app;
+pub mod braille;
 pub mod cli;
 pub mod config;
 pub mod corpus;

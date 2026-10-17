@@ -5,6 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::dither;
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
@@ -14,10 +15,6 @@ use crate::theme::{self, Palette};
 pub const DOTS_PER_BIRD: usize = 80;
 pub const FLOCK: RangeInclusive<usize> = 60..=500;
 
-/// A braille cell is two dots wide and four tall.
-const CELL_WIDTH: usize = 2;
-const CELL_HEIGHT: usize = 4;
-const BLANK_BRAILLE: u32 = 0x2800;
 /// A cell with more dots than this draws in the bright role.
 const FAINT_DOTS: u32 = 2;
 
@@ -297,18 +294,6 @@ impl Murmuration {
     }
 }
 
-/// The bit of a dot in a braille glyph. Dots 7 and 8, the bottom row, came
-/// to the standard after the six dots of the two columns, so they take the
-/// two high bits.
-fn dot_bit(column: usize, row: usize) -> u32 {
-    match (column, row) {
-        (0, 3) => 1 << 6,
-        (_, 3) => 1 << 7,
-        (0, row) => 1 << row,
-        (_, row) => 1 << (row + 3),
-    }
-}
-
 impl Murmuration {
     /// A line of crowns over a ground one pixel high: mostly domes, and now
     /// and then a narrow pointed one. No crown fills every tree row, so the
@@ -398,7 +383,7 @@ impl Scene for Murmuration {
         let plot = |cells: &mut [u32], x: usize, y: usize| {
             let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
             if column < columns && row < sky_rows {
-                cells[row * columns + column] |= dot_bit(x % CELL_WIDTH, y % CELL_HEIGHT);
+                cells[row * columns + column] |= braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
             }
         };
         let mut cells = vec![0; columns * sky_rows];
@@ -434,7 +419,7 @@ impl Scene for Murmuration {
                 cell.set_char(' ');
                 continue;
             }
-            let glyph = char::from_u32(BLANK_BRAILLE + dots).unwrap_or(' ');
+            let glyph = braille::glyph(dots);
             cell.set_char(glyph).set_fg(colour);
         }
 
