@@ -38,9 +38,11 @@ fn render(selected: usize, width: u16, height: u16) -> Buffer {
                 Picker {
                     palette: &theme::ROSE_PINE,
                     entries: ENTRIES,
+                    sized_by: ENTRIES,
                     selected,
                     top: 0,
                     tick: 0,
+                    query: None,
                 },
                 f.area(),
             );
@@ -293,7 +295,8 @@ fn a_speed_shows_whole_or_not_at_all() {
 /// Given: terminal widths from 6 to 120 columns.
 /// When: the picker renders at each.
 /// Then: the bottom rule holds the whole key hint, in the subtle colour, or
-/// none of it, and at 40 columns it holds the hint.
+/// none of it, and at the hint's width and its two corners it holds the
+/// hint.
 ///
 /// Why it matters: a hint cut at the corner reads as a key that does not
 /// exist, and a hint that breaks the rule leaves a gap in the frame.
@@ -325,7 +328,7 @@ fn the_bottom_rule_holds_the_whole_hint_or_none() {
             let x = u16::try_from(x).unwrap();
             assert_eq!(buffer[(x, y)].fg, theme::ROSE_PINE.subtle, "{width}");
         }
-        if width == 40 {
+        if usize::from(width) == theme::PICKER_HINT.chars().count() + 2 {
             assert!(shown, "{bottom:?}");
         }
     }

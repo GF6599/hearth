@@ -22,7 +22,7 @@ const THUMB: &str = "┃";
 
 /// The keys of a running scene, on the row under the list. Nothing names
 /// them inside a scene, and the picker is where a first-time user starts.
-pub const SCENE_KEYS: &str = "in a scene  tab next  v/s split  x close  h/j/k/l focus  esc back";
+pub const SCENE_KEYS: &str = "in a scene  tab next  v/s split  x close  h/j/k/l focus  esc scenes";
 
 /// The list scrolls before it gives up rows, but the mark takes rows only
 /// while this many scenes stay in view with their summaries, and the
@@ -43,6 +43,9 @@ pub struct Entry<'a> {
 pub struct Picker<'a> {
     pub palette: &'a Palette,
     pub entries: &'a [Entry<'a>],
+    /// The entries the list frame takes its width from: every scene, so
+    /// the frame keeps its width while a search narrows the list.
+    pub sized_by: &'a [Entry<'a>],
     pub selected: usize,
     /// The first scene in view on the frame before. The list scrolls from
     /// it only as far as the selection needs, so it holds still while the
@@ -50,6 +53,9 @@ pub struct Picker<'a> {
     pub top: usize,
     /// The app's tick count, which moves the glow of the title.
     pub tick: u32,
+    /// The letters of a search, shown in the top rule. `None` when no
+    /// search is on.
+    pub query: Option<&'a str>,
 }
 
 /// Where each part of the picker goes in one area.
@@ -195,7 +201,7 @@ impl Picker<'_> {
 
     fn frame(&self, area: Rect, summaries: bool) -> Rect {
         let widest = self
-            .entries
+            .sized_by
             .iter()
             .map(|entry| {
                 let named = name_row(entry);
@@ -204,10 +210,15 @@ impl Picker<'_> {
             })
             .max();
         let content = widest.unwrap_or(0);
-        let rules = theme::PICKER_TITLE
-            .chars()
-            .count()
-            .max(theme::PICKER_HINT.chars().count());
+        let rules = [
+            theme::PICKER_TITLE,
+            theme::PICKER_HINT,
+            theme::PICKER_SEARCH_HINT,
+        ]
+        .iter()
+        .map(|rule| rule.chars().count())
+        .max()
+        .unwrap_or(0);
         let per = rows_per_scene(summaries);
         let room = usize::from(area.height).saturating_sub(2) / per * per;
         let rows = (self.entries.len() * per).min(room);
@@ -284,8 +295,16 @@ impl Widget for Picker<'_> {
             .border_type(theme::BORDER)
             .border_style(Style::default().fg(self.palette.muted))
             .style(Style::default().bg(self.palette.surface))
-            .title(theme::PICKER_TITLE);
-        let block = cut_bottom(block, frame.width, theme::PICKER_HINT, self.palette);
+            .title(match self.query {
+                Some(query) => format!("{}/{query} ", theme::PICKER_TITLE),
+                None => theme::PICKER_TITLE.to_owned(),
+            });
+        let hint = if self.query.is_some() {
+            theme::PICKER_SEARCH_HINT
+        } else {
+            theme::PICKER_HINT
+        };
+        let block = cut_bottom(block, frame.width, hint, self.palette);
         let inner = block.inner(frame);
         block.render(frame, buf);
 

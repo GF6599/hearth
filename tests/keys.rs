@@ -266,6 +266,16 @@ fn list_rows(app: &App) -> Vec<String> {
         .collect()
 }
 
+fn list_corners(app: &App) -> (usize, usize) {
+    let row = list_rows(app)
+        .into_iter()
+        .find(|row| row.contains("┌─ scenes"))
+        .expect("no list frame");
+    let left = row.chars().position(|c| c == '┌').unwrap();
+    let right = row.chars().position(|c| c == '┐').unwrap();
+    (left, right)
+}
+
 /// The names the list shows, top to bottom. A row that is a whole summary
 /// is never a name row, because a summary can start with a scene's name.
 fn listed(app: &App) -> Vec<String> {
@@ -292,11 +302,12 @@ fn listed(app: &App) -> Vec<String> {
 /// `/` and letters narrow the list to the scenes that match them loosely.
 /// Given: the picker.
 /// When: `/` is pressed and `drv` typed, then the query is cleared and
-/// `rain` typed.
+/// `the` typed.
 /// Then: `drv` lists only the drive, whose name holds the letters in
-/// order, and marks it, and the pane runs it. `rain` lists the scenes whose
-/// summary holds the word, in the order of the list. The query shows in the
-/// list's top rule.
+/// order, and marks it, and the pane runs it. `the`, which no name holds in
+/// order, lists the scenes whose summary holds the word, in the order of
+/// the list. The query shows in the list's top rule, and the list frame
+/// keeps its corners.
 ///
 /// Why it matters: a list of eighteen scenes is long to walk with `j`, and
 /// a user who knows part of a name or what a scene shows should reach it in
@@ -305,6 +316,7 @@ fn listed(app: &App) -> Vec<String> {
 fn slash_and_letters_narrow_the_list_to_the_loose_matches() {
     // Given:
     let mut app = App::picker(7, corpus());
+    let corners = list_corners(&app);
 
     // When:
     let mut keys = vec![key(KeyCode::Char('/'))];
@@ -319,20 +331,27 @@ fn slash_and_letters_narrow_the_list_to_the_loose_matches() {
     assert_eq!(marked(&app).as_deref(), Some("drive"));
     assert_pane_runs(&app, SceneKind::Drive);
     assert!(list_rows(&app).iter().any(|row| row.contains("/drv")));
+    assert_eq!(list_corners(&app), corners);
 
     // When:
     send(&mut app, vec![key(KeyCode::Backspace); 3]);
-    send(&mut app, typed("rain"));
+    send(&mut app, typed("the"));
 
     // Then:
+    let by_name = |kind: &&SceneKind| {
+        let mut letters = kind.name().chars();
+        "the".chars().all(|wanted| letters.any(|c| c == wanted))
+    };
+    assert!(!ALL.iter().any(|kind| by_name(&kind)), "a name holds `the`");
     let expected: Vec<&str> = ALL
         .iter()
-        .filter(|kind| kind.summary().contains("rain"))
+        .filter(|kind| kind.summary().contains("the"))
         .map(|kind| kind.name())
         .collect();
     assert!(expected.len() >= 2, "{expected:?}");
     assert_eq!(listed(&app), expected);
     assert_eq!(marked(&app).as_deref(), Some(expected[0]));
+    assert_eq!(list_corners(&app), corners);
 }
 
 /// A scene whose name matches comes before one whose summary matches.
@@ -372,9 +391,10 @@ fn a_name_match_comes_before_a_summary_match() {
 /// When: `/` is pressed, `qt` typed, and Enter pressed, then Backspace
 /// clears the query, `rain` is typed, Down moves the mark, and Esc leaves
 /// the search.
-/// Then: `q` does not quit, `qt` lists nothing and Enter starts nothing,
-/// Down marks the second match, and after Esc the whole list shows with
-/// the mark on that scene and the picker still open.
+/// Then: `q` does not quit, `qt` lists nothing, the pane is blank once
+/// the app ticks, and Enter starts nothing. Down marks the second match,
+/// and after Esc the whole list shows with the mark on that scene and the
+/// picker still open.
 ///
 /// Why it matters: a search that quits on `q` or changes the theme on `t`
 /// loses the user's place, and a search that cannot be left traps them.
@@ -393,6 +413,15 @@ fn letters_type_in_a_search_and_esc_leaves_it() {
     assert!(!app.should_quit);
     assert!(app.is_picking());
     assert!(listed(&app).is_empty(), "{:?}", listed(&app));
+    for _ in 0..5 {
+        app.tick(WIDE);
+    }
+    let shown = app_frame(&app, WIDE);
+    let inner = pane_inner(&shown).expect("no pane");
+    assert!(
+        inner.positions().all(|at| shown[at].symbol() == " "),
+        "the pane runs a scene with no match"
+    );
 
     // When:
     send(&mut app, vec![key(KeyCode::Backspace); 2]);

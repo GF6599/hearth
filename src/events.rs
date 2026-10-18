@@ -63,7 +63,19 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.quit();
         return;
     }
-    if app.is_picking() {
+    if app.is_searching() {
+        match key.code {
+            KeyCode::Esc => app.end_search(),
+            KeyCode::Enter => app.start_selected(),
+            KeyCode::Backspace => app.erase_in_search(),
+            KeyCode::Down => app.select_next(),
+            KeyCode::Up => app.select_previous(),
+            KeyCode::Tab => app.select_next_wrapped(),
+            KeyCode::BackTab => app.select_previous_wrapped(),
+            KeyCode::Char(letter) => app.type_in_search(letter),
+            _ => {}
+        }
+    } else if app.is_picking() {
         match key.code {
             KeyCode::Char('q') => app.quit(),
             KeyCode::Char('j') | KeyCode::Down => app.select_next(),
@@ -73,6 +85,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.start_selected(),
             KeyCode::Esc => app.cancel_picker(),
             KeyCode::Char('t') => app.next_theme(),
+            KeyCode::Char('/') => app.start_search(),
             _ => {}
         }
     } else {

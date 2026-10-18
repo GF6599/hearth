@@ -55,6 +55,9 @@ pub struct App {
     selected: usize,
     /// The first scene in the picker list on the last tick.
     picker_top: usize,
+    /// What the user typed after `/` in the picker. `None` lists every
+    /// scene.
+    query: Option<String>,
     ticks: u32,
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
@@ -102,6 +105,7 @@ impl App {
             mode: Mode::Running,
             selected: slot_of(kind),
             picker_top: 0,
+            query: None,
             ticks: 0,
             fresh: false,
             should_quit: false,
@@ -226,8 +230,9 @@ impl App {
     }
 
     fn with_picker<R>(&self, f: impl FnOnce(Picker) -> R) -> R {
+        let listed = self.listed();
         let speeds: Vec<String> = ALL.iter().map(|kind| self.speed_label(*kind)).collect();
-        let entries: Vec<Entry> = ALL
+        let all: Vec<Entry> = ALL
             .iter()
             .zip(&speeds)
             .map(|(kind, speed)| Entry {
@@ -237,13 +242,37 @@ impl App {
                 credit: kind.credit(),
             })
             .collect();
+        let entries: Vec<Entry> = listed.iter().map(|slot| all[*slot]).collect();
         f(Picker {
             palette: self.palette(),
             entries: &entries,
-            selected: self.selected,
+            sized_by: &all,
+            selected: listed
+                .iter()
+                .position(|slot| *slot == self.selected)
+                .unwrap_or(0),
             top: self.picker_top,
             tick: self.ticks,
+            query: self.query.as_deref(),
         })
+    }
+
+    /// The places in `ALL` of the scenes the picker lists: every scene, or
+    /// in a search the scenes whose name holds the typed letters in order,
+    /// then those whose summary holds them as one run.
+    fn listed(&self) -> Vec<usize> {
+        let Some(query) = &self.query else {
+            return (0..ALL.len()).collect();
+        };
+        let query = query.to_lowercase();
+        let by_name = |kind: SceneKind| {
+            let mut letters = kind.name().chars();
+            query.chars().all(|wanted| letters.any(|c| c == wanted))
+        };
+        let by_summary = |kind: SceneKind| kind.summary().to_lowercase().contains(&query);
+        let named = (0..ALL.len()).filter(|slot| by_name(ALL[*slot]));
+        let summed = (0..ALL.len()).filter(|slot| !by_name(ALL[*slot]) && by_summary(ALL[*slot]));
+        named.chain(summed).collect()
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -386,22 +415,81 @@ impl App {
         self.build_preview();
     }
 
+    pub fn is_searching(&self) -> bool {
+        self.query.is_some()
+    }
+
+    pub fn start_search(&mut self) {
+        self.query = Some(String::new());
+        self.picker_top = 0;
+    }
+
+    pub fn type_in_search(&mut self, letter: char) {
+        if let Some(query) = &mut self.query {
+            query.push(letter);
+        }
+        self.search_changed();
+    }
+
+    pub fn erase_in_search(&mut self) {
+        if let Some(query) = &mut self.query {
+            query.pop();
+        }
+        self.search_changed();
+    }
+
+    pub fn end_search(&mut self) {
+        self.query = None;
+        self.picker_top = 0;
+    }
+
+    /// The mark stays on its scene while that scene still matches, and
+    /// moves to the first match when it does not. With no match the pane
+    /// shows nothing, because no scene would start.
+    fn search_changed(&mut self) {
+        self.picker_top = 0;
+        let listed = self.listed();
+        let Some(&first) = listed.first() else {
+            self.preview = None;
+            return;
+        };
+        let target = if listed.contains(&self.selected) {
+            self.selected
+        } else {
+            first
+        };
+        if target != self.selected || self.preview.is_none() {
+            self.selected = target;
+            self.build_preview();
+        }
+    }
+
     pub fn select_previous(&mut self) {
-        self.select(self.selected.saturating_sub(1));
+        self.step(|at, _| at.saturating_sub(1));
     }
 
     pub fn select_next(&mut self) {
-        self.select((self.selected + 1).min(ALL.len() - 1));
+        self.step(|at, count| (at + 1).min(count - 1));
     }
 
     /// Tab walks the list round, as it walks the scenes round outside the
     /// picker.
     pub fn select_next_wrapped(&mut self) {
-        self.select((self.selected + 1) % ALL.len());
+        self.step(|at, count| (at + 1) % count);
     }
 
     pub fn select_previous_wrapped(&mut self) {
-        self.select(before(self.selected));
+        self.step(|at, count| (at + count - 1) % count);
+    }
+
+    fn step(&mut self, to: impl Fn(usize, usize) -> usize) {
+        let listed = self.listed();
+        if listed.is_empty() {
+            return;
+        }
+        let at = listed.iter().position(|slot| *slot == self.selected);
+        let next = at.map_or(0, |at| to(at, listed.len()));
+        self.select(listed[next]);
     }
 
     fn select(&mut self, index: usize) {
@@ -473,6 +561,10 @@ impl App {
     }
 
     pub fn start_selected(&mut self) {
+        if self.listed().is_empty() {
+            return;
+        }
+        self.query = None;
         self.switch_to(ALL[self.selected]);
     }
 
