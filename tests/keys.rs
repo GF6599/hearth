@@ -401,7 +401,10 @@ fn a_name_match_comes_before_a_summary_match() {
 #[test]
 fn letters_type_in_a_search_and_esc_leaves_it() {
     // Given:
-    let mut app = App::picker(7, corpus());
+    let saved =
+        std::env::temp_dir().join(format!("hearth-keys-{}-search.toml", std::process::id()));
+    let _ = std::fs::remove_file(&saved);
+    let mut app = App::picker(7, corpus()).saving_to(saved.clone());
 
     // When:
     let mut keys = vec![key(KeyCode::Char('/'))];
@@ -411,6 +414,9 @@ fn letters_type_in_a_search_and_esc_leaves_it() {
 
     // Then:
     assert!(!app.should_quit);
+    let theme = std::fs::read_to_string(&saved).unwrap_or_default();
+    assert!(!theme.contains("theme"), "t changed the theme: {theme:?}");
+    let _ = std::fs::remove_file(&saved);
     assert!(app.is_picking());
     assert!(listed(&app).is_empty(), "{:?}", listed(&app));
     for _ in 0..5 {

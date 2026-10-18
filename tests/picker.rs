@@ -1135,7 +1135,8 @@ fn the_picker_names_the_keys_of_a_scene_under_the_list() {
         for y in 0..area.height {
             let row = row_text(&buffer, y);
             assert!(
-                !row.contains("v/s split") || row.contains(SCENE_KEYS),
+                !(row.contains("in a scene") || row.contains("v/s split"))
+                    || row.contains(SCENE_KEYS),
                 "part of the keys at width {width}: {row:?}"
             );
         }
