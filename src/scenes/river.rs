@@ -11,6 +11,7 @@ use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::corpus::Corpus;
 use crate::history::{Commit, History};
 use crate::scene::{Rng, Scene};
+use crate::splitmix;
 use crate::theme::Palette;
 
 pub const NOTICE: &str = "no git history to draw here";
@@ -188,13 +189,11 @@ impl River {
     /// A number from `place` that looks random and is the same every frame,
     /// so the ripples and the sand stay put on the water and the shore.
     fn noise(&self, place: (i64, i64)) -> u64 {
-        let mut z = self
-            .salt
-            .wrapping_add((place.0 as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15))
-            .wrapping_add((place.1 as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f));
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
+        splitmix::mix(
+            self.salt
+                .wrapping_add((place.0 as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+                .wrapping_add((place.1 as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)),
+        )
     }
 
     fn draw_notice(&self, text: &str, area: Rect, buf: &mut Buffer) {

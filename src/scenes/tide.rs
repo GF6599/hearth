@@ -9,6 +9,7 @@ use ratatui::style::Color;
 use crate::dither;
 use crate::quadrant;
 use crate::scene::{Rng, Scene};
+use crate::splitmix;
 use crate::theme::Palette;
 
 /// Ticks in one tide, from low water to high and back, about four minutes.
@@ -244,16 +245,9 @@ impl Tide {
 /// holds `GRAINS`, shifted by an offset of its own, so the grains scatter
 /// and do not line up into a grid.
 fn grain(x: usize, row: usize) -> bool {
-    let tile = mix(((x / 4) as u64) << 32 | (row / 4) as u64);
+    let tile = splitmix::mix(((x / 4) as u64) << 32 | (row / 4) as u64);
     let (across, down) = ((tile >> 60) as usize, (tile >> 56 & 0xf) as usize);
     dither::lights(GRAINS, x + across, row + down)
-}
-
-/// The splitmix64 finaliser, so neighbouring tiles take unrelated offsets.
-fn mix(mut value: u64) -> u64 {
-    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    value ^ (value >> 31)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

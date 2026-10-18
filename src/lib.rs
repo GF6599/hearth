@@ -6,6 +6,7 @@
 //!              ├── cli       Command-line arguments
 //!              ├── config    The preferences kept between runs
 //!              ├── dither    The ordered dither the scenes share
+//!              ├── splitmix  The hash the scenes share for fixed noise
 //!              ├── app       The panes, the picker, and the keys
 //!              ├── braille   Eight dots to a cell, in braille glyphs
 //!              ├── events    Terminal events → App mutations
@@ -42,5 +43,6 @@ pub mod quadrant;
 pub mod scene;
 pub mod scenes;
 pub mod snippet;
+pub mod splitmix;
 pub mod theme;
 pub mod tree;
