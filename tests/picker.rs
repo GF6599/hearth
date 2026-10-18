@@ -6,7 +6,7 @@ use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::mark;
-use hearth::picker::{Entry, LEAST_SCENES_IN_VIEW, Picker};
+use hearth::picker::{Entry, LEAST_SCENES_IN_VIEW, Picker, SCENE_KEYS};
 use hearth::scene::{ALL, Rate, SceneKind};
 use hearth::theme;
 use ratatui::Terminal;
@@ -1088,4 +1088,53 @@ fn the_preview_credits_the_marked_scene() {
             .credit()
             .is_some_and(|credit| credit.contains("gittype"))
     );
+}
+
+/// The picker names the keys of a running scene on the row under the list.
+/// Given: the app on the picker.
+/// When: it renders at 120 columns, and then at every width from 20 to 120.
+/// Then: at 120 columns a row under the list frame holds the keys, from
+/// the list's left column, in the hint's colour, and at every width a row
+/// holds the whole of them or none.
+///
+/// Why it matters: the split keys work only in a running scene, where
+/// nothing names them, so a first-time user never finds them. A part of
+/// the line names a key that does not exist.
+#[test]
+fn the_picker_names_the_keys_of_a_scene_under_the_list() {
+    // Given, when:
+    let app = App::picker(7, Arc::new(Corpus::embedded()));
+    let buffer = app_frame(&app, WIDE);
+
+    // Then:
+    let (list_x, list_y) = list_corner(&buffer);
+    let y = row_of(&buffer, SCENE_KEYS).expect("no scene keys under the list");
+    let row = row_text(&buffer, y);
+    let x = row[..row.find(SCENE_KEYS).unwrap()].chars().count();
+    assert!(
+        y > list_y,
+        "the keys at row {y} are above the list at {list_y}"
+    );
+    assert!(
+        !row.contains(['│', '└', '┘']),
+        "the keys share row {y} with a frame: {row:?}"
+    );
+    assert_eq!(x, usize::from(list_x), "{row:?}");
+    let key = u16::try_from(x).unwrap() + u16::try_from(SCENE_KEYS.find("tab").unwrap()).unwrap();
+    assert_eq!(buffer[(key, y)].fg, theme::ROSE_PINE.subtle);
+
+    for width in 20..=120 {
+        // When:
+        let area = Rect::new(0, 0, width, 30);
+        let buffer = app_frame(&app, area);
+
+        // Then:
+        for y in 0..area.height {
+            let row = row_text(&buffer, y);
+            assert!(
+                !row.contains("v/s split") || row.contains(SCENE_KEYS),
+                "part of the keys at width {width}: {row:?}"
+            );
+        }
+    }
 }
