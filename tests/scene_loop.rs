@@ -461,7 +461,7 @@ fn a_restart_keeps_the_typing_speed() {
 
     // When:
     send(&mut app, vec![key('r')]);
-    let mut kept = App::new(SceneKind::Typing, 8, corpus()).with_config(&typing_at(faster));
+    let mut kept = App::configured(Some(SceneKind::Typing), 8, corpus(), &typing_at(faster));
     let mut dropped = App::new(SceneKind::Typing, 8, corpus());
     for _ in 0..17 {
         for each in [&mut app, &mut kept, &mut dropped] {
@@ -487,7 +487,11 @@ fn typing_at(speed: Speed) -> Config {
 /// Then: the header shows no speed, because no key changed it.
 #[test]
 fn a_speed_from_the_config_file_shows_no_notice() {
-    let app =
-        App::new(SceneKind::Typing, 7, corpus()).with_config(&typing_at(Speed::DEFAULT.faster()));
+    let app = App::configured(
+        Some(SceneKind::Typing),
+        7,
+        corpus(),
+        &typing_at(Speed::DEFAULT.faster()),
+    );
     assert!(!header(&app).contains("cps"), "{}", header(&app));
 }

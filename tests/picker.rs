@@ -457,7 +457,7 @@ fn the_pane_runs_the_scene_at_its_own_speed() {
         .position(|kind| *kind == SceneKind::Fire)
         .unwrap();
     config.rates[fire] = Rate::from_times(2.0);
-    let mut app = App::picker(7, Arc::new(Corpus::embedded())).with_config(&config);
+    let mut app = App::configured(None, 7, Arc::new(Corpus::embedded()), &config);
     select(&mut app, SceneKind::Fire);
 
     // When:

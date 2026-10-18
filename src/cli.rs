@@ -44,11 +44,7 @@ impl Cli {
     }
 
     pub fn app(&self, config: &Config, corpus: Arc<Corpus>) -> App {
-        match self.scene.or(config.scene) {
-            Some(kind) => App::new(kind, self.seed(), corpus),
-            None => App::picker(self.seed(), corpus),
-        }
-        .with_config(config)
+        App::configured(self.scene.or(config.scene), self.seed(), corpus, config)
     }
 
     /// The source files for the typing scene and the place the river reads

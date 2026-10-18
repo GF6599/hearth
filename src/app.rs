@@ -80,22 +80,40 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(kind: SceneKind, seed: u64, corpus: Arc<Corpus>) -> Self {
-        Self {
-            theme: 0,
-            background: Background::Theme,
+        Self::configured(Some(kind), seed, corpus, &Config::default())
+    }
+
+    pub fn picker(seed: u64, corpus: Arc<Corpus>) -> Self {
+        Self::configured(None, seed, corpus, &Config::default())
+    }
+
+    /// Each scene is built once, with the config already known, because
+    /// some scenes start work when they are built: the river runs `git log`.
+    pub fn configured(
+        scene: Option<SceneKind>,
+        seed: u64,
+        corpus: Arc<Corpus>,
+        config: &Config,
+    ) -> Self {
+        let kind = scene.unwrap_or(ALL[0]);
+        let theme = config.theme.unwrap_or(0);
+        let speed = config.typing.unwrap_or(Speed::DEFAULT);
+        let mut app = Self {
+            theme,
+            background: config.background,
             panes: Panes::new(Pane::new(
                 kind,
                 seed,
-                theme::THEMES[0].1,
-                Background::Theme,
+                palette(theme, config.background),
+                config.background,
                 &corpus,
-                Speed::DEFAULT,
-                Lengths::DEFAULT,
+                speed,
+                config.hourglass,
             )),
             corpus,
-            speed: Speed::DEFAULT,
-            lengths: Lengths::DEFAULT,
-            rates: [Rate::NORMAL; ALL.len()],
+            speed,
+            lengths: config.hourglass,
+            rates: config.rates.map(|saved| saved.unwrap_or(Rate::NORMAL)),
             notice: 0,
             notice_text: String::new(),
             saving: None,
@@ -109,59 +127,15 @@ impl App {
             ticks: 0,
             fresh: false,
             should_quit: false,
+        };
+        if scene.is_none() {
+            app.open_picker();
         }
-    }
-
-    pub fn picker(seed: u64, corpus: Arc<Corpus>) -> Self {
-        let mut app = Self::new(ALL[0], seed, corpus);
-        app.open_picker();
         app
     }
 
-    fn with_speed(mut self, speed: Speed) -> Self {
-        self.speed = speed;
-        self.panes
-            .focused_mut()
-            .rebuild(&self.corpus, speed, self.lengths);
-        if self.mode == Mode::Picking {
-            self.build_preview();
-        }
-        self
-    }
-
-    pub fn with_config(mut self, config: &Config) -> Self {
-        for (rate, saved) in self.rates.iter_mut().zip(&config.rates) {
-            if let Some(saved) = saved {
-                *rate = *saved;
-            }
-        }
-        self.background = config.background;
-        if let Some(theme) = config.theme {
-            self.theme = theme;
-        }
-        if config.theme.is_some() || self.background != Background::Theme {
-            self.repaint();
-        }
-        if config.hourglass != self.lengths {
-            self.lengths = config.hourglass;
-            self.panes
-                .focused_mut()
-                .rebuild(&self.corpus, self.speed, self.lengths);
-            if self.mode == Mode::Picking {
-                self.build_preview();
-            }
-        }
-        match config.typing {
-            Some(speed) => self.with_speed(speed),
-            None => self,
-        }
-    }
-
     fn palette(&self) -> &'static Palette {
-        match self.background {
-            Background::Theme => theme::THEMES[self.theme].1,
-            Background::Terminal => &theme::FLAT_THEMES[self.theme],
-        }
+        palette(self.theme, self.background)
     }
 
     /// Every pane starts its scene again in the theme's colours, because
@@ -585,6 +559,13 @@ impl App {
 /// The place before `slot` in `ALL`, round from the first to the last.
 fn before(slot: usize) -> usize {
     (slot + ALL.len() - 1) % ALL.len()
+}
+
+fn palette(theme: usize, background: Background) -> &'static Palette {
+    match background {
+        Background::Theme => theme::THEMES[theme].1,
+        Background::Terminal => &theme::FLAT_THEMES[theme],
+    }
 }
 
 fn slot_of(kind: SceneKind) -> usize {
