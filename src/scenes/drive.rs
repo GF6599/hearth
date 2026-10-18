@@ -68,10 +68,17 @@ const CAR: [&str; 9] = [
 /// of its middle.
 const LANE: f64 = 0.45;
 /// The speed of a car ahead, as a share of the car's speed.
-const TRAFFIC: f64 = 0.4;
+const TRAFFIC: f64 = 0.25;
+/// The track units the car covers before the first car ahead appears, at
+/// the least and the most, so one shows within seconds of the start.
+const FIRST_CAR: (f64, f64) = (1.0, 4.0);
 /// The track units the car covers from one car ahead to the next, at the
 /// least and the most.
-const TRAFFIC_GAP: (f64, f64) = (30.0, 80.0);
+const TRAFFIC_GAP: (f64, f64) = (15.0, 40.0);
+/// How far ahead a car ahead appears, in track units, or at the far end of
+/// the road when that is nearer. Further off it is one cell wide, so from
+/// the far end of a tall road it would be a dot for most of its approach.
+const AHEAD: f64 = 16.0;
 /// The fewest cell rows at which a car ahead shows its window, lights and
 /// plate. A smaller car is its outline in its body colour: its sampled
 /// rows miss the roof, and a window with no roof reads as two ears.
@@ -141,7 +148,7 @@ impl Drive {
             traffic: Vec::new(),
             next_car: 0.0,
         };
-        drive.next_car = drive.rng.random_range(TRAFFIC_GAP.0..TRAFFIC_GAP.1);
+        drive.next_car = drive.rng.random_range(FIRST_CAR.0..FIRST_CAR.1);
         drive.track.push_back(Segment {
             start: -EASE,
             length: EASE + 40.0,
@@ -248,6 +255,7 @@ impl Drive {
         // The row, middle and half width of each stretch in view, by its
         // step from the horizon, for the posts to stand on.
         let mut stretches: Vec<Option<(usize, f64, f64)>> = vec![None; road_rows + 1];
+        let mut shown: Option<(f64, f64)> = None;
         for step in (1..=road_rows).rev() {
             let near = step as f64 / road_rows as f64;
             let ahead = self.travelled + 1.0 / near;
@@ -262,7 +270,17 @@ impl Drive {
             }
             let centre = width / 2.0 + shift * width * BEND;
             let half = width * ROAD / 2.0 * near;
-            stretches[step] = Some((top, centre, half));
+            // A stretch whose top meets the nearer road's top paints no row,
+            // so what stands on it takes the road that row shows. Its own
+            // middle can lie pixels apart from it on a climb far ahead.
+            let (road_centre, road_half) = match shown {
+                Some(road) if top == drawn => road,
+                _ => (centre, half),
+            };
+            stretches[step] = Some((top, road_centre, road_half));
+            if top < drawn {
+                shown = Some((centre, half));
+            }
             let band = (ahead / STRIPE).floor() as i64 & 1 == 0;
             for row in &mut rows[top..drawn] {
                 for (x, pixel) in row.iter_mut().enumerate() {
@@ -465,7 +483,8 @@ impl Scene for Drive {
         if travelled >= self.next_car {
             let down = usize::from(area.height) * 2;
             let road_rows = down.saturating_sub((down as f64 * HORIZON) as usize + 1);
-            self.traffic.push(travelled + road_rows.max(1) as f64);
+            self.traffic
+                .push(travelled + (road_rows.max(1) as f64).min(AHEAD));
             self.next_car = travelled + self.rng.random_range(TRAFFIC_GAP.0..TRAFFIC_GAP.1);
         }
     }
