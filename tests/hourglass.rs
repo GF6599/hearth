@@ -295,9 +295,21 @@ fn the_glass_has_round_bulbs_in_a_frame() {
             })
             .collect()
     };
+    let braille = |row: u16, column: &u16| {
+        buffer[(*column, row)]
+            .symbol()
+            .chars()
+            .next()
+            .is_some_and(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
+    };
+    // The hint's words can share the glass colour, and only the glass is
+    // drawn in braille.
     let glass: Vec<(u16, u16, u16)> = (0..AREA.height)
         .filter_map(|row| {
-            let walls = cells(row, GLASS);
+            let walls: Vec<u16> = cells(row, GLASS)
+                .into_iter()
+                .filter(|column| braille(row, column))
+                .collect();
             Some((row, *walls.first()?, *walls.last()?))
         })
         .collect();

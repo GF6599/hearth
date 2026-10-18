@@ -238,13 +238,13 @@ struct Colours {
 impl Colours {
     fn of(palette: &Palette) -> Self {
         Self {
-            frame: palette.iris,
-            glass: palette.foam,
+            frame: palette.pine,
+            glass: palette.subtle,
             work: palette.gold,
-            rest: palette.rose,
+            rest: palette.foam,
             done: palette.iris,
             to_do: palette.muted,
-            key: palette.iris,
+            key: palette.foam,
             words: palette.subtle,
         }
     }
