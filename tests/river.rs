@@ -5,15 +5,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::Parser;
 use hearth::cli::Cli;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::history::{DEPTH, History};
-use hearth::scene::{Rng, Scene, SceneKind};
+use hearth::scene::{ALL, Rng, Scene, SceneKind};
 use hearth::scenes::hourglass::Lengths;
-use hearth::scenes::river::{NOTICE, River};
+use hearth::scenes::river::{NOTICE, READING, River};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -79,12 +80,35 @@ fn branched(name: &str) -> PathBuf {
     repo
 }
 
-fn river(history: History) -> River {
-    River::new(
-        Rng::seed_from_u64(7),
-        PALETTE,
-        Arc::new(Corpus::default().with_history(history)),
-    )
+/// A linear history of `count` commits, the first named `commit 0`.
+fn linear(name: &str, count: usize) -> PathBuf {
+    let repo = scratch(name);
+    git(&repo, &["init", "-q", "-b", "main"]);
+    for index in 0..count {
+        commit(&repo, "a.txt", &format!("commit {index}"));
+    }
+    repo
+}
+
+/// The river over `corpus`, ticked until its history has landed, with a
+/// bound, so the read off the UI thread has finished.
+fn landed(corpus: Corpus) -> River {
+    let mut scene = River::new(Rng::seed_from_u64(7), PALETTE, Arc::new(corpus));
+    for _ in 0..1000 {
+        scene.tick(AREA);
+        if !rows(&render(&scene, AREA, AREA), AREA)
+            .iter()
+            .any(|row| row.contains(READING))
+        {
+            return scene;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("the history never landed");
+}
+
+fn river(root: &Path) -> River {
+    landed(Corpus::default().with_history_root(root.to_path_buf()))
 }
 
 fn render(scene: &River, area: Rect, canvas: Rect) -> Buffer {
@@ -255,7 +279,7 @@ fn the_read_stops_at_the_bound() {
 fn a_branch_that_splits_and_merges_draws_two_lanes_that_meet() {
     // Given:
     let repo = branched("lanes");
-    let mut scene = river(History::read(&repo));
+    let mut scene = river(&repo);
 
     // When:
     scene.tick(AREA);
@@ -307,7 +331,7 @@ fn a_subject_with_control_characters_shows_without_them() {
 
     // When:
     let history = History::read(&repo);
-    let mut scene = river(history.clone());
+    let mut scene = river(&repo);
     scene.tick(AREA);
     let buffer = render(&scene, AREA, AREA);
 
@@ -338,7 +362,7 @@ fn a_directory_outside_a_repository_shows_the_notice() {
 
     // When:
     let history = History::read(&dir);
-    let mut scene = river(history.clone());
+    let mut scene = river(&dir);
     scene.tick(AREA);
     let buffer = render(&scene, AREA, AREA);
 
@@ -352,7 +376,7 @@ fn a_directory_outside_a_repository_shows_the_notice() {
 /// Given: a repository with three commits, standing in for a remote, and
 /// an empty cache.
 /// When: the corpus is cloned from its `file://` address.
-/// Then: the corpus holds all three commits in its history.
+/// Then: the river over it draws a stone for each of the three commits.
 ///
 /// Why it matters: a clone of one commit draws a river of one stone.
 #[test]
@@ -367,24 +391,22 @@ fn a_clone_holds_enough_history_for_the_river() {
     let address = format!("file://{}", remote.display());
 
     // When:
-    let corpus = Corpus::cloned(&address, &cache).unwrap();
+    let mut scene = landed(Corpus::cloned(&address, &cache).unwrap());
+    scene.tick(AREA);
 
     // Then:
-    let subjects: Vec<&str> = corpus
-        .history()
-        .commits()
-        .iter()
-        .map(|commit| commit.subject.as_str())
-        .collect();
-    assert_eq!(subjects, ["three", "two", "one"]);
+    let buffer = render(&scene, AREA, AREA);
+    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
+    assert_eq!(stones.len(), 3, "{:#?}", rows(&buffer, AREA));
     let _ = fs::remove_dir_all(&remote);
     let _ = fs::remove_dir_all(&cache);
 }
 
 /// Given: hearth started in a repository with no `--repo` and no `repo`
 /// key.
-/// When: the corpus is read.
-/// Then: its history is the history of that repository.
+/// When: the corpus is read, and the river is drawn over it.
+/// Then: the river draws that repository's four commits, with its oldest
+/// subject at the middle row.
 ///
 /// Why it matters: with nothing chosen, the river draws the project the
 /// user is in, which is the history they know.
@@ -398,10 +420,14 @@ fn with_no_repo_the_history_is_the_current_directory() {
     let corpus = Cli::parse_from(["hearth"])
         .corpus(&Config::default())
         .unwrap();
+    let mut scene = landed(corpus);
+    scene.tick(AREA);
 
     // Then:
-    assert_eq!(corpus.history().commits().len(), 4);
-    assert_eq!(corpus.history().commits()[0].subject, "merge feature");
+    let buffer = render(&scene, AREA, AREA);
+    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
+    assert_eq!(stones.len(), 4, "{:#?}", rows(&buffer, AREA));
+    assert_eq!(middle_subject(&buffer, AREA).as_deref(), Some("start"));
     std::env::set_current_dir(std::env::temp_dir()).unwrap();
     let _ = fs::remove_dir_all(&repo);
 }
@@ -416,7 +442,7 @@ fn a_smaller_area_draws_only_inside_it() {
     // Given:
     let repo = branched("small");
     let canvas = Rect::new(0, 0, 40, 12);
-    let mut scene = river(History::read(&repo));
+    let mut scene = river(&repo);
     scene.tick(AREA);
     let inside_only = |buffer: &Buffer, area: Rect| {
         for position in canvas.positions() {
@@ -510,7 +536,7 @@ fn the_middle_subject_runs_from_the_oldest_to_the_newest_and_again() {
     // Given:
     let repo = branched("turn");
     let history = History::read(&repo);
-    let mut scene = river(history.clone());
+    let mut scene = river(&repo);
 
     // When:
     let seen = subjects_in_turn(&mut scene, 2000);
@@ -543,7 +569,7 @@ fn the_stones_flow_down_the_pane() {
     let repo = branched("flow");
     let history = History::read(&repo);
     let oldest = history.commits().last().unwrap().subject.clone();
-    let mut scene = river(history);
+    let mut scene = river(&repo);
     let (mut down, mut up, mut again) = (0, 0, 0);
     let mut before: Option<(u16, Option<String>)> = None;
 
@@ -591,7 +617,7 @@ fn the_stones_flow_down_the_pane() {
 fn the_water_flows_along_the_lanes() {
     // Given:
     let repo = branched("water");
-    let mut scene = river(History::read(&repo));
+    let mut scene = river(&repo);
     let (mut foam_frames, mut moved) = (0, 0);
     let mut before: Option<(Cells, Cells)> = None;
 
@@ -617,4 +643,156 @@ fn the_water_flows_along_the_lanes() {
     assert!(foam_frames >= 200, "foam showed in {foam_frames} frames");
     assert!(moved >= 20, "the foam moved alone in {moved} frames");
     let _ = fs::remove_dir_all(&repo);
+}
+
+/// Given: a river just built over a repository with four commits.
+/// When: it renders before its first tick, then ticks until the history
+/// lands, with a bound.
+/// Then: the first frame shows that the history is being read, and once
+/// it lands the river draws the four stones.
+///
+/// Why it matters: a read that holds the first frame freezes the app on a
+/// large repository, and a read that never lands leaves the notice for
+/// good.
+#[test]
+fn the_river_reads_the_history_while_it_shows_a_notice() {
+    // Given:
+    let repo = branched("reading");
+    let corpus = || Corpus::default().with_history_root(repo.clone());
+    let scene = River::new(Rng::seed_from_u64(7), PALETTE, Arc::new(corpus()));
+
+    // When:
+    let first = rows(&render(&scene, AREA, AREA), AREA);
+    let mut scene = landed(corpus());
+    scene.tick(AREA);
+
+    // Then:
+    assert!(first.iter().any(|row| row.contains(READING)), "{first:#?}");
+    let buffer = render(&scene, AREA, AREA);
+    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
+    assert_eq!(stones.len(), 4, "{:#?}", rows(&buffer, AREA));
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// Given: a repository as the current directory, no config file, and a
+/// `git` first on the path that only leaves a mark.
+/// When: hearth starts each scene but the river with no terminal, so it
+/// builds the scene and stops.
+/// Then: no start left the mark.
+///
+/// Why it matters: a history read at every start walks a large repository
+/// before the terminal opens, for a scene the user did not choose.
+#[test]
+fn no_scene_but_the_river_runs_git() {
+    // Given:
+    let repo = branched("quiet");
+    let tools = scratch("tools");
+    let mark = tools.join("mark");
+    let fake = tools.join("git");
+    fs::write(
+        &fake,
+        format!("#!/bin/sh\necho \"$@\" >> {}\nexit 1\n", mark.display()),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&fake).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(&fake, permissions).unwrap();
+    let config = scratch("no-config");
+
+    // When:
+    for kind in ALL.iter().filter(|kind| **kind != SceneKind::River) {
+        Command::new(env!("CARGO_BIN_EXE_hearth"))
+            .args([kind.name(), "--seed", "7"])
+            .current_dir(&repo)
+            .env("PATH", &tools)
+            .env("XDG_CONFIG_HOME", &config)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+    }
+
+    // Then:
+    assert!(
+        !mark.exists(),
+        "git ran: {}",
+        fs::read_to_string(&mark).unwrap_or_default()
+    );
+    let _ = fs::remove_dir_all(&repo);
+    let _ = fs::remove_dir_all(&tools);
+    let _ = fs::remove_dir_all(&config);
+}
+
+/// The river fills the middle of the pane between two banks.
+/// Given: the river of a linear history and of one that splits and merges.
+/// When: it renders.
+/// Then: in every row but the subject's, the water is one run of cells at
+/// least two fifths of the pane wide, with its middle within a tenth of
+/// the pane of the pane's middle and a bank cell beside it on each side,
+/// and every lane and stone lies in the water.
+///
+/// Why it matters: lanes in a corner of an empty pane read as a diagram,
+/// and a history of one lane must still read as a river.
+#[test]
+fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
+    for repo in [linear("straight", 5), branched("banks")] {
+        // Given:
+        let mut scene = river(&repo);
+
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let rows_text = rows(&buffer, AREA);
+        for y in AREA.top()..AREA.bottom() {
+            if rows_text[usize::from(y)]
+                .chars()
+                .any(|c| c.is_ascii_alphanumeric())
+            {
+                continue;
+            }
+            let water: Vec<u16> = (AREA.left()..AREA.right())
+                .filter(|x| buffer[(*x, y)].bg == PALETTE.overlay)
+                .collect();
+            let (first, last) = (water[0], water[water.len() - 1]);
+            assert_eq!(
+                usize::from(last - first + 1),
+                water.len(),
+                "row {y}: water in more than one run"
+            );
+            assert!(
+                water.len() * 5 >= usize::from(AREA.width) * 2,
+                "row {y}: {} cells of water",
+                water.len()
+            );
+            let middle = (first + last) as f32 / 2.0;
+            assert!(
+                (middle - f32::from(AREA.width) / 2.0).abs() <= f32::from(AREA.width) / 10.0,
+                "row {y}: water from {first} to {last}"
+            );
+            for bank in [first.checked_sub(1), Some(last + 1)] {
+                let bank = bank.expect("a bank inside the pane");
+                assert_eq!(
+                    buffer[(bank, y)].fg,
+                    PALETTE.gold,
+                    "row {y}: no bank at {bank}"
+                );
+            }
+        }
+        for (x, y) in cells(
+            &buffer,
+            AREA,
+            &[PALETTE.pine, PALETTE.foam, PALETTE.subtle, PALETTE.iris],
+        ) {
+            assert_eq!(
+                buffer[(x, y)].bg,
+                PALETTE.overlay,
+                "{:?} out of the water",
+                (x, y)
+            );
+        }
+        let _ = fs::remove_dir_all(&repo);
+    }
 }
