@@ -15,8 +15,10 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
-/// The pixels a ripple moves a reflection to either side, at the most.
-const RIPPLE: usize = 3;
+/// The pixels a streak in the water lies to either side of its window at
+/// the most: a ripple slides a row by up to two cells, and a streak reaches
+/// a pixel left and two right of its window.
+const RIPPLE: usize = 6;
 /// About three seconds of ticks.
 const FEW_SECONDS: u32 = 50;
 /// A loop of the night and a half, so a run holds an evening and a late
@@ -65,27 +67,36 @@ fn frame(scene: &City, area: Rect) -> Vec<Vec<Color>> {
     pixels(&render(scene, area, area), area)
 }
 
+/// A wall, far or near, a dark window, or the rim of a near tower.
 fn is_tower(colour: Color) -> bool {
-    colour == PALETTE.overlay || colour == PALETTE.surface
+    colour == PALETTE.overlay || colour == PALETTE.surface || colour == PALETTE.pine
 }
 
 fn is_window(colour: Color) -> bool {
     colour == PALETTE.gold || colour == PALETTE.rose
 }
 
-/// The lowest row that holds a tower, the row the towers stand on.
+/// The row the towers stand on, just above the water line. The water line
+/// is the lowest row that is all muted.
 fn ground(rows: &[Vec<Color>]) -> usize {
     rows.iter()
-        .rposition(|row| row.iter().any(|colour| is_tower(*colour)))
-        .expect("towers")
+        .rposition(|row| row.iter().all(|colour| *colour == PALETTE.muted))
+        .expect("a water line")
+        - 1
 }
 
-/// The topmost tower row in each column, or none for a column with no
-/// tower.
+/// The topmost tower row in each column above the water, or none for a
+/// column with no tower.
 fn tower_tops(rows: &[Vec<Color>]) -> Vec<Option<usize>> {
+    let ground = ground(rows);
     (0..rows[0].len())
-        .map(|x| rows.iter().position(|row| is_tower(row[x])))
+        .map(|x| rows[..=ground].iter().position(|row| is_tower(row[x])))
         .collect()
+}
+
+/// Whether the pixel at `x` in `row` has a near tower's wall on both sides.
+fn in_near_wall(row: &[Color], x: usize) -> bool {
+    x > 0 && x + 1 < row.len() && row[x - 1] == PALETTE.overlay && row[x + 1] == PALETTE.overlay
 }
 
 /// Asserts that the skyline fits the pane: the towers stand on one ground
@@ -122,7 +133,8 @@ fn assert_skyline_fits(rows: &[Vec<Color>], context: &str) {
 /// When: it ticks and renders.
 /// Then: towers stand on one ground row across most of the width, each
 /// reaches that row and has sky above it, and every lit window above the
-/// ground has a tower wall on both sides.
+/// ground has a tower wall on both sides. Over fifty windows of the near
+/// towers show, lit or dark.
 ///
 /// Why it matters: a window in the sky or a tower cut off by the top of
 /// the pane breaks the picture of a city.
@@ -139,13 +151,14 @@ fn windows_light_only_inside_towers_that_fit_the_pane() {
         // Then:
         assert_skyline_fits(&rows, &format!("seed {seed}"));
         let ground = ground(&rows);
-        let mut lit = 0;
+        let mut shown = 0;
         for (y, row) in rows.iter().enumerate().take(ground + 1) {
             for (x, colour) in row.iter().enumerate() {
+                let dark = *colour == PALETTE.surface && in_near_wall(row, x);
+                shown += usize::from(dark || is_window(*colour) && in_near_wall(row, x));
                 if !is_window(*colour) {
                     continue;
                 }
-                lit += 1;
                 // A near tower's antenna can stand in front of a far wall.
                 let wall = |colour: Color| is_tower(colour) || colour == PALETTE.muted;
                 let walls = x > 0 && x + 1 < row.len() && wall(row[x - 1]) && wall(row[x + 1]);
@@ -156,7 +169,7 @@ fn windows_light_only_inside_towers_that_fit_the_pane() {
                 );
             }
         }
-        assert!(lit > 50, "seed {seed}: only {lit} lit windows");
+        assert!(shown > 50, "seed {seed}: only {shown} near windows show");
     }
 }
 
@@ -200,50 +213,81 @@ fn the_stars_and_moon_stay_in_the_sky() {
     }
 }
 
-/// The water under the city mirrors the lit windows, broken by ripples.
+/// The water under the city reads as water.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders over a few seconds.
-/// Then: in every frame each lit pixel in the water is a lit window colour,
-/// and the row as far above the ground as it is below holds that colour
-/// within `RIPPLE` pixels to either side. The water shows over half of the
-/// lit windows whose mirror falls in the pane, and it changes in most
-/// frames.
+/// Then: in every frame a water line runs under the ground. Under the
+/// middle of every near tower the first row of the water is the dim tower
+/// colour or a streak, as the towers mirror in it. Every run of lit pixels
+/// in the water is two pixels wide or more, unless it meets the pane's
+/// edge, and each lit pixel has a lit window of its colour within `RIPPLE`
+/// pixels in the row as far above the water line as it is below. Over half
+/// of the lit windows whose mirror falls in the pane show in the water, and
+/// the water changes in most frames.
 ///
-/// Why it matters: water that does not mirror the city reads as a flat
-/// band, a reflection of something that is not there reads as a fault,
-/// and water that never moves reads as a second city upside down.
+/// Why it matters: lit dots on a dark band do not read as a reflection,
+/// a reflection of something that is not there reads as a fault, and water
+/// that never moves reads as a second city upside down.
 #[test]
-fn the_water_mirrors_the_lit_windows_through_ripples() {
+fn the_water_mirrors_the_city_in_streaks_that_ripple() {
     // Given:
     let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
     let (mut changed, mut before) = (0, None);
 
-    for _ in 0..FEW_SECONDS {
+    for tick in 0..FEW_SECONDS {
         // When:
         scene.tick(AREA);
         let rows = frame(&scene, AREA);
 
         // Then:
-        let shore = ground(&rows) + 1;
+        let ground = ground(&rows);
+        let shore = ground + 1;
+        let across = rows[0].len();
+        for x in 4..across - 4 {
+            if rows[ground][x - 4..=x + 4]
+                .iter()
+                .all(|colour| *colour == PALETTE.overlay)
+            {
+                let first = rows[shore + 2][x];
+                assert!(
+                    first == PALETTE.surface || is_window(first),
+                    "tick {tick}: {first:?} in the water under the near tower at column {x}"
+                );
+            }
+        }
         let (mut shown, mut windows) = (0, 0);
-        for y in shore..rows.len().min(2 * shore) {
-            let above = &rows[2 * shore - 1 - y];
+        for y in shore + 2..rows.len().min(2 * shore + 2) {
+            let above = &rows[2 * shore + 1 - y];
+            let mut run = 0;
             for (x, &water) in rows[y].iter().enumerate() {
-                let near = x.saturating_sub(RIPPLE)..(x + RIPPLE + 1).min(above.len());
-                if water != PALETTE.base {
+                if is_window(water) {
+                    let near = x.saturating_sub(RIPPLE)..(x + RIPPLE + 1).min(across);
                     assert!(
-                        is_window(water) && above[near].contains(&water),
-                        "{:?} in the water mirrors no lit window",
+                        above[near].contains(&water),
+                        "tick {tick}: {:?} in the water mirrors no lit window",
                         (x, y)
                     );
-                    shown += 1;
+                    run += 1;
+                } else {
+                    assert!(
+                        run != 1 || x == 1,
+                        "tick {tick}: a lit dot alone at {:?}",
+                        (x - 1, y)
+                    );
+                    run = 0;
                 }
-                windows += usize::from(is_window(above[x]));
+            }
+            for (x, &window) in above.iter().enumerate() {
+                if is_window(window) {
+                    windows += 1;
+                    let near = x.saturating_sub(RIPPLE)..(x + RIPPLE + 1).min(across);
+                    shown += usize::from(rows[y][near].contains(&window));
+                }
             }
         }
         assert!(
             shown * 2 > windows,
-            "the water shows {shown} of {windows} lit windows"
+            "tick {tick}: the water shows {shown} of {windows} lit windows"
         );
         let water = rows[shore..].to_vec();
         if before.as_ref().is_some_and(|before| *before != water) {
@@ -255,6 +299,69 @@ fn the_water_mirrors_the_lit_windows_through_ripples() {
         changed * 2 > FEW_SECONDS,
         "the water changed in {changed} of {FEW_SECONDS} frames"
     );
+}
+
+/// Each near tower reads as its own shape.
+/// Given: the scene at a hundred by thirty, from three seeds.
+/// When: it ticks and renders.
+/// Then: on the ground row each near tower, a run of three or more pixels
+/// of its wall, ends in a rim at its right before the next tower or the
+/// pane's edge. Its roof, the first rim above the ground in its middle
+/// column, is there, and two near towers that touch differ in height by
+/// four rows or more.
+///
+/// Why it matters: towers of one colour side by side melt into one block,
+/// and the skyline stops reading as a city.
+#[test]
+fn each_near_tower_has_a_rim_and_its_own_roof_line() {
+    for seed in [7, 8, 9] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
+
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let ground = ground(&rows);
+        let row = &rows[ground];
+        let mut towers: Vec<(usize, usize, usize)> = Vec::new();
+        let mut x = 0;
+        while x < row.len() {
+            if row[x] != PALETTE.overlay {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < row.len() && row[x] == PALETTE.overlay {
+                x += 1;
+            }
+            if x - start < 3 {
+                continue;
+            }
+            assert!(
+                x == row.len() || row[x] == PALETTE.pine,
+                "seed {seed}: the near tower at {start}..{x} ends in {:?}",
+                row[x]
+            );
+            let middle = (start + x) / 2;
+            let roof = (0..ground)
+                .rev()
+                .find(|y| rows[*y][middle] == PALETTE.pine)
+                .unwrap_or_else(|| panic!("seed {seed}: no roof over column {middle}"));
+            towers.push((start, x, roof));
+        }
+        assert!(towers.len() >= 4, "seed {seed}: near towers {towers:?}");
+        for pair in towers.windows(2) {
+            let ((_, rim, first), (start, _, second)) = (pair[0], pair[1]);
+            if start == rim + 1 {
+                assert!(
+                    first.abs_diff(second) >= 4,
+                    "seed {seed}: touching towers at {rim} with roofs at {first} and {second}"
+                );
+            }
+        }
+    }
 }
 
 /// The skyline is built for each pane it is given.
@@ -369,15 +476,18 @@ fn off_the_line(y: usize, rail: usize) -> bool {
 /// Then: off the line of the train, the towers and the places of the
 /// windows stay the same, at most one window changes from a frame to the
 /// next, and the count of lit windows both rises and falls by over a
-/// quarter of its most.
+/// quarter of its most. Of the windows of the near towers, never more
+/// than three in ten are lit, and at some point fewer than one in twelve.
 ///
 /// Why it matters: a city whose windows never change reads as a picture,
-/// and one whose windows flicker all at once reads as a fault.
+/// one whose windows flicker all at once reads as a fault, and one lit
+/// window in two reads as a wall of dots.
 #[test]
 fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
     // Given:
     let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
     let mut counts = Vec::new();
+    let mut shares: Vec<f64> = Vec::new();
     let mut before: Option<Vec<(usize, usize, Color)>> = None;
 
     for tick in 0..NIGHT_AND_A_HALF {
@@ -403,6 +513,16 @@ fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
                 .filter(|(_, _, colour)| is_window(*colour))
                 .count(),
         );
+        let (mut lit, mut dark) = (0, 0);
+        for (y, row) in rows.iter().enumerate().take(shore) {
+            for (x, colour) in row.iter().enumerate() {
+                if off_the_line(y, rail) && in_near_wall(row, x) {
+                    lit += usize::from(is_window(*colour));
+                    dark += usize::from(*colour == PALETTE.surface);
+                }
+            }
+        }
+        shares.push(lit as f64 / (lit + dark) as f64);
         if let Some(before) = &before {
             let places = |city: &[(usize, usize, Color)]| -> Vec<(usize, usize)> {
                 city.iter().map(|(x, y, _)| (*x, *y)).collect()
@@ -431,6 +551,15 @@ fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
     assert!(
         rise * 4 > most && fall * 4 > most,
         "the lit windows rose by {rise} and fell by {fall} of {most}"
+    );
+    let (least, highest) = shares
+        .iter()
+        .fold((1.0_f64, 0.0_f64), |(least, highest), share| {
+            (least.min(*share), highest.max(*share))
+        });
+    assert!(
+        highest <= 0.3 && least < 1.0 / 12.0,
+        "the near towers lit from {least} to {highest} of their windows"
     );
 }
 
