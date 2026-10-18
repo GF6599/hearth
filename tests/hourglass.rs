@@ -719,3 +719,113 @@ fn a_hint_under_the_glass_names_the_keys() {
     );
     assert_eq!(colour_of(&small, narrow, "\u{2503}"), FRAME);
 }
+
+fn outline(buffer: &Buffer, area: Rect) -> Vec<(usize, usize)> {
+    dots(buffer, area)
+        .into_iter()
+        .filter(|(_, colour)| *colour == GLASS)
+        .map(|(dot, _)| dot)
+        .collect()
+}
+
+fn rises_then_falls(values: &[usize]) -> bool {
+    let peak = values
+        .iter()
+        .enumerate()
+        .max_by_key(|(index, value)| (**value, usize::MAX - index))
+        .map_or(0, |(index, _)| index);
+    values[..=peak].windows(2).all(|pair| pair[0] <= pair[1])
+        && values[peak..].windows(2).all(|pair| pair[0] >= pair[1])
+}
+
+/// The glass is one smooth outline with a clear neck.
+/// Given: a glass at a hundred by thirty.
+/// When: it renders.
+/// Then: every row of dots from the top cap to the bottom cap holds a wall
+/// on both sides of the middle, and the dots of the outline touch each
+/// other, diagonals included, as one line. From the neck out to each cap
+/// the outline only widens and then only narrows. The neck is at most a
+/// fifth as wide as the widest row, and no wall comes within a dot of the
+/// middle between the caps, so the neck stays open.
+///
+/// Why it matters: an outline drawn on every other row, or one that steps
+/// at each cell, reads as loose dots and not as glass, and a neck with no
+/// clear channel reads as a gap in the glass.
+#[test]
+fn the_glass_is_one_smooth_outline_with_a_clear_neck() {
+    // Given:
+    let (mut scene, _) = hourglass(7);
+    scene.tick(AREA);
+
+    // When:
+    let glass = outline(&render(&scene, AREA, AREA), AREA);
+
+    // Then:
+    let (top, bottom) = (
+        glass.iter().map(|(_, y)| *y).min().unwrap(),
+        glass.iter().map(|(_, y)| *y).max().unwrap(),
+    );
+    let (left, right) = (
+        glass.iter().map(|(x, _)| *x).min().unwrap(),
+        glass.iter().map(|(x, _)| *x).max().unwrap(),
+    );
+    let middle = (left + right) as f32 / 2.0;
+    let width = |y: usize| {
+        let row: Vec<usize> = glass
+            .iter()
+            .filter(|(_, at)| *at == y)
+            .map(|(x, _)| *x)
+            .collect();
+        let (Some(first), Some(last)) = (row.iter().min(), row.iter().max()) else {
+            panic!("no wall on row {y}");
+        };
+        assert!(
+            (*first as f32) < middle && (*last as f32) > middle,
+            "row {y} has a wall on one side only"
+        );
+        last - first
+    };
+    let widths: Vec<usize> = (top..=bottom).map(width).collect();
+
+    let mut open = vec![glass[0]];
+    let mut seen = vec![glass[0]];
+    while let Some((x, y)) = open.pop() {
+        for &(other_x, other_y) in &glass {
+            if x.abs_diff(other_x) <= 1
+                && y.abs_diff(other_y) <= 1
+                && !seen.contains(&(other_x, other_y))
+            {
+                seen.push((other_x, other_y));
+                open.push((other_x, other_y));
+            }
+        }
+    }
+    assert_eq!(seen.len(), glass.len(), "the outline breaks into pieces");
+
+    let inner = &widths[1..widths.len() - 1];
+    let neck = 1 + inner
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, width)| **width)
+        .map(|(index, _)| index)
+        .unwrap();
+    let up: Vec<usize> = widths[..=neck].iter().rev().copied().collect();
+    let down = &widths[neck..];
+    assert!(
+        rises_then_falls(&up) && rises_then_falls(down),
+        "the outline does not widen and then narrow from the neck: {widths:?}"
+    );
+    let widest = *widths.iter().max().unwrap();
+    assert!(
+        widths[neck] * 5 <= widest,
+        "the neck is {} dots wide and the widest row {widest}",
+        widths[neck]
+    );
+    for &(x, y) in &glass {
+        assert!(
+            y == top || y == bottom || (x as f32 - middle).abs() > 1.0,
+            "a wall at {:?} closes the neck",
+            (x, y)
+        );
+    }
+}
