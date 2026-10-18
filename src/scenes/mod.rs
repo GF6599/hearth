@@ -11,6 +11,7 @@ pub mod matrix;
 pub mod murmuration;
 pub mod noise;
 pub mod pipes;
+pub mod river;
 pub mod solar;
 pub mod study;
 pub mod tide;

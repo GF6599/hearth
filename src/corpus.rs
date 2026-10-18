@@ -1,5 +1,6 @@
-//! The source files the typing scene types: the crate's own tree, a
-//! checkout on disk, or a clone kept in a cache.
+//! What hearth reads from a repository: the source files the typing scene
+//! types, from the crate's own tree, a checkout on disk, or a clone kept in
+//! a cache, and the history the river scene draws.
 
 use std::fs;
 use std::io;
@@ -7,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use unicode_width::UnicodeWidthChar;
+
+use crate::history::{self, History};
 
 include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 
@@ -25,6 +28,7 @@ pub struct SourceFile {
 #[derive(Debug, Default)]
 pub struct Corpus {
     files: Vec<SourceFile>,
+    history: History,
 }
 
 impl Corpus {
@@ -50,7 +54,14 @@ impl Corpus {
                 })
             })
             .collect();
-        Self { files }
+        Self {
+            files,
+            history: History::default(),
+        }
+    }
+
+    pub fn with_history(self, history: History) -> Self {
+        Self { history, ..self }
     }
 
     /// The tracked text files of a checkout. Only `git ls-files` decides
@@ -96,18 +107,25 @@ impl Corpus {
                 files.push((path.to_string(), text));
             }
         }
-        Ok(Self::from_files(files))
+        Ok(Self::from_files(files).with_history(History::read(root)))
     }
 
     /// Clones `address` into the cache on the first call, and reads the
     /// cached checkout on every call after, so a run with no network still
-    /// starts.
+    /// starts. The clone holds as much history as the river reads.
     pub fn cloned(address: &str, cache: &Path) -> io::Result<Self> {
         let checkout = cache_path(address, cache);
         if !checkout.join(".git").exists() {
             fs::create_dir_all(cache)?;
             let status = Command::new("git")
-                .args(["clone", "--quiet", "--depth", "1", "--", address])
+                .args([
+                    "clone",
+                    "--quiet",
+                    "--depth",
+                    &history::DEPTH.to_string(),
+                    "--",
+                    address,
+                ])
                 .arg(&checkout)
                 .status()
                 .map_err(|e| io::Error::new(e.kind(), format!("cannot run git: {e}")))?;
@@ -125,6 +143,10 @@ impl Corpus {
 
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
+    }
+
+    pub fn history(&self) -> &History {
+        &self.history
     }
 }
 
@@ -147,7 +169,7 @@ pub fn cache_path(address: &str, cache: &Path) -> PathBuf {
     cache.join(key)
 }
 
-fn normalised(text: &str) -> String {
+pub(crate) fn normalised(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for glyph in text.chars() {
         match glyph {

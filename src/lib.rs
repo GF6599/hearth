@@ -15,6 +15,7 @@
 //!              ├── scene     The Scene trait and the list of scenes
 //!              ├── scenes    One module per scene
 //!              ├── corpus    The source files the typing scene types
+//!              ├── history   The commits the river scene draws
 //!              ├── highlight Colours a source file by its grammar
 //!              ├── minimap   A whole file drawn small, two lines to a row
 //!              ├── quadrant  Four pixels to a cell, in quadrant glyphs
@@ -32,6 +33,7 @@ pub mod corpus;
 pub mod dither;
 pub mod events;
 pub mod highlight;
+pub mod history;
 pub mod mark;
 pub mod minimap;
 pub mod pane;

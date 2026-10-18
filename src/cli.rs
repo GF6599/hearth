@@ -8,6 +8,7 @@ use clap::Parser;
 use crate::app::App;
 use crate::config::{self, Config};
 use crate::corpus::{self, Corpus};
+use crate::history::History;
 use crate::scene::SceneKind;
 
 #[derive(Debug, Parser)]
@@ -51,12 +52,14 @@ impl Cli {
         .with_config(config)
     }
 
-    /// The source files for the typing scene. A clone happens on the first
-    /// run for an address, with one line on stderr before the terminal
-    /// opens, and the cache serves every run after.
+    /// The source files for the typing scene and the history for the river.
+    /// A clone happens on the first run for an address, with one line on
+    /// stderr before the terminal opens, and the cache serves every run
+    /// after. With no repository chosen, the typing scene types hearth's
+    /// own source and the river draws the current directory's history.
     pub fn corpus(&self, config: &Config) -> io::Result<Corpus> {
         let Some(repo) = self.repo(config) else {
-            return Ok(Corpus::embedded());
+            return Ok(Corpus::embedded().with_history(History::read(Path::new("."))));
         };
         if Path::new(repo).is_dir() {
             return Corpus::from_checkout(Path::new(repo));
