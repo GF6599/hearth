@@ -17,17 +17,24 @@ const SHORE: f64 = 0.7;
 const TOWER_WIDTH: (f64, f64) = (0.04, 0.11);
 /// The least and the most height of a far tower, as shares of the height
 /// from the top of the pane to the shore.
-const FAR: (f64, f64) = (0.45, 0.85);
+const FAR: (f64, f64) = (0.5, 0.85);
 /// The least and the most height of a near tower, in the same shares.
-const NEAR: (f64, f64) = (0.2, 0.6);
+/// The least keeps a near roof above the train, which would hide it.
+const NEAR: (f64, f64) = (0.35, 0.65);
+/// The least rows by which two towers side by side differ in height, so
+/// their roofs make a skyline and not one block.
+const STEP: usize = 4;
+/// The share of near towers with a gap after them, and of far ones.
+const GAPS: (f64, f64) = (0.5, 0.3);
 /// The share of towers with an antenna, and its least and most height in
 /// pixels.
 const ANTENNA: (f64, usize, usize) = (0.35, 4, 8);
 /// The ticks of one loop of the night, about three minutes, from the
 /// evening to the late night and back.
 const NIGHT: f64 = 3000.0;
-/// The share of windows lit late at night and in the evening.
-const LIT: (f64, f64) = (0.12, 0.7);
+/// The share of windows lit late at night and in the evening. Under a
+/// quarter, so the lit windows stand out from the grid of dark ones.
+const LIT: (f64, f64) = (0.04, 0.25);
 /// The share of the lit windows in rose.
 const WARM: f64 = 0.2;
 /// The chance in a tick that a window turns toward the share the night
@@ -75,6 +82,7 @@ struct Window {
     y: usize,
     lit: bool,
     warm: bool,
+    near: bool,
 }
 
 /// The column of an antenna, the row of its light at the top, and the row
@@ -154,7 +162,7 @@ impl City {
     /// The top row of the raised line, or none on a pane too short for a
     /// train above it.
     fn line(down: usize, shore: usize) -> Option<usize> {
-        let line = shore.checked_sub(((down as f64 * LINE) as usize & !1).max(2))?;
+        let line = shore.checked_sub(((down as f64 * LINE) as usize & !1).max(6))?;
         (line >= 6).then_some(line)
     }
 
@@ -194,7 +202,9 @@ impl City {
             }
         }
         for tower in &towers {
-            for column in 0..(tower.width / 2).saturating_sub(1) {
+            // The first and last cells of a tower hold no window, so the
+            // rim at its right edge never shares a cell with one.
+            for column in 1..(tower.width / 2).saturating_sub(1) {
                 let x = tower.left + 1 + 2 * column;
                 for y in (tower.top + 2..shore.saturating_sub(3)).step_by(2) {
                     if x + 1 < across && (tower.near || !self.hidden(x, y)) {
@@ -203,6 +213,7 @@ impl City {
                             y,
                             lit: self.rng.random_bool(self.share()),
                             warm: self.rng.random_bool(WARM),
+                            near: tower.near,
                         });
                     }
                 }
@@ -217,10 +228,9 @@ impl City {
         let tower = self.towers.iter().any(|front| {
             front.near && (front.left..front.left + front.width).contains(&x) && y >= front.top
         });
-        let antenna = self
-            .antennas
-            .iter()
-            .any(|front| front.near && x & !1 == front.x && (front.light..front.roof).contains(&y));
+        let antenna = self.antennas.iter().any(|front| {
+            front.near && x & !1 == front.x && (front.light & !1..front.roof).contains(&y)
+        });
         tower || antenna
     }
 
@@ -236,19 +246,28 @@ impl City {
     ) -> Vec<Tower> {
         let least = ((across as f64 * TOWER_WIDTH.0) as usize).max(4);
         let most = ((across as f64 * TOWER_WIDTH.1) as usize).max(least + 2);
-        let mut towers = Vec::new();
+        let gap = if near { GAPS.0 } else { GAPS.1 };
+        let mut towers: Vec<Tower> = Vec::new();
         let mut left = start;
         while left < across {
             let width = self.rng.random_range(least..=most) & !1;
-            let share = self.rng.random_range(heights.0..heights.1);
-            let height = ((share * shore as f64) as usize & !1).max(2);
+            let mut top = 0;
+            for _ in 0..8 {
+                let share = self.rng.random_range(heights.0..heights.1);
+                let height = ((share * shore as f64) as usize & !1).max(2);
+                top = shore - height;
+                let beside = towers.last().filter(|last| last.left + last.width == left);
+                if beside.is_none_or(|last| last.top.abs_diff(top) >= STEP) {
+                    break;
+                }
+            }
             towers.push(Tower {
                 left,
                 width,
-                top: shore - height,
+                top,
                 near,
             });
-            left += width + if self.rng.random_bool(0.3) { 2 } else { 0 };
+            left += width + if self.rng.random_bool(gap) { 2 } else { 0 };
         }
         towers
     }
@@ -296,18 +315,31 @@ impl City {
         }
     }
 
-    /// The far towers and their antennas, then the near ones in front.
+    /// The far towers and their antennas, then the near ones in front. Each
+    /// tower has a rim on its roof and on its right edge, the side of the
+    /// moon, in a lighter tone than its wall, so towers side by side read
+    /// apart.
     fn draw_towers(&self, rows: &mut [Vec<Color>], shore: usize) {
         for near in [false, true] {
-            let wall = if near {
-                self.palette.overlay
+            let (wall, rim) = if near {
+                (self.palette.overlay, self.palette.pine)
             } else {
-                self.palette.surface
+                (self.palette.surface, self.palette.overlay)
             };
             for tower in self.towers.iter().filter(|tower| tower.near == near) {
-                for row in &mut rows[tower.top..shore] {
-                    for pixel in row.iter_mut().skip(tower.left).take(tower.width) {
-                        *pixel = wall;
+                let right = tower.left + tower.width - 1;
+                for (y, row) in rows.iter_mut().enumerate().take(shore).skip(tower.top) {
+                    for (x, pixel) in row
+                        .iter_mut()
+                        .enumerate()
+                        .skip(tower.left)
+                        .take(tower.width)
+                    {
+                        *pixel = if y == tower.top || x == right {
+                            rim
+                        } else {
+                            wall
+                        };
                     }
                 }
             }
@@ -329,11 +361,12 @@ impl City {
                 }
             }
         }
-        for window in self.windows.iter().filter(|window| window.lit) {
-            rows[window.y][window.x] = if window.warm {
-                self.palette.rose
-            } else {
-                self.palette.gold
+        for window in &self.windows {
+            rows[window.y][window.x] = match (window.lit, window.warm, window.near) {
+                (true, true, _) => self.palette.rose,
+                (true, false, _) => self.palette.gold,
+                (false, _, true) => self.palette.surface,
+                (false, _, false) => continue,
             };
         }
     }
@@ -370,31 +403,58 @@ impl City {
         }
     }
 
-    /// The lit windows mirrored in the water, as far below the shore as
-    /// they stand above it. Each row of the water slides to and fro by a
-    /// ripple that grows with depth, and a band of rows that runs down the
-    /// water breaks the reflection.
+    /// The water line at the shore, and under it the near towers mirrored dim,
+    /// as far below the line as they stand above it. The far towers are left
+    /// out of the mirror, so the near roofs show their shapes in it. A lit
+    /// window mirrors as a streak four pixels wide. Each cell row of the water
+    /// slides by whole cells with a ripple that grows with depth, so no cell
+    /// holds a streak, the dim city and the water, and gaps that run along the
+    /// rows break the streaks.
     fn draw_water(&self, rows: &mut [Vec<Color>], shore: usize) {
-        let (sky, water) = rows.split_at_mut(shore);
-        for (depth, row) in water.iter_mut().enumerate() {
-            let Some(above) = shore.checked_sub(depth + 1) else {
+        let across = rows.first().map_or(0, Vec::len);
+        let (land, water) = rows.split_at_mut(shore);
+        let Some((line, water)) = water.split_first_mut() else {
+            return;
+        };
+        line.fill(self.palette.muted);
+        for (depth, row) in water.iter_mut().enumerate().skip(1) {
+            let Some(above) = shore.checked_sub(depth) else {
                 break;
             };
-            if (depth as u64 / 2 + self.time / 8).is_multiple_of(4) {
-                continue;
-            }
-            let reach = 1.0 + depth as f64 * 0.06;
-            let wave = (self.time as f64 * 0.15 + depth as f64 * 0.7).sin();
-            let ripple = (reach * wave).round() as i64;
+            let cell = (shore + 1 + depth) / 2;
+            let cells_down = (cell - shore / 2) as f64;
+            let reach = (0.4 + cells_down * 0.2).min(2.0);
+            let wave = (self.time as f64 * 0.12 + cell as f64 * 0.9).sin();
+            let ripple = 2 * (reach * wave).round() as i64;
+            let source = &land[above];
             for (x, pixel) in row.iter_mut().enumerate() {
-                let Some(colour) = usize::try_from(x as i64 - ripple)
-                    .ok()
-                    .and_then(|from| sky[above].get(from))
-                else {
+                let Ok(from) = usize::try_from(x as i64 - ripple) else {
                     continue;
                 };
-                if *colour == self.palette.gold || *colour == self.palette.rose {
-                    *pixel = *colour;
+                let near = self.towers.iter().any(|tower| {
+                    tower.near
+                        && (tower.left..tower.left + tower.width).contains(&from)
+                        && above >= tower.top
+                });
+                if near {
+                    *pixel = self.palette.surface;
+                }
+            }
+            for (x, colour) in source.iter().enumerate() {
+                let lit = *colour == self.palette.gold || *colour == self.palette.rose;
+                let gap = (x / 4 + cell * 3 + (self.time / 5) as usize).is_multiple_of(4);
+                if !lit || gap {
+                    continue;
+                }
+                let at = x as i64 + ripple;
+                for spread in -1..=2 {
+                    if let Some(pixel) = usize::try_from(at + spread)
+                        .ok()
+                        .filter(|x| *x < across)
+                        .and_then(|x| row.get_mut(x))
+                    {
+                        *pixel = *colour;
+                    }
                 }
             }
         }

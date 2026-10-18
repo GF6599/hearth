@@ -304,11 +304,11 @@ fn the_water_mirrors_the_city_in_streaks_that_ripple() {
 /// Each near tower reads as its own shape.
 /// Given: the scene at a hundred by thirty, from three seeds.
 /// When: it ticks and renders.
-/// Then: on the ground row each near tower, a run of three or more pixels
-/// of its wall, ends in a rim at its right before the next tower or the
-/// pane's edge. Its roof, the first rim above the ground in its middle
-/// column, is there, and two near towers that touch differ in height by
-/// four rows or more.
+/// Then: on the ground row each near tower, a run of three or more pixels of
+/// its wall, ends in a rim at its right, or a pillar of the raised line in
+/// front of the rim, before the next tower or the pane's edge. Its roof, the
+/// first rim above the ground in its middle column, is there, and two near
+/// towers that touch differ in height by four rows or more.
 ///
 /// Why it matters: towers of one colour side by side melt into one block,
 /// and the skyline stops reading as a city.
@@ -339,8 +339,9 @@ fn each_near_tower_has_a_rim_and_its_own_roof_line() {
             if x - start < 3 {
                 continue;
             }
+            // A pillar of the raised line can stand in front of the rim.
             assert!(
-                x == row.len() || row[x] == PALETTE.pine,
+                x == row.len() || row[x] == PALETTE.pine || row[x] == PALETTE.muted,
                 "seed {seed}: the near tower at {start}..{x} ends in {:?}",
                 row[x]
             );
@@ -470,6 +471,59 @@ fn off_the_line(y: usize, rail: usize) -> bool {
     y + 4 < rail || y > rail + 1
 }
 
+/// Each pixel of a tower or a window above the water and off the train's
+/// rows, with its colour.
+fn skyline(rows: &[Vec<Color>]) -> Vec<(usize, usize, Color)> {
+    let (rail, shore) = (rail(rows), ground(rows) + 1);
+    rows[..shore]
+        .iter()
+        .enumerate()
+        .filter(|(y, _)| off_the_line(*y, rail))
+        .flat_map(|(y, row)| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, colour)| is_tower(**colour) || is_window(**colour))
+                .map(move |(x, colour)| (x, y, *colour))
+        })
+        .collect()
+}
+
+fn places(city: &[(usize, usize, Color)]) -> Vec<(usize, usize)> {
+    city.iter().map(|(x, y, _)| (*x, *y)).collect()
+}
+
+/// A far window that turns never changes the shape of what stands in front
+/// of it.
+/// Given: the scene at a hundred by thirty, from seeds 69 and 110, whose
+/// skylines put the lamp of a near antenna beside a far window.
+/// When: it ticks over a few seconds.
+/// Then: the places of the towers and windows stay the same from a frame
+/// to the next.
+///
+/// Why it matters: a cell draws two colours, so a lamp in the cell of a
+/// far window and its wall takes the wall's colour while the window is
+/// lit, and the wall seems to grow a pixel each time the window turns.
+#[test]
+fn a_far_window_never_shares_a_cell_with_a_lamp() {
+    for seed in [69, 110] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
+        let mut before = None;
+
+        for tick in 0..FEW_SECONDS {
+            // When:
+            scene.tick(AREA);
+            let now = places(&skyline(&frame(&scene, AREA)));
+
+            // Then:
+            if let Some(before) = &before {
+                assert_eq!(*before, now, "seed {seed} tick {tick}: the skyline moved");
+            }
+            before = Some(now);
+        }
+    }
+}
+
 /// Windows light and go dark one at a time as the night passes.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over a loop of the night and a half.
@@ -497,17 +551,7 @@ fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
 
         // Then:
         let (rail, shore) = (rail(&rows), ground(&rows) + 1);
-        let city: Vec<(usize, usize, Color)> = rows[..shore]
-            .iter()
-            .enumerate()
-            .filter(|(y, _)| off_the_line(*y, rail))
-            .flat_map(|(y, row)| {
-                row.iter()
-                    .enumerate()
-                    .filter(|(_, colour)| is_tower(**colour) || is_window(**colour))
-                    .map(move |(x, colour)| (x, y, *colour))
-            })
-            .collect();
+        let city = skyline(&rows);
         counts.push(
             city.iter()
                 .filter(|(_, _, colour)| is_window(*colour))
@@ -524,9 +568,6 @@ fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
         }
         shares.push(lit as f64 / (lit + dark) as f64);
         if let Some(before) = &before {
-            let places = |city: &[(usize, usize, Color)]| -> Vec<(usize, usize)> {
-                city.iter().map(|(x, y, _)| (*x, *y)).collect()
-            };
             assert_eq!(
                 places(before),
                 places(&city),
@@ -611,8 +652,8 @@ fn the_antenna_lights_blink() {
 /// above the line, comes in at one side of the pane, and leaves at the
 /// other side. Its front end moves toward that side in every frame until
 /// it first gets there. Either end at an edge can step back for a frame,
-/// when the gap between two carriages is at that edge. No such run
-/// shows on any row above the train's rows, and more than one train
+/// when the gap between two carriages is at that edge. No run of four or
+/// more shows on any row above the train's rows, and more than one train
 /// crosses.
 ///
 /// Why it matters: a train that jumps, turns back or stops halfway reads
@@ -622,14 +663,14 @@ fn a_train_crosses_on_its_line_now_and_then() {
     // Given:
     let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
     let across = usize::from(AREA.width) * 2;
-    let runs = |row: &[Color]| -> Option<(usize, usize)> {
+    let runs = |row: &[Color], least: usize| -> Option<(usize, usize)> {
         let mut found: Option<(usize, usize)> = None;
         let mut start = None;
         for (x, colour) in row.iter().chain([&Color::Reset]).enumerate() {
             match (start, *colour == PALETTE.muted) {
                 (None, true) => start = Some(x),
                 (Some(from), false) => {
-                    if x - from >= 2 {
+                    if x - from >= least {
                         found = Some(found.map_or((from, x - 1), |(left, _)| (left, x - 1)));
                     }
                     start = None;
@@ -651,9 +692,14 @@ fn a_train_crosses_on_its_line_now_and_then() {
         // Then:
         let rail = rail(&rows);
         for (y, row) in rows.iter().enumerate().take(rail - 4) {
-            assert!(runs(row).is_none(), "tick {tick}: a train body on row {y}");
+            // A near mast in one cell with a far tower's rim and the sky
+            // can draw two pixels of the mast's colour.
+            assert!(
+                runs(row, 4).is_none(),
+                "tick {tick}: a train body on row {y}"
+            );
         }
-        let now = runs(&rows[rail - 1]);
+        let now = runs(&rows[rail - 1], 2);
         train = match (train, now) {
             (None, None) => None,
             (None, Some((left, right))) => {
