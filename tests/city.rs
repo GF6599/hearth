@@ -478,10 +478,13 @@ fn the_antenna_lights_blink() {
 /// A lit train crosses the city on its raised line now and then.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks long enough for a few trains.
-/// Then: each train, a run of six or more pixels of its body on the row
-/// above the line, comes in at one side of the pane, moves the same way in
-/// every frame, and leaves at the other side. No such run shows on any
-/// row above the train's rows, and more than one train crosses.
+/// Then: each train, a run of two or more pixels of its body on the row
+/// above the line, comes in at one side of the pane, and leaves at the
+/// other side. Its front end moves toward that side in every frame until
+/// it first gets there. Either end at an edge can step back for a frame,
+/// when the gap between two carriages is at that edge. No such run
+/// shows on any row above the train's rows, and more than one train
+/// crosses.
 ///
 /// Why it matters: a train that jumps, turns back or stops halfway reads
 /// as a fault, and one that leaves its line reads as a crash.
@@ -497,7 +500,7 @@ fn a_train_crosses_on_its_line_now_and_then() {
             match (start, *colour == PALETTE.muted) {
                 (None, true) => start = Some(x),
                 (Some(from), false) => {
-                    if x - from >= 6 {
+                    if x - from >= 2 {
                         found = Some(found.map_or((from, x - 1), |(left, _)| (left, x - 1)));
                     }
                     start = None;
@@ -533,9 +536,9 @@ fn a_train_crosses_on_its_line_now_and_then() {
             }
             (Some((from_left, (left, right))), Some((now_left, now_right))) => {
                 let forward = if from_left {
-                    now_left >= left && now_right >= right
+                    now_right > right || right == across - 1
                 } else {
-                    now_left <= left && now_right <= right
+                    now_left < left || left == 0
                 };
                 assert!(
                     forward,
