@@ -273,8 +273,6 @@ impl Drive {
                         palette.overlay
                     } else if off < half {
                         if band { palette.love } else { palette.text }
-                    } else if band {
-                        palette.pine
                     } else {
                         palette.base
                     };
@@ -282,8 +280,9 @@ impl Drive {
             }
             drawn = top;
         }
-        // The land meets the sky on a cell boundary, because a cell that
-        // held both would hold more colours than a quadrant cell draws.
+        // The road's top meets the sky on a cell boundary, because a cell
+        // that held a star or the moon and the road would hold more colours
+        // than a quadrant cell draws.
         if drawn % 2 == 1 && drawn < down {
             rows[drawn - 1] = rows[drawn].clone();
         }
@@ -314,8 +313,8 @@ impl Drive {
                 continue;
             }
             // A post covers whole cells, from an even column and row to the
-            // end of a cell, so no cell holds a post, grass of one band and
-            // grass of the other.
+            // end of a cell, so no cell holds a post and two colours of what
+            // stands behind it.
             let thick = thick.div_ceil(2) * 2;
             let bottom = (ground | 1).min(rows.len() - 1);
             let top = ground.saturating_sub(height - 1) & !1;

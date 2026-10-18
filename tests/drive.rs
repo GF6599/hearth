@@ -55,9 +55,9 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
 }
 
 /// The left and right ends of the road in each pixel row that has road, from
-/// the top: the first and last pixel that is not grass, sky or a post.
+/// the top: the first and last pixel that is not land, sky or a post.
 fn road(rows: &[Vec<Color>]) -> Vec<(usize, usize, usize)> {
-    let off_road = |colour: &Color| [PALETTE.pine, PALETTE.base, PALETTE.muted].contains(colour);
+    let off_road = |colour: &Color| [PALETTE.base, PALETTE.muted].contains(colour);
     rows.iter()
         .enumerate()
         .filter(|(_, row)| row.contains(&PALETTE.overlay))
@@ -259,8 +259,8 @@ fn a_smaller_area_draws_only_inside_it() {
 
 /// Given: the scene name `drive`.
 /// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame shows the road and
-/// the grass.
+/// Then: the name finds a scene, and its first frame shows the road with
+/// land beside it on the bottom row.
 ///
 /// Why it matters: a scene that is built but not listed cannot be chosen
 /// from the command line, the picker or Tab.
@@ -287,7 +287,8 @@ fn drive_is_a_scene_by_name() {
             .flatten()
             .any(|colour| *colour == PALETTE.overlay)
     );
-    assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.pine));
+    let bottom = rows.last().unwrap();
+    assert_eq!(bottom[0], PALETTE.base, "no land left of the road");
 }
 
 /// The row of the topmost road pixel, the far end of the road in view.
@@ -303,7 +304,7 @@ fn road_top(rows: &[Vec<Color>]) -> usize {
 /// row, the moon shows in some frames, and the moon moves left in a right
 /// bend and right in a left bend.
 ///
-/// Why it matters: a moon on the grass reads as a fault, and a sky that
+/// Why it matters: a moon on the land reads as a fault, and a sky that
 /// stays put in a curve takes away the turn.
 #[test]
 fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
@@ -756,7 +757,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
 /// The land beside the road holds still while the car drives.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over the track, and each pixel beside the road that is
-/// grass or night in two frames in a row is compared.
+/// in a colour the land could take in two frames in a row is compared.
 /// Then: under one such pixel in a hundred changes its colour from a frame
 /// to the next.
 ///
@@ -767,7 +768,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
 fn the_land_beside_the_road_holds_still() {
     // Given:
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
-    let land = |colour: Color| colour == PALETTE.pine || colour == PALETTE.base;
+    let land = |colour: Color| [PALETTE.base, PALETTE.surface, PALETTE.pine].contains(&colour);
     scene.tick(AREA);
     let mut before = pixels(&render(&scene, AREA, AREA), AREA);
     let (mut changed, mut compared) = (0_usize, 0_usize);
