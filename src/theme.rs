@@ -321,7 +321,7 @@ pub const RULE: line::Set = match BORDER {
 pub const PICKER_TITLE: &str = "─ scenes ";
 
 /// The picker's keys, cut into its bottom rule the same way.
-pub const PICKER_HINT: &str = "─ ↵ start  j/k move  / find  t theme  q quit ";
+pub const PICKER_HINT: &str = "─ ↵ start  j/k move  / search  t theme  q quit ";
 
 /// The picker's keys while a search is on, in the same place.
 pub const PICKER_SEARCH_HINT: &str = "─ ↵ start  ↑/↓ move  esc back ";
