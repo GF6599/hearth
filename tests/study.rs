@@ -325,32 +325,203 @@ fn a_smaller_pane_shows_the_middle_of_the_picture() {
     );
 }
 
-/// Below the least size only the window shows.
-/// Given: the scene on a pane under the least size, and on a hundred by
-/// thirty.
+/// The window part of the picture on a pane under the least size, and the
+/// pixel of the pane where it starts.
+fn window_on(small: (u16, u16)) -> (Vec<Vec<Color>>, (isize, isize)) {
+    let scene = scene();
+    (
+        view(&scene, small.0, small.1),
+        offset(small, (WINDOW.2, WINDOW.3)),
+    )
+}
+
+/// Where the window part starts on a hundred by thirty, where the whole
+/// room shows.
+fn window_in_room() -> (Vec<Vec<Color>>, (isize, isize)) {
+    let (left, top) = offset((100, 30), PICTURE);
+    (
+        view(&scene(), 100, 30),
+        (left + WINDOW.0 as isize, top + WINDOW.1 as isize),
+    )
+}
+
+/// Below the least size the whole window shows.
+/// Given: the scene on a pane under the least size with room for the
+/// window part of the picture, and on a hundred by thirty.
 /// When: both render.
-/// Then: the small pane shows the window part of the picture, the window,
-/// the cat and the sill, centred on it, and not the middle of the room.
+/// Then: the small pane shows the window part, the window, the cat and the
+/// sill, the same as it is in the room. The window's frame, in muted,
+/// lies whole inside the pane with a pixel or more to spare on every side,
+/// and it has as much room on its left as on its right, to a pixel.
 ///
 /// Why it matters: a room cut to a small pane is a strip of desk that
-/// reads as nothing, and the rainy window still reads as the scene.
+/// reads as nothing, and a window cut at its frame reads as a fault.
 #[test]
-fn below_the_least_size_only_the_window_shows() {
+fn below_the_least_size_the_whole_window_shows() {
     // Given:
-    let scene = scene();
-    let small = (30, 11);
+    let small = (34, 14);
     assert!(small.0 < LEAST.0 || small.1 < LEAST.1);
+    assert!(small.0 as usize >= WINDOW.2 && small.1 as usize * 2 >= WINDOW.3);
 
     // When:
-    let (smaller, larger) = (view(&scene, small.0, small.1), view(&scene, 100, 30));
+    let (smaller, (left, top)) = window_on(small);
+    let (larger, (from_x, from_y)) = window_in_room();
 
     // Then:
-    let (large_left, large_top) = offset((100, 30), PICTURE);
-    let (small_left, small_top) = offset(small, WINDOW);
-    shows_from(
-        &smaller,
-        &larger,
-        (large_left - small_left, large_top - small_top),
+    for y in 0..WINDOW.3 {
+        for x in 0..WINDOW.2 {
+            let (at_x, at_y) = ((left + x as isize) as usize, (top + y as isize) as usize);
+            assert_eq!(
+                smaller[at_y][at_x],
+                larger[(from_y + y as isize) as usize][(from_x + x as isize) as usize],
+                "pixel {:?} of the window part",
+                (x, y)
+            );
+        }
+    }
+    let frame: Vec<(usize, usize)> = smaller
+        .iter()
+        .enumerate()
+        .flat_map(|(y, row)| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, colour)| **colour == PALETTE.muted)
+                .map(move |(x, _)| (x, y))
+        })
+        .collect();
+    let (wide, tall) = (smaller[0].len(), smaller.len());
+    assert!(!frame.is_empty(), "no frame");
+    for &(x, y) in &frame {
+        assert!(
+            x > 0 && y > 0 && x + 1 < wide && y + 1 < tall,
+            "the frame reaches the pane's edge at {:?}",
+            (x, y)
+        );
+    }
+    let first = frame.iter().map(|(x, _)| *x).min().unwrap();
+    let last = frame.iter().map(|(x, _)| *x).max().unwrap();
+    let right = wide - 1 - last;
+    assert!(
+        first.abs_diff(right) <= 1,
+        "the frame has {first} pixels on its left and {right} on its right"
+    );
+}
+
+/// A pane too small for the window shows its middle.
+/// Given: the scene on a pane smaller than the window part, and on a
+/// hundred by thirty.
+/// When: both render.
+/// Then: every pixel of the small pane is the pixel of the window part as
+/// it is in the room, and the window's middle bar, the columns with the
+/// most muted, is in the middle of the pane to half a pixel, so the window
+/// is cut evenly from each side.
+///
+/// Why it matters: a window cut from one corner loses its frame on one
+/// side only and reads as off centre.
+#[test]
+fn a_pane_smaller_than_the_window_shows_its_middle() {
+    // Given:
+    let small = (24, 9);
+    assert!((small.0 as usize) < WINDOW.2 && (small.1 as usize) * 2 < WINDOW.3);
+
+    // When:
+    let (smaller, (left, top)) = window_on(small);
+    let (larger, (from_x, from_y)) = window_in_room();
+
+    // Then:
+    shows_from(&smaller, &larger, (from_x - left, from_y - top));
+    let muted = |x: usize| smaller.iter().filter(|row| row[x] == PALETTE.muted).count();
+    let most = (0..smaller[0].len()).map(muted).max().unwrap();
+    let bar: Vec<usize> = (0..smaller[0].len())
+        .filter(|x| muted(*x) == most)
+        .collect();
+    let middle = bar.iter().sum::<usize>() as f32 / bar.len() as f32;
+    let centre = (smaller[0].len() as f32 - 1.0) / 2.0;
+    assert!(
+        (middle - centre).abs() <= 0.5,
+        "the middle bar is at {middle}, the pane's middle at {centre}"
+    );
+}
+
+/// The window shows a night sky.
+/// Given: the scene in Rose Pine and in Rose Pine Dawn.
+/// When: it renders on a pane the size of the picture.
+/// Then: the colour most of the glass shows is the theme's base, and the
+/// glass shows no pine.
+///
+/// Why it matters: a teal sky reads as day, and the scene is a night.
+#[test]
+fn the_window_shows_a_night_sky() {
+    for palette in [&theme::ROSE_PINE, &theme::ROSE_PINE_DAWN] {
+        // Given:
+        let mut scene = Study::new(Rng::seed_from_u64(7), palette);
+        scene.tick(FITTED);
+
+        // When:
+        let rows = view(&scene, FITTED.width, FITTED.height);
+
+        // Then:
+        let (left, top, wide, tall) = LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1;
+        let mut counts: Vec<(Color, usize)> = Vec::new();
+        for row in &rows[top..top + tall] {
+            for colour in &row[left..left + wide] {
+                assert_ne!(*colour, palette.pine, "pine on the glass");
+                match counts.iter_mut().find(|(each, _)| each == colour) {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((*colour, 1)),
+                }
+            }
+        }
+        let most = counts.iter().max_by_key(|(_, count)| *count).unwrap().0;
+        assert_eq!(most, palette.base, "{counts:?}");
+    }
+}
+
+/// The lamp lights the wall and the desk below it, and dims as it
+/// flickers.
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks over about two minutes.
+/// Then: in the first frame the gold of the lamp reaches ten rows or more
+/// below the top of its shade, and in some frame of the run the lower half
+/// of the lamp's area holds less gold than in the first.
+///
+/// Why it matters: a lamp that throws no light reads as a picture of a
+/// lamp, and a glow that stays bright while the bulb dims reads as a
+/// fault.
+#[test]
+fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
+    // Given:
+    let mut scene = scene();
+    let (left, top, wide, tall) = LAYERS.iter().find(|(name, _)| *name == "lamp").unwrap().1;
+    let gold = |rows: &[Vec<Color>], from: usize| -> Vec<usize> {
+        (from..top + tall)
+            .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
+            .filter(|&(x, y)| rows[y][x] == PALETTE.gold)
+            .map(|(_, y)| y)
+            .collect()
+    };
+    let first = view(&scene, FITTED.width, FITTED.height);
+    let lit = gold(&first, top);
+    let (highest, lowest) = (*lit.iter().min().unwrap(), *lit.iter().max().unwrap());
+    assert!(
+        lowest >= highest + 10,
+        "the light reaches from row {highest} to {lowest}"
+    );
+    let lower = top + tall / 2;
+    let bright = gold(&first, lower).len();
+
+    // When:
+    let mut dimmest = bright;
+    for _ in 0..RUN {
+        scene.tick(FITTED);
+        let rows = view(&scene, FITTED.width, FITTED.height);
+        dimmest = dimmest.min(gold(&rows, lower).len());
+    }
+
+    // Then:
+    assert!(
+        dimmest < bright,
+        "the glow held {bright} gold pixels in every frame"
     );
 }
 
@@ -390,8 +561,8 @@ fn a_smaller_area_draws_only_inside_it() {
 
 /// Given: the scene name `study`.
 /// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame shows the night sky
-/// in the window and the cat.
+/// Then: the name finds a scene, and its first frame shows the cat and the
+/// lamp.
 ///
 /// Why it matters: a scene that is built but not listed cannot be chosen
 /// from the command line, the picker or Tab.
@@ -413,6 +584,6 @@ fn study_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     let rows = pixels(&buffer, AREA);
-    assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.pine));
+    assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.gold));
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.text));
 }
