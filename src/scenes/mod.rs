@@ -12,5 +12,6 @@ pub mod murmuration;
 pub mod noise;
 pub mod pipes;
 pub mod solar;
+pub mod study;
 pub mod tide;
 pub mod typing;

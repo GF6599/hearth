@@ -24,6 +24,7 @@ use crate::scenes::murmuration::Murmuration;
 use crate::scenes::noise::Noise;
 use crate::scenes::pipes::Pipes;
 use crate::scenes::solar::Solar;
+use crate::scenes::study::Study;
 use crate::scenes::tide::Tide;
 use crate::scenes::typing::{Speed, Typing};
 use crate::theme::Palette;
@@ -136,6 +137,7 @@ pub enum SceneKind {
     Aquarium,
     Murmuration,
     Hourglass,
+    Study,
     Typing,
     Noise,
 }
@@ -156,6 +158,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Aquarium,
     SceneKind::Murmuration,
     SceneKind::Hourglass,
+    SceneKind::Study,
     SceneKind::Typing,
     SceneKind::Noise,
 ];
@@ -178,6 +181,7 @@ impl SceneKind {
             SceneKind::Solar => "solar",
             SceneKind::Drive => "drive",
             SceneKind::Hourglass => "hourglass",
+            SceneKind::Study => "study",
             SceneKind::Typing => "typing",
         }
     }
@@ -201,6 +205,7 @@ impl SceneKind {
             SceneKind::Solar => "eight planets with trails round the sun",
             SceneKind::Drive => "a night drive over hills and bends, past slower cars",
             SceneKind::Hourglass => "an hourglass that keeps a Pomodoro cycle",
+            SceneKind::Study => "a desk by a rainy window, a cat on the sill",
             SceneKind::Typing => "functions typed from a git repository",
         }
     }
@@ -224,6 +229,7 @@ impl SceneKind {
             SceneKind::Solar => None,
             SceneKind::Drive => None,
             SceneKind::Hourglass => Some("after the Pomodoro Technique by Francesco Cirillo"),
+            SceneKind::Study => Some("after the lofi study streams"),
             SceneKind::Typing => Some("after gittype by Yuji Ueki"),
         }
     }
@@ -262,6 +268,7 @@ impl SceneKind {
             SceneKind::Hourglass => {
                 Box::new(Hourglass::new(rng, palette, Clock::monotonic(), lengths))
             }
+            SceneKind::Study => Box::new(Study::new(rng, palette)),
             SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
         }
     }
