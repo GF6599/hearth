@@ -242,3 +242,212 @@ fn shift_tab_in_the_picker_marks_the_scene_before() {
     assert_eq!(marked(&first).as_deref(), Some(ALL[ALL.len() - 1].name()));
     assert!(first.is_picking());
 }
+
+fn typed(text: &str) -> Vec<Event> {
+    text.chars()
+        .map(|c| press(KeyCode::Char(c), KeyModifiers::NONE))
+        .collect()
+}
+
+fn key(code: KeyCode) -> Event {
+    press(code, KeyModifiers::NONE)
+}
+
+/// The rows of the list frame, left of the preview pane.
+fn list_rows(app: &App) -> Vec<String> {
+    let buffer = app_frame(app, WIDE);
+    let end = pane_inner(&buffer).map_or(WIDE.width, |inner| inner.x - 1);
+    (0..WIDE.height)
+        .map(|y| {
+            (0..end)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// The names the list shows, top to bottom. A row that is a whole summary
+/// is never a name row, because a summary can start with a scene's name.
+fn listed(app: &App) -> Vec<String> {
+    list_rows(app)
+        .iter()
+        .filter_map(|row| {
+            let inside = row.split('│').nth(1)?;
+            if ALL
+                .iter()
+                .any(|kind| inside.trim_end() == format!(" {}", kind.summary()))
+            {
+                return None;
+            }
+            let word = inside
+                .split(|c: char| c.is_whitespace() || "[]".contains(c))
+                .find(|word| !word.is_empty())?;
+            ALL.iter()
+                .any(|kind| kind.name() == word)
+                .then(|| word.to_string())
+        })
+        .collect()
+}
+
+/// `/` and letters narrow the list to the scenes that match them loosely.
+/// Given: the picker.
+/// When: `/` is pressed and `drv` typed, then the query is cleared and
+/// `rain` typed.
+/// Then: `drv` lists only the drive, whose name holds the letters in
+/// order, and marks it, and the pane runs it. `rain` lists the scenes whose
+/// summary holds the word, in the order of the list. The query shows in the
+/// list's top rule.
+///
+/// Why it matters: a list of eighteen scenes is long to walk with `j`, and
+/// a user who knows part of a name or what a scene shows should reach it in
+/// a few keys.
+#[test]
+fn slash_and_letters_narrow_the_list_to_the_loose_matches() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+
+    // When:
+    let mut keys = vec![key(KeyCode::Char('/'))];
+    keys.extend(typed("drv"));
+    send(&mut app, keys);
+    for _ in 0..5 {
+        app.tick(WIDE);
+    }
+
+    // Then:
+    assert_eq!(listed(&app), vec!["drive"]);
+    assert_eq!(marked(&app).as_deref(), Some("drive"));
+    assert_pane_runs(&app, SceneKind::Drive);
+    assert!(list_rows(&app).iter().any(|row| row.contains("/drv")));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Backspace); 3]);
+    send(&mut app, typed("rain"));
+
+    // Then:
+    let expected: Vec<&str> = ALL
+        .iter()
+        .filter(|kind| kind.summary().contains("rain"))
+        .map(|kind| kind.name())
+        .collect();
+    assert!(expected.len() >= 2, "{expected:?}");
+    assert_eq!(listed(&app), expected);
+    assert_eq!(marked(&app).as_deref(), Some(expected[0]));
+}
+
+/// A scene whose name matches comes before one whose summary matches.
+/// Given: the picker.
+/// When: `/` is pressed and `ri` typed.
+/// Then: every scene whose name holds `r` then `i` is listed before every
+/// scene that matches by its summary alone.
+///
+/// Why it matters: the name is what a user types first, and a summary
+/// match at the top would hide the scene they named.
+#[test]
+fn a_name_match_comes_before_a_summary_match() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+
+    // When:
+    let mut keys = vec![key(KeyCode::Char('/'))];
+    keys.extend(typed("ri"));
+    send(&mut app, keys);
+
+    // Then:
+    let names = listed(&app);
+    let by_name = |name: &String| {
+        let mut letters = name.chars();
+        "ri".chars().all(|wanted| letters.any(|c| c == wanted))
+    };
+    let first_summary = names.iter().position(|name| !by_name(name));
+    let last_name = names.iter().rposition(by_name);
+    assert!(last_name.is_some(), "{names:?}");
+    if let (Some(first_summary), Some(last_name)) = (first_summary, last_name) {
+        assert!(last_name < first_summary, "{names:?}");
+    }
+}
+
+/// In a search every letter types, and Esc gives back the whole list.
+/// Given: the picker.
+/// When: `/` is pressed, `qt` typed, and Enter pressed, then Backspace
+/// clears the query, `rain` is typed, Down moves the mark, and Esc leaves
+/// the search.
+/// Then: `q` does not quit, `qt` lists nothing and Enter starts nothing,
+/// Down marks the second match, and after Esc the whole list shows with
+/// the mark on that scene and the picker still open.
+///
+/// Why it matters: a search that quits on `q` or changes the theme on `t`
+/// loses the user's place, and a search that cannot be left traps them.
+#[test]
+fn letters_type_in_a_search_and_esc_leaves_it() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+
+    // When:
+    let mut keys = vec![key(KeyCode::Char('/'))];
+    keys.extend(typed("qt"));
+    keys.push(key(KeyCode::Enter));
+    send(&mut app, keys);
+
+    // Then:
+    assert!(!app.should_quit);
+    assert!(app.is_picking());
+    assert!(listed(&app).is_empty(), "{:?}", listed(&app));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Backspace); 2]);
+    send(&mut app, typed("rain"));
+    send(&mut app, vec![key(KeyCode::Down)]);
+    let second = listed(&app)[1].clone();
+    send(&mut app, vec![key(KeyCode::Esc)]);
+
+    // Then:
+    let all: Vec<&str> = ALL.iter().map(|kind| kind.name()).collect();
+    assert_eq!(marked(&app).as_deref(), Some(second.as_str()));
+    assert!(app.is_picking());
+    assert!(!list_rows(&app).iter().any(|row| row.contains("/rain")));
+    let shown = listed(&app);
+    assert!(
+        shown.len() >= 5 && all.windows(shown.len()).any(|run| run == shown.as_slice()),
+        "{shown:?}"
+    );
+}
+
+/// Enter in a search starts the marked match and ends the search.
+/// Given: the picker with `/` pressed and `drv` typed.
+/// When: Enter is pressed, the app ticks ten times, and Esc opens the
+/// picker again.
+/// Then: the drive runs as Tab would start it, and the picker shows the
+/// whole list.
+///
+/// Why it matters: a search that stays on after its scene starts would
+/// greet the user with a list of one when they come back.
+#[test]
+fn enter_in_a_search_starts_the_match() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+    let mut keys = vec![key(KeyCode::Char('/'))];
+    keys.extend(typed("drv"));
+    send(&mut app, keys);
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Enter)]);
+    let mut drive = App::new(SceneKind::Drive, 8, corpus());
+    for _ in 0..10 {
+        app.tick(WIDE);
+        drive.tick(WIDE);
+    }
+
+    // Then:
+    assert!(!app.is_picking());
+    assert!(
+        app_frame(&app, WIDE) == app_frame(&drive, WIDE),
+        "drive did not start"
+    );
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Esc)]);
+
+    // Then:
+    assert!(listed(&app).len() >= 5, "{:?}", listed(&app));
+}
