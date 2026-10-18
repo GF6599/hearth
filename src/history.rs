@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::corpus;
+use unicode_width::UnicodeWidthChar;
 
 /// The most commits read. A repository with years of history would make
 /// the first frame wait on the whole of it.
@@ -19,9 +19,9 @@ const FIELD: u8 = 0x1f;
 pub struct Commit {
     pub hash: String,
     pub parents: Vec<String>,
-    /// Safe to print: a tab becomes spaces and every other glyph that is
-    /// not one cell wide is dropped, so an escape sequence in a subject
-    /// never reaches the terminal.
+    /// Safe to print: a tab becomes a space and every other glyph that is
+    /// not one or two cells wide is dropped, so an escape sequence in a
+    /// subject never reaches the terminal.
     pub subject: String,
 }
 
@@ -64,7 +64,7 @@ impl History {
                 Some(Commit {
                     hash: hash.to_string(),
                     parents: parents.split_whitespace().map(str::to_string).collect(),
-                    subject: corpus::normalised(&subject),
+                    subject: printable(&subject),
                 })
             })
             .collect();
@@ -74,4 +74,12 @@ impl History {
     pub fn commits(&self) -> &[Commit] {
         &self.commits
     }
+}
+
+fn printable(subject: &str) -> String {
+    subject
+        .chars()
+        .map(|glyph| if glyph == '\t' { ' ' } else { glyph })
+        .filter(|glyph| matches!(glyph.width(), Some(1 | 2)))
+        .collect()
 }

@@ -174,7 +174,7 @@ pub fn cache_path(address: &str, cache: &Path) -> PathBuf {
     cache.join(key)
 }
 
-pub(crate) fn normalised(text: &str) -> String {
+fn normalised(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for glyph in text.chars() {
         match glyph {
