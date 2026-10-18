@@ -96,6 +96,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 | Key | Action |
 |---|---|
 | `j` / `k` | Move down and up the list, also `Down` / `Up` |
+| `Tab` | Mark the next scene, round from the last to the first |
 | `Enter` | Start the marked scene |
 | `Esc` | Close the pane, when a split just opened it |
 | `t` | Next colour theme |

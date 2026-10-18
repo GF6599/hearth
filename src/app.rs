@@ -390,6 +390,12 @@ impl App {
         self.select((self.selected + 1).min(ALL.len() - 1));
     }
 
+    /// Tab walks the list round, as it walks the scenes round outside the
+    /// picker.
+    pub fn select_next_wrapped(&mut self) {
+        self.select((self.selected + 1) % ALL.len());
+    }
+
     fn select(&mut self, index: usize) {
         if index != self.selected {
             self.selected = index;

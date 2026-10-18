@@ -68,6 +68,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('q') => app.quit(),
             KeyCode::Char('j') | KeyCode::Down => app.select_next(),
             KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
+            KeyCode::Tab => app.select_next_wrapped(),
             KeyCode::Enter => app.start_selected(),
             KeyCode::Esc => app.cancel_picker(),
             KeyCode::Char('t') => app.next_theme(),
