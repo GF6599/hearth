@@ -198,7 +198,9 @@ fn each_layer_keeps_its_own_pace() {
 /// When: it ticks, and the lowest pixel of each run of rain, in foam on
 /// the glass, is followed from a frame to the next.
 /// Then: three in four stay in their column at the same row or up to two
-/// rows lower, and on average they move down. No rain covers the cat.
+/// rows lower, and on average they move down. No rain covers the cat,
+/// the pixels in text in the lower half of the glass. The moon is in text
+/// too, but it is outside and in the upper half.
 ///
 /// Why it matters: rain that runs up or sideways reads as a fault, and
 /// rain in front of the cat is rain inside the room.
@@ -215,7 +217,7 @@ fn the_rain_runs_down_the_glass_behind_the_cat() {
     let cat: Vec<(usize, usize)> = glass
         .iter()
         .copied()
-        .filter(|&(x, y)| first[y][x] == PALETTE.text)
+        .filter(|&(x, y)| y >= top + tall / 2 && first[y][x] == PALETTE.text)
         .collect();
     let heads = |rows: &[Vec<Color>]| -> Vec<(usize, usize)> {
         glass
