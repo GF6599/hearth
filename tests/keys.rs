@@ -172,3 +172,73 @@ fn tab_in_the_picker_marks_the_next_scene() {
     assert_eq!(marked(&app).as_deref(), Some(ALL[0].name()));
     assert!(app.is_picking());
 }
+
+fn back_tab() -> Event {
+    press(KeyCode::BackTab, KeyModifiers::SHIFT)
+}
+
+/// Shift-Tab goes back one scene, round from the first to the last.
+/// Given: the second scene, ticked once, and then the first scene.
+/// When: Shift-Tab is pressed and the app ticks ten times.
+/// Then: each frame is that of the scene before it in the list, started on
+/// the next seed, and before the first scene comes the last.
+///
+/// Why it matters: Tab alone makes a scene one step back a walk round the
+/// whole list.
+#[test]
+fn shift_tab_goes_back_one_scene() {
+    for (from, to) in [(ALL[1], ALL[0]), (ALL[0], ALL[ALL.len() - 1])] {
+        // Given:
+        let mut app = App::new(from, 7, corpus());
+        app.tick(WIDE);
+
+        // When:
+        send(&mut app, vec![back_tab()]);
+        let mut before = App::new(to, 8, corpus());
+        for _ in 0..10 {
+            app.tick(WIDE);
+            before.tick(WIDE);
+        }
+
+        // Then:
+        assert!(
+            app_frame(&app, WIDE) == app_frame(&before, WIDE),
+            "Shift-Tab from {from:?} did not show {to:?}"
+        );
+    }
+}
+
+/// Shift-Tab in the picker marks the scene before, and the pane runs it.
+/// Given: the picker with the study marked.
+/// When: Shift-Tab is pressed and the app ticks five times, then the mark
+/// moves to the first scene and Shift-Tab is pressed again.
+/// Then: the mark is on the scene before the study and the pane runs it,
+/// and from the first scene Shift-Tab wraps to the last.
+///
+/// Why it matters: Shift-Tab undoes a Tab in the picker as it does outside
+/// it, so the two keys read as one pair.
+#[test]
+fn shift_tab_in_the_picker_marks_the_scene_before() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+    mark(&mut app, SceneKind::Study);
+
+    // When:
+    send(&mut app, vec![back_tab()]);
+    for _ in 0..5 {
+        app.tick(WIDE);
+    }
+
+    // Then:
+    let before = ALL[place(SceneKind::Study) - 1];
+    assert_eq!(marked(&app).as_deref(), Some(before.name()));
+    assert_pane_runs(&app, before);
+
+    // When:
+    let mut first = App::picker(7, corpus());
+    send(&mut first, vec![back_tab()]);
+
+    // Then:
+    assert_eq!(marked(&first).as_deref(), Some(ALL[ALL.len() - 1].name()));
+    assert!(first.is_picking());
+}
