@@ -1,8 +1,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn repository(name: &str, file: &str, text: &str) -> PathBuf {
     let repo = std::env::temp_dir().join(format!("hearth-cli-{}-{name}", std::process::id()));
@@ -155,4 +159,75 @@ fn no_home_folder_means_no_config_file() {
     // Then:
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("scene must be"), "{stderr}");
+}
+
+/// Runs `args` in a new pseudo terminal through `script`, so hearth opens
+/// its screen when the test has no terminal. The util-linux `script` takes
+/// the command as one shell line, and the BSD one on macOS as arguments.
+fn in_terminal(args: &[&str]) -> Command {
+    let mut script = Command::new("script");
+    script.arg("-q");
+    if cfg!(target_os = "linux") {
+        let line: Vec<String> = args.iter().map(|arg| format!("'{arg}'")).collect();
+        script.args(["-e", "-c", &line.join(" "), "/dev/null"]);
+    } else {
+        script.arg("/dev/null").args(args);
+    }
+    script
+}
+
+/// Given: a config file that sets a theme, and a `git` first on the path
+/// that counts its runs and finds no history.
+/// When: hearth starts the river in a terminal, and `q` quits it after
+/// git has run.
+/// Then: git ran once.
+///
+/// Why it matters: each river that is built reads the history with its
+/// own `git log`, so a scene built twice at startup reads a large
+/// repository twice.
+#[test]
+fn the_river_reads_its_history_once_at_startup() {
+    // Given:
+    let home = config_home("once", Some("theme = \"rose-pine-moon\"\n"));
+    let calls = home.join("calls");
+    let bin = home.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let git = bin.join("git");
+    let counter = format!("#!/bin/sh\necho run >> '{}'\nexit 1\n", calls.display());
+    fs::write(&git, counter).unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let search =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&inherited)))
+            .unwrap();
+    let runs = || fs::read_to_string(&calls).map_or(0, |text| text.lines().count());
+
+    // When:
+    let mut hearth = in_terminal(&[env!("CARGO_BIN_EXE_hearth"), "river"])
+        .current_dir(&home)
+        .env("PATH", search)
+        .env("XDG_CONFIG_HOME", &home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while runs() == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    hearth.stdin.take().unwrap().write_all(b"q").unwrap();
+    while hearth.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let quit = hearth.try_wait().unwrap().is_some();
+    if !quit {
+        hearth.kill().unwrap();
+    }
+    let count = runs();
+    let _ = fs::remove_dir_all(&home);
+
+    // Then:
+    assert!(quit, "hearth did not quit on q");
+    assert_eq!(count, 1);
 }
