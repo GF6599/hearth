@@ -467,3 +467,152 @@ fn river_is_a_scene_by_name() {
     let rows = rows(&buffer, AREA);
     assert!(rows.iter().any(|row| row.contains(NOTICE)), "{rows:#?}");
 }
+
+/// The subject at the pane's middle row, if one shows there: the text after
+/// the last glyph of the river on that row.
+fn middle_subject(buffer: &Buffer, area: Rect) -> Option<String> {
+    let row = &rows(buffer, area)[usize::from(area.height / 2)];
+    let text = row
+        .rsplit(|c: char| ('\u{2800}'..='\u{28ff}').contains(&c))
+        .next()?
+        .trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Each subject that shows at the middle row as the river ticks, once for
+/// each time it comes there.
+fn subjects_in_turn(scene: &mut River, ticks: u32) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut last = None;
+    for _ in 0..ticks {
+        scene.tick(AREA);
+        let subject = middle_subject(&render(scene, AREA, AREA), AREA);
+        if subject.is_some() && subject != last {
+            seen.push(subject.clone().unwrap());
+        }
+        last = subject;
+    }
+    seen
+}
+
+/// The river runs from the oldest commit to the newest and starts again.
+/// Given: the river of a repository whose history splits and merges.
+/// When: it ticks for a while.
+/// Then: the subjects at the middle row come in the order of the commits
+/// from the oldest to the newest, and then the oldest comes again.
+///
+/// Why it matters: a river that stops at the newest commit leaves a
+/// screensaver that no longer moves.
+#[test]
+fn the_middle_subject_runs_from_the_oldest_to_the_newest_and_again() {
+    // Given:
+    let repo = branched("turn");
+    let history = History::read(&repo);
+    let mut scene = river(history.clone());
+
+    // When:
+    let seen = subjects_in_turn(&mut scene, 2000);
+
+    // Then:
+    let mut expected: Vec<String> = history
+        .commits()
+        .iter()
+        .rev()
+        .map(|commit| commit.subject.clone())
+        .collect();
+    expected.push("start".to_string());
+    assert!(seen.len() >= expected.len(), "{seen:?}");
+    assert_eq!(seen[..expected.len()], expected[..], "{seen:?}");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// The stones flow down the pane.
+/// Given: the river of a repository whose history splits and merges.
+/// When: it ticks for a while, and the top row of its stones is read in
+/// each frame.
+/// Then: that row moves down in many frames, and it moves up no more often
+/// than the river starts again from the oldest commit.
+///
+/// Why it matters: stones that drift up or jitter read as a river flowing
+/// back, and the history as running backward.
+#[test]
+fn the_stones_flow_down_the_pane() {
+    // Given:
+    let repo = branched("flow");
+    let history = History::read(&repo);
+    let oldest = history.commits().last().unwrap().subject.clone();
+    let mut scene = river(history);
+    let (mut down, mut up, mut again) = (0, 0, 0);
+    let mut before: Option<(u16, Option<String>)> = None;
+
+    for _ in 0..2000 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let stones = cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]);
+        let Some(top) = stones.iter().map(|(_, y)| *y).min() else {
+            continue;
+        };
+        let subject = middle_subject(&buffer, AREA);
+
+        // Then:
+        if let Some((last_top, last_subject)) = &before {
+            if top > *last_top {
+                down += 1;
+            } else if top < *last_top {
+                up += 1;
+            }
+            if subject.as_ref() == Some(&oldest) && last_subject.as_ref() != Some(&oldest) {
+                again += 1;
+            }
+        }
+        before = Some((top, subject));
+    }
+    assert!(again >= 1, "the river never started again");
+    assert!(down >= 10, "the stones moved down in {down} frames");
+    assert!(
+        up <= again,
+        "the stones moved up {up} times in {again} loops"
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// The water flows along the lanes faster than the stones.
+/// Given: the river of a repository whose history splits and merges.
+/// When: it ticks, and the foam cells are read in frames where no stone has
+/// moved since the frame before.
+/// Then: foam shows, and in some of those frames it has moved.
+///
+/// Why it matters: water that only moves with the stones reads as a picture
+/// sliding down, not as a river.
+#[test]
+fn the_water_flows_along_the_lanes() {
+    // Given:
+    let repo = branched("water");
+    let mut scene = river(History::read(&repo));
+    let (mut foam_frames, mut moved) = (0, 0);
+    let mut before: Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> = None;
+
+    for _ in 0..400 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        let stones = cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]);
+        let foam = cells(&buffer, AREA, &[PALETTE.foam]);
+
+        // Then:
+        if !foam.is_empty() {
+            foam_frames += 1;
+        }
+        if let Some((last_stones, last_foam)) = &before
+            && *last_stones == stones
+            && *last_foam != foam
+        {
+            moved += 1;
+        }
+        before = Some((stones, foam));
+    }
+    assert!(foam_frames >= 200, "foam showed in {foam_frames} frames");
+    assert!(moved >= 20, "the foam moved alone in {moved} frames");
+    let _ = fs::remove_dir_all(&repo);
+}
