@@ -480,9 +480,10 @@ fn the_window_shows_a_night_sky() {
 /// Then: in the first frame the gold of the lamp reaches ten rows or more
 /// below the top of its shade, and in some frame of the run the lower half
 /// of the lamp's area holds less gold than in the first. The pixels of the
-/// lamp's area that differ between the first frame and the dimmest fill
-/// every row from the shade to the desk, twelve rows or more, so the light
-/// lies on the wall as well as on the desk.
+/// lamp's area that differ between the first frame and the dimmest, the
+/// light, reach from the shade to the desk, twelve rows or more, show on
+/// the wall within four to seven rows of the shade's top, and are all warm
+/// in the first frame: gold, rose, or the bulb's text.
 ///
 /// Why it matters: a lamp that throws no light reads as a picture of a
 /// lamp, and a glow that stays bright while the bulb dims reads as a
@@ -529,10 +530,24 @@ fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
         .filter(|&y| (left..left + wide).any(|x| first[y][x] != dim[y][x]))
         .collect();
     let (from, to) = (lit[0], lit[lit.len() - 1]);
+    assert!(to - from >= 12, "the light changes rows {lit:?}");
     assert!(
-        lit.len() == to - from + 1 && to - from >= 12,
-        "the light changes rows {lit:?}"
+        lit.iter().any(|y| (from + 4..from + 8).contains(y)),
+        "no light on the wall under the shade: rows {lit:?}"
     );
+    for y in top..top + tall {
+        for x in left..left + wide {
+            if first[y][x] != dim[y][x] {
+                let warm = [PALETTE.gold, PALETTE.rose, PALETTE.text];
+                assert!(
+                    warm.contains(&first[y][x]),
+                    "the light at {:?} is {:?}",
+                    (x, y),
+                    first[y][x]
+                );
+            }
+        }
+    }
 }
 
 /// Given: a scene that ticked on a hundred by thirty area.
