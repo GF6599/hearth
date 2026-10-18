@@ -138,8 +138,8 @@ fn a_bad_value_names_the_file_and_the_key() {
         ("between", "[speed]\nfire = 1.7\n", "speed.fire"),
         ("zero", "[speed]\ntyping = 0\n", "speed.typing"),
         ("unknown", "[speed]\nfyre = 2\n", "speed.fyre"),
-        ("scene", "scene = \"nope\"\n", "scene"),
-        ("theme", "theme = \"nope\"\n", "theme"),
+        ("start-nope", "scene = \"nope\"\n", "scene"),
+        ("palette-nope", "theme = \"nope\"\n", "theme"),
         ("long-work", "[hourglass]\nwork = 181\n", "hourglass.work"),
         ("no-break", "[hourglass]\nbreak = 0\n", "hourglass.break"),
         (
