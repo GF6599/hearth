@@ -337,6 +337,10 @@ impl App {
         self.switch_to(self.panes.focused().kind.next());
     }
 
+    pub fn previous_scene(&mut self) {
+        self.switch_to(ALL[before(self.slot())]);
+    }
+
     pub fn faster(&mut self) {
         self.change_speed(Speed::faster, Rate::faster);
     }
@@ -394,6 +398,10 @@ impl App {
     /// picker.
     pub fn select_next_wrapped(&mut self) {
         self.select((self.selected + 1) % ALL.len());
+    }
+
+    pub fn select_previous_wrapped(&mut self) {
+        self.select(before(self.selected));
     }
 
     fn select(&mut self, index: usize) {
@@ -480,6 +488,11 @@ impl App {
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
+}
+
+/// The place before `slot` in `ALL`, round from the first to the last.
+fn before(slot: usize) -> usize {
+    (slot + ALL.len() - 1) % ALL.len()
 }
 
 fn slot_of(kind: SceneKind) -> usize {

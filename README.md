@@ -96,7 +96,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 | Key | Action |
 |---|---|
 | `j` / `k` | Move down and up the list, also `Down` / `Up` |
-| `Tab` | Mark the next scene, round from the last to the first |
+| `Tab` / `Shift-Tab` | Mark the next or the previous scene, round the list |
 | `Enter` | Start the marked scene |
 | `Esc` | Close the pane, when a split just opened it |
 | `t` | Next colour theme |
@@ -106,7 +106,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 
 | Key | Action |
 |---|---|
-| `Tab` | Next scene |
+| `Tab` / `Shift-Tab` | Next or previous scene, round the list |
 | `r` | Restart the scene with a new seed |
 | `+` / `-` | Run the scene on screen faster or slower. On the hourglass, show the phase and the time left |
 | `Esc` | Back to the picker |
@@ -118,7 +118,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 
 ### Panes
 
-The screen splits the way i3 does. `v` or `s` cuts the focused pane in two, and the new half opens the picker, with the scene after the focused one marked. `Esc` in that picker takes the split back. A thin rule separates the panes, and gold marks at two corners show the focused one. `Tab`, `r`, `+`, `-` and `Esc` act on the focused pane only, and every other pane runs on. `x` gives a pane's area to the other half of its split. The last pane stays. Each split stays at half and half when the terminal changes size.
+The screen splits the way i3 does. `v` or `s` cuts the focused pane in two, and the new half opens the picker, with the scene after the focused one marked. `Esc` in that picker takes the split back. A thin rule separates the panes, and gold marks at two corners show the focused one. `Tab`, `Shift-Tab`, `r`, `+`, `-` and `Esc` act on the focused pane only, and every other pane runs on. `x` gives a pane's area to the other half of its split. The last pane stays. Each split stays at half and half when the terminal changes size.
 
 ## Development
 
