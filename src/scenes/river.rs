@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
@@ -7,11 +9,12 @@ use ratatui::style::{Color, Style};
 
 use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::corpus::Corpus;
-use crate::history::Commit;
+use crate::history::{Commit, History};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
 pub const NOTICE: &str = "no git history to draw here";
+pub const READING: &str = "reading the history";
 
 /// The dot rows from one commit to the next. Three cells, so a lane that
 /// moves across has room to curve.
@@ -65,7 +68,10 @@ struct Row {
 #[derive(Debug)]
 pub struct River {
     palette: &'static Palette,
-    corpus: Arc<Corpus>,
+    /// The history on its way from a thread that runs git, until it lands.
+    /// A large repository takes a while, and the app must not wait on it.
+    reading: Option<Receiver<History>>,
+    history: History,
     rows: Vec<Row>,
     /// The most lanes the history holds at once.
     widest: usize,
@@ -75,19 +81,39 @@ pub struct River {
 }
 
 impl River {
+    /// Starts the read of the corpus's history on its own thread. A corpus
+    /// with nothing to read from, or a thread that cannot start, gives no
+    /// history, and the pane shows the notice.
     pub fn new(mut rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>) -> Self {
-        let (rows, widest) = lay_out(corpus.history().commits());
+        let reading = corpus.history_root().and_then(|root| {
+            let root = root.to_path_buf();
+            let (sender, receiver) = mpsc::channel();
+            thread::Builder::new()
+                .name("river history".into())
+                .spawn(move || {
+                    let _ = sender.send(History::read(&root));
+                })
+                .ok()
+                .map(|_| receiver)
+        });
         let phases = (0..PHASES)
             .map(|_| rng.random_range(0..FOAM_PERIOD))
             .collect();
         Self {
             palette,
-            corpus,
-            rows,
-            widest,
+            reading,
+            history: History::default(),
+            rows: Vec::new(),
+            widest: 0,
             ticks: 0,
             phases,
         }
+    }
+
+    fn land(&mut self, history: History) {
+        let (rows, widest) = lay_out(history.commits());
+        (self.rows, self.widest, self.history) = (rows, widest, history);
+        self.reading = None;
     }
 
     /// The world dot row at the middle of the pane. It starts at the oldest
@@ -124,16 +150,16 @@ impl River {
             .fold(self.rows[index].lane, usize::max)
     }
 
-    fn draw_notice(&self, area: Rect, buf: &mut Buffer) {
+    fn draw_notice(&self, text: &str, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let length = NOTICE.chars().count() as u16;
+        let length = text.chars().count() as u16;
         let x = area.x + area.width.saturating_sub(length) / 2;
         buf.set_stringn(
             x,
             area.y + area.height / 2,
-            NOTICE,
+            text,
             usize::from(area.width - (x - area.x)),
             Style::default().fg(self.palette.subtle),
         );
@@ -226,12 +252,24 @@ fn ease(t: f64) -> f64 {
 
 impl Scene for River {
     fn tick(&mut self, _area: Rect) {
+        if let Some(reading) = &self.reading {
+            match reading.try_recv() {
+                Ok(history) => self.land(history),
+                Err(TryRecvError::Disconnected) => self.land(History::default()),
+                Err(TryRecvError::Empty) => {}
+            }
+            return;
+        }
         self.ticks += 1;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.reading.is_some() {
+            self.draw_notice(READING, area, buf);
+            return;
+        }
         if self.rows.is_empty() {
-            self.draw_notice(area, buf);
+            self.draw_notice(NOTICE, area, buf);
             return;
         }
         let (columns, lines) = (usize::from(area.width), usize::from(area.height));
@@ -331,7 +369,7 @@ impl Scene for River {
         let Some(at_middle) = self.at_middle() else {
             return;
         };
-        let Some(commit) = self.corpus.history().commits().get(at_middle) else {
+        let Some(commit) = self.history.commits().get(at_middle) else {
             return;
         };
         let line = (at_middle as i64 * ROW_GAP - top).div_euclid(CELL_HEIGHT as i64);

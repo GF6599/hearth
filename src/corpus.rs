@@ -1,6 +1,6 @@
 //! What hearth reads from a repository: the source files the typing scene
 //! types, from the crate's own tree, a checkout on disk, or a clone kept in
-//! a cache, and the history the river scene draws.
+//! a cache, and where the river scene reads its history from.
 
 use std::fs;
 use std::io;
@@ -9,7 +9,7 @@ use std::process::Command;
 
 use unicode_width::UnicodeWidthChar;
 
-use crate::history::{self, History};
+use crate::history;
 
 include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 
@@ -28,7 +28,9 @@ pub struct SourceFile {
 #[derive(Debug, Default)]
 pub struct Corpus {
     files: Vec<SourceFile>,
-    history: History,
+    /// The repository whose history the river reads. Only the river reads
+    /// it, so no other scene runs git for it.
+    history_root: Option<PathBuf>,
 }
 
 impl Corpus {
@@ -56,12 +58,15 @@ impl Corpus {
             .collect();
         Self {
             files,
-            history: History::default(),
+            history_root: None,
         }
     }
 
-    pub fn with_history(self, history: History) -> Self {
-        Self { history, ..self }
+    pub fn with_history_root(self, root: PathBuf) -> Self {
+        Self {
+            history_root: Some(root),
+            ..self
+        }
     }
 
     /// The tracked text files of a checkout. Only `git ls-files` decides
@@ -107,7 +112,7 @@ impl Corpus {
                 files.push((path.to_string(), text));
             }
         }
-        Ok(Self::from_files(files).with_history(History::read(root)))
+        Ok(Self::from_files(files).with_history_root(root.to_path_buf()))
     }
 
     /// Clones `address` into the cache on the first call, and reads the
@@ -145,8 +150,8 @@ impl Corpus {
         self.files.is_empty()
     }
 
-    pub fn history(&self) -> &History {
-        &self.history
+    pub fn history_root(&self) -> Option<&Path> {
+        self.history_root.as_deref()
     }
 }
 
