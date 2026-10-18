@@ -10,7 +10,7 @@ use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::hourglass::Lengths;
-use crate::scenes::typing::Speed;
+use crate::scenes::typing::{Shortest, Speed};
 use crate::theme;
 
 /// What shows where a scene is empty.
@@ -32,6 +32,7 @@ pub struct Config {
     pub background: Background,
     pub typing: Option<Speed>,
     pub hourglass: Lengths,
+    pub shortest: Shortest,
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
 }
@@ -99,9 +100,10 @@ impl Config {
                 }
                 "speed" => config.read_speeds(item).map_err(fail)?,
                 "hourglass" => config.read_lengths(item).map_err(fail)?,
+                "typing" => config.read_typing(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo, theme, background, speed and hourglass"
+                        "{other} is not a setting. The settings are scene, repo, theme, background, speed, hourglass and typing"
                     )));
                 }
             }
@@ -166,6 +168,27 @@ impl Config {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn read_typing(&mut self, item: &Item) -> Result<(), String> {
+        let table = item
+            .as_table_like()
+            .ok_or_else(|| "typing must be a table that holds shortest".to_string())?;
+        for (name, value) in table.iter() {
+            if name != "shortest" {
+                return Err(format!(
+                    "typing.{name} is not a setting. Its one setting is shortest"
+                ));
+            }
+            let share = value
+                .as_float()
+                .or_else(|| value.as_integer().map(|whole| whole as f64));
+            let shortest = share
+                .ok_or_else(Shortest::range_message)
+                .and_then(Shortest::from_share);
+            self.shortest = shortest.map_err(|e| format!("typing.{name} {e}"))?;
         }
         Ok(())
     }

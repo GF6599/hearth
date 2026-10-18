@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::{Range, RangeInclusive};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ use crate::tree::{self, Tree};
 pub use crate::snippet::MOST_SNIPPET_LINES;
 
 /// Pauses count in keystrokes, so a faster speed shortens them too.
-const LINE_PAUSE: std::ops::RangeInclusive<u32> = 2..=8;
+const LINE_PAUSE: RangeInclusive<u32> = 2..=8;
 const FILE_PAUSE: u32 = 150;
 
 /// A tick types between half and one and a half times its share, so the
@@ -111,6 +112,44 @@ impl FromStr for Speed {
     }
 }
 
+/// The share of the frame's rows of code that a function must fill to be
+/// typed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shortest(f64);
+
+impl Shortest {
+    pub const DEFAULT: Shortest = Shortest(0.5);
+    const SHARES: RangeInclusive<f64> = 0.0..=1.0;
+
+    pub fn from_share(share: f64) -> Result<Shortest, String> {
+        if Self::SHARES.contains(&share) {
+            Ok(Shortest(share))
+        } else {
+            Err(Self::range_message())
+        }
+    }
+
+    pub fn range_message() -> String {
+        format!(
+            "must be a share of the frame from {} to {}",
+            Self::SHARES.start(),
+            Self::SHARES.end()
+        )
+    }
+
+    /// A function at the cap always fills, because no snippet is longer
+    /// and a taller frame would otherwise find no function to type.
+    fn fills(self, lines: usize, rows: u16) -> bool {
+        lines >= MOST_SNIPPET_LINES || lines as f64 >= self.0 * f64::from(rows)
+    }
+}
+
+impl Default for Shortest {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 #[derive(Debug)]
 pub struct Typing {
     rng: Rng,
@@ -120,9 +159,14 @@ pub struct Typing {
     /// Keystrokes owed and not yet typed. The fraction carries from one
     /// tick to the next, so a speed under one keystroke per tick still types.
     credit: f64,
-    /// The files that may hold a function. A file found to hold none
-    /// leaves the list, so it is parsed once at most.
-    candidates: Vec<usize>,
+    /// The lines of the longest function in each file, 0 for none, once
+    /// the file is parsed. A file known to be too short is not parsed again.
+    longest: Vec<Option<usize>>,
+    shortest: Shortest,
+    /// The rows of code the frame holds, learned on each tick, because only
+    /// the area gives the frame its size. `None` before the first tick,
+    /// which opens the first snippet.
+    rows: Option<u16>,
     /// The file and the first line of the snippet on screen.
     current: Option<(usize, usize)>,
     function: String,
@@ -145,15 +189,19 @@ pub struct Typing {
 }
 
 impl Typing {
+    /// Types every function, however short, unless `with_shortest` says
+    /// otherwise.
     pub fn new(rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>, speed: Speed) -> Self {
         let tree = Tree::new(corpus.files().iter().map(|source| source.path.as_str()));
-        let mut scene = Self {
+        Self {
             rng,
             palette,
+            longest: vec![None; corpus.files().len()],
             corpus,
             speed,
             credit: 0.0,
-            candidates: Vec::new(),
+            shortest: Shortest(0.0),
+            rows: None,
             current: None,
             function: String::new(),
             language: "",
@@ -167,10 +215,7 @@ impl Typing {
             pause: 0,
             finished: false,
             background: Background::Theme,
-        };
-        scene.candidates = (0..scene.corpus.files().len()).collect();
-        scene.open_next();
-        scene
+        }
     }
 
     pub fn with_background(mut self, background: Background) -> Self {
@@ -178,46 +223,78 @@ impl Typing {
         self
     }
 
-    /// Picks a snippet at random from a random file, never the one on
-    /// screen again while another exists.
+    pub fn with_shortest(mut self, shortest: Shortest) -> Self {
+        self.shortest = shortest;
+        self
+    }
+
+    /// Picks a snippet that fills the frame at random from a random file,
+    /// never the one on screen again while another exists. With no other
+    /// that fills it, the longest function in the corpus. Each file is
+    /// tried once at most, so the search ends.
     fn open_next(&mut self) {
         let previous = self.current.take();
         self.glyphs.clear();
         self.offset = 0;
         self.lines = vec![Vec::new()];
         self.finished = false;
+        let (shortest, rows) = (self.shortest, self.rows.unwrap_or(0));
+        let fills = |lines: usize| shortest.fills(lines, rows);
         let corpus = Arc::clone(&self.corpus);
-        while !self.candidates.is_empty() {
-            let slot = self.rng.random_range(0..self.candidates.len());
-            let file = self.candidates[slot];
+        let mut untried: Vec<usize> = (0..self.longest.len())
+            .filter(|&file| self.longest[file].is_none_or(|lines| lines > 0 && fills(lines)))
+            .collect();
+        while !untried.is_empty() {
+            let file = untried.swap_remove(self.rng.random_range(0..untried.len()));
             let source = &corpus.files()[file];
             let (highlighted, spans) = snippets(source, self.palette);
-            if spans.is_empty() {
-                self.candidates.swap_remove(slot);
+            self.longest[file] = Some(spans.iter().map(Range::len).max().unwrap_or(0));
+            let long: Vec<Range<usize>> = spans
+                .into_iter()
+                .filter(|span| fills(span.len()) && previous != Some((file, span.start)))
+                .collect();
+            if long.is_empty() {
                 continue;
             }
-            let mut pick = self.rng.random_range(0..spans.len());
-            if previous == Some((file, spans[pick].start)) {
-                if spans.len() == 1 && self.candidates.len() > 1 {
-                    continue;
-                }
-                pick = (pick + 1) % spans.len();
-            }
-            let span = spans[pick].clone();
-            self.current = Some((file, span.start));
-            // The lines above the definition are comments and attributes,
-            // which name no function, so the first name is the snippet's own.
-            self.function = highlighted.functions[span.clone()]
-                .iter()
-                .find_map(Clone::clone)
-                .unwrap_or_default();
-            self.language = highlighted.language;
-            self.tree_rows = self.tree.rows(&source.path);
-            self.outline = Outline::new(&source.text, &highlighted.colours);
-            self.line_count = span.len();
-            self.glyphs = glyphs(&source.text, &highlighted.colours, span, self.palette);
+            let span = long[self.rng.random_range(0..long.len())].clone();
+            self.open(file, source, &highlighted, span);
             return;
         }
+        let longest = (0..self.longest.len())
+            .filter_map(|file| {
+                self.longest[file]
+                    .filter(|&lines| lines > 0)
+                    .map(|lines| (lines, file))
+            })
+            .max_by_key(|&(lines, _)| lines);
+        if let Some((_, file)) = longest {
+            let source = &corpus.files()[file];
+            let (highlighted, spans) = snippets(source, self.palette);
+            if let Some(span) = spans.into_iter().max_by_key(Range::len) {
+                self.open(file, source, &highlighted, span);
+            }
+        }
+    }
+
+    fn open(
+        &mut self,
+        file: usize,
+        source: &SourceFile,
+        highlighted: &highlight::Highlighted,
+        span: Range<usize>,
+    ) {
+        self.current = Some((file, span.start));
+        // The lines above the definition are comments and attributes,
+        // which name no function, so the first name is the snippet's own.
+        self.function = highlighted.functions[span.clone()]
+            .iter()
+            .find_map(Clone::clone)
+            .unwrap_or_default();
+        self.language = highlighted.language;
+        self.tree_rows = self.tree.rows(&source.path);
+        self.outline = Outline::new(&source.text, &highlighted.colours);
+        self.line_count = span.len();
+        self.glyphs = glyphs(&source.text, &highlighted.colours, span, self.palette);
     }
 
     /// The folders, the file and the function, with as many leading folders
@@ -273,7 +350,7 @@ impl Typing {
         // function, so the frame is never narrower than those two.
         let tail = u16::try_from(self.breadcrumb(0).width()).unwrap_or(u16::MAX);
         let width = padded(area.width, LEAST_PADDING_X).max(tail.min(area.width));
-        let height = padded(area.height, LEAST_PADDING_Y);
+        let height = frame_height(area);
         Rect::new(
             area.x + (area.width - width) / 2,
             area.y + (area.height - height) / 2,
@@ -434,14 +511,17 @@ pub fn has_snippet(corpus: &Corpus) -> bool {
         .any(|source| !snippets(source, &theme::ROSE_PINE).1.is_empty())
 }
 
-fn snippets(
-    source: &SourceFile,
-    palette: &Palette,
-) -> (highlight::Highlighted, Vec<std::ops::Range<usize>>) {
+fn snippets(source: &SourceFile, palette: &Palette) -> (highlight::Highlighted, Vec<Range<usize>>) {
     let highlighted = highlight::highlight(&source.path, &source.text, palette);
     let lines: Vec<&str> = source.text.lines().collect();
     let spans = snippet::snippets(&lines, &highlighted.functions, &highlighted.comment);
     (highlighted, spans)
+}
+
+/// The frame's width follows the breadcrumb, but its height follows the
+/// area alone, so a tick can learn it.
+fn frame_height(area: Rect) -> u16 {
+    padded(area.height, LEAST_PADDING_Y)
 }
 
 fn padded(room: u16, least: u16) -> u16 {
@@ -457,7 +537,7 @@ fn padded(room: u16, least: u16) -> u16 {
 fn glyphs(
     text: &str,
     colours: &[Color],
-    span: std::ops::Range<usize>,
+    span: Range<usize>,
     palette: &Palette,
 ) -> Vec<(char, Color)> {
     let mut out = Vec::new();
@@ -477,7 +557,13 @@ fn glyphs(
 }
 
 impl Scene for Typing {
-    fn tick(&mut self, _area: Rect) {
+    fn tick(&mut self, area: Rect) {
+        let opened = self.rows.is_some();
+        // The rules above and below the code take a row each.
+        self.rows = Some(frame_height(area).saturating_sub(2));
+        if !opened {
+            self.open_next();
+        }
         self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
         while self.credit >= 1.0 {
             self.credit -= 1.0;

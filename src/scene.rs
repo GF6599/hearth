@@ -28,7 +28,7 @@ use crate::scenes::river::River;
 use crate::scenes::solar::Solar;
 use crate::scenes::study::Study;
 use crate::scenes::tide::Tide;
-use crate::scenes::typing::{Speed, Typing};
+use crate::scenes::typing::{Shortest, Speed, Typing};
 use crate::theme::Palette;
 
 /// The one random source every scene draws from. A seed fixes every frame.
@@ -56,14 +56,16 @@ pub const QUARTERS_PER_TICK: u32 = 4;
 /// What the config file fixes for a whole run, read by a scene when it is
 /// built. A speed stays apart, because `+` and `-` change it while a scene
 /// runs.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
     pub lengths: Lengths,
+    pub shortest: Shortest,
 }
 
 impl Settings {
     pub const DEFAULT: Settings = Settings {
         lengths: Lengths::DEFAULT,
+        shortest: Shortest::DEFAULT,
     };
 }
 
@@ -301,7 +303,9 @@ impl SceneKind {
             )),
             SceneKind::Study => Box::new(Study::new(rng, palette)),
             SceneKind::Typing => Box::new(
-                Typing::new(rng, palette, Arc::clone(corpus), speed).with_background(background),
+                Typing::new(rng, palette, Arc::clone(corpus), speed)
+                    .with_background(background)
+                    .with_shortest(settings.shortest),
             ),
         }
     }

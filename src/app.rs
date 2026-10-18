@@ -98,6 +98,7 @@ impl App {
         let speed = config.typing.unwrap_or(Speed::DEFAULT);
         let settings = Settings {
             lengths: config.hourglass,
+            shortest: config.shortest,
         };
         let mut app = Self {
             theme,
