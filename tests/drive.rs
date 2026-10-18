@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene, SceneKind};
+use hearth::scene::{Rng, Scene, SceneKind, TICK_RATE};
 use hearth::scenes::drive::Drive;
 use hearth::scenes::hourglass::Lengths;
 use hearth::scenes::typing::Speed;
@@ -793,5 +793,65 @@ fn the_land_beside_the_road_holds_still() {
     assert!(
         changed * 100 < compared,
         "{changed} of {compared} land pixels changed colour"
+    );
+}
+
+/// A car ahead comes into view soon after the start.
+/// Given: the scene at a hundred by thirty, at twenty seeds.
+/// When: it ticks for five seconds of the app's ticks.
+/// Then: at every seed, a car ahead in gold shows in some frame.
+///
+/// Why it matters: a viewer who watches for a minute and sees no other car
+/// misses the traffic of the design.
+#[test]
+fn a_car_ahead_shows_within_five_seconds() {
+    let ticks = 5_000 / TICK_RATE.as_millis();
+    for seed in 0..20 {
+        // Given:
+        let mut scene = Drive::new(Rng::seed_from_u64(seed), PALETTE);
+        let mut seen = false;
+
+        // When:
+        for _ in 0..ticks {
+            scene.tick(AREA);
+            let rows = pixels(&render(&scene, AREA, AREA), AREA);
+            seen |= !cars_ahead(&rows).is_empty();
+        }
+
+        // Then:
+        assert!(seen, "seed {seed}: no car ahead in {ticks} ticks");
+    }
+}
+
+/// A car ahead reads as a car for most of the time it is in view.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over the track, and the widest car ahead is read in each
+/// frame that shows one.
+/// Then: in two frames in three or more, that car is wider than one cell.
+///
+/// Why it matters: a car that is one gold cell for most of its approach
+/// reads as a star, not as a car.
+#[test]
+fn a_car_ahead_is_wider_than_a_cell_for_most_of_its_approach() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let (mut shown, mut wide) = (0, 0);
+
+    for _ in 0..RUN * 2 {
+        // When:
+        scene.tick(AREA);
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let widest = cars_ahead(&rows).iter().map(|car| car.3 - car.2 + 1).max();
+
+        // Then:
+        if let Some(width) = widest {
+            shown += 1;
+            wide += usize::from(width > 2);
+        }
+    }
+    assert!(shown > 0, "no car ahead in view");
+    assert!(
+        wide * 3 >= shown * 2,
+        "a car ahead was wider than a cell in {wide} of {shown} frames"
     );
 }
