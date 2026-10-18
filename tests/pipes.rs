@@ -141,6 +141,39 @@ fn no_pipe_is_in_the_marker_colour() {
     }
 }
 
+/// Each colour drawn, with the number of separate pipes in it: groups of
+/// drawn cells of that colour that touch, diagonals included.
+fn pipes_by_colour(buffer: &Buffer) -> Vec<(String, usize)> {
+    let mut left: Vec<(u16, u16, String)> = buffer
+        .area
+        .positions()
+        .filter(|&p| buffer[p].symbol() != " ")
+        .map(|p| (p.x, p.y, format!("{:?}", buffer[p].fg)))
+        .collect();
+    let mut groups: Vec<String> = Vec::new();
+    while let Some(start) = left.pop() {
+        let mut open = vec![start.clone()];
+        while let Some((x, y, colour)) = open.pop() {
+            let (touching, rest): (Vec<_>, Vec<_>) =
+                left.into_iter().partition(|(ox, oy, other)| {
+                    *other == colour && x.abs_diff(*ox) <= 1 && y.abs_diff(*oy) <= 1
+                });
+            open.extend(touching);
+            left = rest;
+        }
+        groups.push(start.2);
+    }
+    groups.sort();
+    let mut counted: Vec<(String, usize)> = Vec::new();
+    for colour in groups {
+        match counted.last_mut() {
+            Some((last, count)) if *last == colour => *count += 1,
+            _ => counted.push((colour, 1)),
+        }
+    }
+    counted
+}
+
 /// Each live pipe shows a colour that no other live pipe shows.
 /// Given: screens wide enough for two to five pipes, in every theme, at
 /// many seeds.
@@ -175,20 +208,20 @@ fn each_live_pipe_shows_its_own_colour() {
 
                 // Then:
                 let buffer = render(&scene, area);
-                let mut shown: Vec<String> = buffer
-                    .area
-                    .positions()
-                    .filter(|&p| buffer[p].symbol() != " ")
-                    .map(|p| format!("{:?}", buffer[p].fg))
-                    .collect();
-                let pipes = shown.len();
-                shown.sort();
-                shown.dedup();
-                assert_eq!(
-                    shown.len(),
-                    pipes.min(colours.len()),
-                    "{name} width {width} seed {seed}: {shown:?}"
-                );
+                let pipes = pipes_by_colour(&buffer);
+                let count: usize = pipes.iter().map(|(_, groups)| groups).sum();
+                if count <= colours.len() {
+                    assert!(
+                        pipes.iter().all(|(_, groups)| *groups == 1),
+                        "{name} width {width} seed {seed}: two pipes share a colour: {pipes:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        pipes.len(),
+                        colours.len(),
+                        "{name} width {width} seed {seed}: a colour is left out: {pipes:?}"
+                    );
+                }
             }
         }
     }
