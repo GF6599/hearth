@@ -164,17 +164,17 @@ fn the_tide_rises_and_falls_between_its_bounds() {
     }
 }
 
-/// Dry sand is a sparse, even scatter of gold grains.
+/// Dry sand is gold, with a sparse, even scatter of rose grains.
 /// Given: the scene at a hundred by thirty.
 /// When: the pixels above the highest reach of the sea are read in tiles
 /// of four by four.
-/// Then: each tile holds exactly `GRAINS` gold pixels, and every other
-/// pixel is the base.
+/// Then: each tile holds exactly `GRAINS` rose pixels, and every other
+/// pixel is gold.
 ///
-/// Why it matters: flat gold over half the screen is loud, and grains that
-/// clump or thin out read as a stain and not as sand.
+/// Why it matters: grains on the background read as stars in a night sky
+/// and not as a beach, and grains that clump or thin out read as a stain.
 #[test]
-fn dry_sand_is_an_even_scatter_of_gold_grains() {
+fn dry_sand_is_gold_with_an_even_scatter_of_rose_grains() {
     // Given:
     let scene = ticked(7, AREA, 200);
 
@@ -189,10 +189,10 @@ fn dry_sand_is_an_even_scatter_of_gold_grains() {
             let tile: Vec<Color> = (0..16)
                 .map(|at| grid[top + at / 4][left + at % 4])
                 .collect();
+            let rose = tile.iter().filter(|each| **each == PALETTE.rose).count();
             let gold = tile.iter().filter(|each| **each == PALETTE.gold).count();
-            let base = tile.iter().filter(|each| **each == PALETTE.base).count();
             assert_eq!(
-                (gold, base),
+                (rose, gold),
                 (GRAINS, 16 - GRAINS),
                 "tile at ({left}, {top})"
             );
@@ -239,13 +239,13 @@ fn sand_the_sea_leaves_dries_in_a_fixed_time() {
 /// Wet sand is drawn darker than dry sand, and its grains hide.
 /// Given: the scene at a hundred by thirty, over two minutes.
 /// When: every sand pixel is read with its wetness.
-/// Then: a muted pixel is always wet, a gold grain is always dry, and wet
+/// Then: a muted pixel is always wet, a rose grain is always dry, and wet
 /// sand shows on screen.
 ///
 /// Why it matters: if the wet sand looks like the dry, the drying cannot
 /// be seen, and the tide leaves no trace.
 #[test]
-fn wet_sand_is_muted_and_dry_sand_is_gold() {
+fn wet_sand_is_muted_and_its_grains_hide() {
     let mut scene = ticked(7, AREA, 0);
     let mut muted_seen = 0;
     for tick in 0..2000 {
@@ -265,7 +265,7 @@ fn wet_sand_is_muted_and_dry_sand_is_gold() {
                     assert!(wetness > 0, "tick {tick}: dry muted pixel ({x}, {row})");
                     muted_seen += 1;
                 }
-                if *colour == PALETTE.gold {
+                if *colour == PALETTE.rose {
                     assert_eq!(wetness, 0, "tick {tick}: wet grain ({x}, {row})");
                 }
             }
@@ -274,8 +274,43 @@ fn wet_sand_is_muted_and_dry_sand_is_gold() {
     assert!(muted_seen > 0, "no wet sand was ever drawn");
 }
 
+/// The whole beach is sand, and none of it is the background.
+/// Given: the scene at a hundred by thirty, over two minutes.
+/// When: every pixel above the sea is read, at the shore, around a shell
+/// or a pebble, and on wet and dry sand.
+/// Then: no pixel above the sea is the base colour.
+///
+/// Why it matters: a beach in the background colour reads as a night sky,
+/// and a strip of it at the shore reads as a gap between sand and sea.
+#[test]
+fn no_part_of_the_beach_is_the_background() {
+    let mut scene = ticked(7, AREA, 0);
+    for tick in 0..2000 {
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+
+        // When:
+        let grid = pixels(&render(&scene, AREA, AREA), AREA);
+        let waterlines = waterlines(&grid);
+
+        // Then:
+        for (row, line) in grid.iter().enumerate() {
+            for (x, colour) in line.iter().enumerate() {
+                if grid.len() - row > waterlines[x] {
+                    assert_ne!(
+                        *colour, PALETTE.base,
+                        "tick {tick}: background on the beach at ({x}, {row})"
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn is_shell_or_pebble(colour: Color) -> bool {
-    colour == PALETTE.rose || colour == PALETTE.subtle
+    colour == PALETTE.love || colour == PALETTE.subtle
 }
 
 /// Shells and pebbles lie where the sea reaches, and the sea hides them.
