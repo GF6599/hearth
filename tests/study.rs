@@ -6,7 +6,7 @@ use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind};
 use hearth::scenes::hourglass::Lengths;
-use hearth::scenes::study::{LEAST, PICTURE, Study, WINDOW};
+use hearth::scenes::study::{LAYERS, LEAST, PICTURE, Study, WINDOW};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -79,26 +79,186 @@ fn scene() -> Study {
     scene
 }
 
-/// The room is one picture that stays the same.
-/// Given: the scene at a hundred by thirty.
-/// When: it ticks and renders over twenty seconds.
-/// Then: every frame is the same as the first.
+/// A pane exactly the picture's size, so a pixel of the pane is the pixel
+/// of the picture at the same place.
+const FITTED: Rect = Rect::new(0, 0, PICTURE.0 as u16, PICTURE.1 as u16 / 2);
+/// Ticks enough for every layer to move a few times, about two minutes.
+const RUN: u32 = 2000;
+
+fn layer_at(x: usize, y: usize) -> Option<&'static str> {
+    LAYERS
+        .iter()
+        .find(|(_, (left, top, wide, tall))| {
+            (*left..left + wide).contains(&x) && (*top..top + tall).contains(&y)
+        })
+        .map(|(name, _)| *name)
+}
+
+/// For each tick of a run, the layers whose pixels changed from the frame
+/// before. Every changed pixel must lie in a layer's area.
+fn changes(run: u32) -> Vec<Vec<&'static str>> {
+    let mut scene = scene();
+    let mut before = view(&scene, FITTED.width, FITTED.height);
+    let mut ticks = Vec::new();
+    for tick in 0..run {
+        scene.tick(FITTED);
+        let after = view(&scene, FITTED.width, FITTED.height);
+        let mut moved: Vec<&'static str> = Vec::new();
+        for (y, (old, new)) in before.iter().zip(&after).enumerate() {
+            for (x, (old, new)) in old.iter().zip(new).enumerate() {
+                if old != new {
+                    let layer = layer_at(x, y).unwrap_or_else(|| {
+                        panic!(
+                            "tick {tick}: pixel {:?} changed outside every layer",
+                            (x, y)
+                        )
+                    });
+                    if !moved.contains(&layer) {
+                        moved.push(layer);
+                    }
+                }
+            }
+        }
+        ticks.push(moved);
+        before = after;
+    }
+    ticks
+}
+
+/// Each layer moves, and only inside its own area.
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks and renders over about two minutes.
+/// Then: the layers' areas lie inside the picture and do not overlap,
+/// every pixel that changes from a frame to the next lies in one of them,
+/// and each of the rain, the steam, the lamp, the tail and the screen
+/// changes at least once.
 ///
-/// Why it matters: a still picture that shifts or flickers by itself reads
-/// as a fault, not as calm.
+/// Why it matters: a pixel that moves outside its layer is the still room
+/// breaking up, and a layer that never moves is a still picture with a
+/// name.
 #[test]
-fn the_room_stands_still_from_tick_to_tick() {
+fn each_layer_moves_only_inside_its_own_area() {
+    // Given:
+    for (index, (name, (left, top, wide, tall))) in LAYERS.iter().enumerate() {
+        assert!(
+            left + wide <= PICTURE.0 && top + tall <= PICTURE.1,
+            "{name}"
+        );
+        for (other, (x, y, w, h)) in &LAYERS[index + 1..] {
+            let apart = left + wide <= *x || x + w <= *left || top + tall <= *y || y + h <= *top;
+            assert!(apart, "{name} overlaps {other}");
+        }
+    }
+
+    // When:
+    let ticks = changes(RUN);
+
+    // Then:
+    for name in ["rain", "steam", "lamp", "tail", "screen"] {
+        assert!(
+            ticks.iter().any(|moved| moved.contains(&name)),
+            "{name} never moved"
+        );
+    }
+}
+
+/// Each layer keeps its own pace.
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks over about two minutes.
+/// Then: the rain moves in most ticks, and the lamp, the tail and the
+/// screen rest in most ticks.
+///
+/// Why it matters: a lamp that flickers all the time or a cat that never
+/// stops its tail reads as a fault, and the calm is in the slow layers.
+#[test]
+fn each_layer_keeps_its_own_pace() {
+    // When:
+    let ticks = changes(RUN);
+
+    // Then:
+    let share = |name: &str| {
+        ticks.iter().filter(|moved| moved.contains(&name)).count() as f32 / ticks.len() as f32
+    };
+    assert!(
+        share("rain") > 0.5,
+        "the rain moved in {} of ticks",
+        share("rain")
+    );
+    for name in ["lamp", "tail", "screen"] {
+        assert!(
+            share(name) < 0.25,
+            "{name} moved in {} of ticks",
+            share(name)
+        );
+    }
+}
+
+/// The rain runs down the glass behind the cat.
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks, and the lowest pixel of each run of rain, in foam on
+/// the glass, is followed from a frame to the next.
+/// Then: three in four stay in their column at the same row or up to two
+/// rows lower, and on average they move down. No rain covers the cat.
+///
+/// Why it matters: rain that runs up or sideways reads as a fault, and
+/// rain in front of the cat is rain inside the room.
+#[test]
+fn the_rain_runs_down_the_glass_behind_the_cat() {
     // Given:
     let mut scene = scene();
-    let first = render(&scene, AREA, AREA);
+    let rain = PALETTE.foam;
+    let (left, top, wide, tall) = LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1;
+    let glass: Vec<(usize, usize)> = (top..top + tall)
+        .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
+        .collect();
+    let first = view(&scene, FITTED.width, FITTED.height);
+    let cat: Vec<(usize, usize)> = glass
+        .iter()
+        .copied()
+        .filter(|&(x, y)| first[y][x] == PALETTE.text)
+        .collect();
+    let heads = |rows: &[Vec<Color>]| -> Vec<(usize, usize)> {
+        glass
+            .iter()
+            .copied()
+            .filter(|&(x, y)| rows[y][x] == rain && rows[y + 1][x] != rain)
+            .collect()
+    };
+    let mut before = view(&scene, FITTED.width, FITTED.height);
+    let (mut kept, mut seen, mut moved) = (0, 0, 0_isize);
 
-    for tick in 0..330 {
+    for tick in 0..400 {
         // When:
-        scene.tick(AREA);
+        scene.tick(FITTED);
+        let after = view(&scene, FITTED.width, FITTED.height);
 
         // Then:
-        assert_eq!(render(&scene, AREA, AREA), first, "tick {tick}");
+        for &(x, y) in &cat {
+            assert_ne!(
+                after[y][x],
+                rain,
+                "tick {tick}: rain on the cat at {:?}",
+                (x, y)
+            );
+        }
+        let next = heads(&after);
+        for (x, y) in heads(&before) {
+            seen += 1;
+            if let Some(step) = (0..=2).find(|step| next.contains(&(x, y + step))) {
+                kept += 1;
+                moved += step as isize;
+            }
+        }
+        before = after;
     }
+    assert!(
+        seen > 0 && kept * 4 >= seen * 3,
+        "{kept} of {seen} heads ran down"
+    );
+    assert!(
+        moved as f32 / seen as f32 > 0.2,
+        "the heads moved {moved} rows over {seen}"
+    );
 }
 
 /// The picture is centred in a pane larger than it.
