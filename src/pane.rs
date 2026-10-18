@@ -6,8 +6,7 @@ use ratatui::style::Style;
 
 use crate::config::Background;
 use crate::corpus::Corpus;
-use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind};
-use crate::scenes::hourglass::Lengths;
+use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
 
@@ -329,23 +328,23 @@ impl Pane {
         background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
-        lengths: Lengths,
+        settings: Settings,
     ) -> Self {
         Self {
             kind,
             seed,
             palette,
             background,
-            scene: kind.build(seed, palette, background, corpus, speed, lengths),
+            scene: kind.build(seed, palette, background, corpus, speed, settings),
             credit: 0,
         }
     }
 
     /// Rebuilds the scene from the next seed in the chain, so a run with
     /// `--seed` replays the same sequence of restarts.
-    pub fn restart(&mut self, corpus: &Arc<Corpus>, speed: Speed, lengths: Lengths) {
+    pub fn restart(&mut self, corpus: &Arc<Corpus>, speed: Speed, settings: Settings) {
         self.seed = self.seed.wrapping_add(1);
-        self.rebuild(corpus, speed, lengths);
+        self.rebuild(corpus, speed, settings);
     }
 
     pub fn repaint(
@@ -354,14 +353,14 @@ impl Pane {
         background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
-        lengths: Lengths,
+        settings: Settings,
     ) {
         self.palette = palette;
         self.background = background;
-        self.rebuild(corpus, speed, lengths);
+        self.rebuild(corpus, speed, settings);
     }
 
-    pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed, lengths: Lengths) {
+    pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed, settings: Settings) {
         self.credit = 0;
         self.scene = self.kind.build(
             self.seed,
@@ -369,7 +368,7 @@ impl Pane {
             self.background,
             corpus,
             speed,
-            lengths,
+            settings,
         );
     }
 

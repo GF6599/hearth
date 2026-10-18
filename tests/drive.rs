@@ -4,9 +4,8 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene, SceneKind, TICK_RATE};
+use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::drive::Drive;
-use hearth::scenes::hourglass::Lengths;
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -274,7 +273,7 @@ fn drive_is_a_scene_by_name() {
         Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
-        Lengths::DEFAULT,
+        Settings::DEFAULT,
     );
     scene.tick(AREA);
 

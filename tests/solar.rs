@@ -7,8 +7,7 @@ use std::sync::Arc;
 use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene, SceneKind, TICK_RATE};
-use hearth::scenes::hourglass::Lengths;
+use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::solar::Solar;
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
@@ -387,7 +386,7 @@ fn solar_is_a_scene_by_name() {
         Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
-        Lengths::DEFAULT,
+        Settings::DEFAULT,
     );
     scene.tick(AREA);
 

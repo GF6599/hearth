@@ -11,8 +11,7 @@ use crate::corpus::Corpus;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::quadrant;
-use crate::scene::{ALL, Rate, Scene, SceneKind};
-use crate::scenes::hourglass::Lengths;
+use crate::scene::{ALL, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
 use toml_edit::Value;
@@ -33,8 +32,7 @@ pub struct App {
     panes: Panes,
     corpus: Arc<Corpus>,
     speed: Speed,
-    /// The hourglass phase lengths, from the file or the defaults.
-    lengths: Lengths,
+    settings: Settings,
     /// One for each scene in `ALL`, so each keeps its own through a
     /// restart, Tab and the picker.
     rates: [Rate; ALL.len()],
@@ -98,6 +96,9 @@ impl App {
         let kind = scene.unwrap_or(ALL[0]);
         let theme = config.theme.unwrap_or(0);
         let speed = config.typing.unwrap_or(Speed::DEFAULT);
+        let settings = Settings {
+            lengths: config.hourglass,
+        };
         let mut app = Self {
             theme,
             background: config.background,
@@ -108,11 +109,11 @@ impl App {
                 config.background,
                 &corpus,
                 speed,
-                config.hourglass,
+                settings,
             )),
             corpus,
             speed,
-            lengths: config.hourglass,
+            settings,
             rates: config.rates.map(|saved| saved.unwrap_or(Rate::NORMAL)),
             notice: 0,
             notice_text: String::new(),
@@ -148,7 +149,7 @@ impl App {
                 self.background,
                 &self.corpus,
                 self.speed,
-                self.lengths,
+                self.settings,
             );
         }
         if self.mode == Mode::Picking {
@@ -321,7 +322,7 @@ impl App {
     fn speed_label(&self, kind: SceneKind) -> String {
         match kind {
             SceneKind::Typing => format!("{} cps", self.speed),
-            SceneKind::Hourglass => self.lengths.to_string(),
+            SceneKind::Hourglass => self.settings.lengths.to_string(),
             _ => self.rates[slot_of(kind)].to_string(),
         }
     }
@@ -333,7 +334,7 @@ impl App {
     pub fn restart(&mut self) {
         self.panes
             .focused_mut()
-            .restart(&self.corpus, self.speed, self.lengths);
+            .restart(&self.corpus, self.speed, self.settings);
     }
 
     pub fn next_scene(&mut self) {
@@ -481,7 +482,7 @@ impl App {
             self.background,
             &self.corpus,
             self.speed,
-            self.lengths,
+            self.settings,
         ));
         self.preview_credit = 0;
     }
@@ -511,7 +512,7 @@ impl App {
             self.background,
             &self.corpus,
             self.speed,
-            self.lengths,
+            self.settings,
         );
         self.panes.split(split, pane);
         self.selected = slot_of(kind);

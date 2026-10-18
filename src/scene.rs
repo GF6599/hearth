@@ -53,6 +53,20 @@ const RATES: &[(u32, &str)] = &[
 
 pub const QUARTERS_PER_TICK: u32 = 4;
 
+/// What the config file fixes for a whole run, read by a scene when it is
+/// built. A speed stays apart, because `+` and `-` change it while a scene
+/// runs.
+#[derive(Debug, Clone, Copy)]
+pub struct Settings {
+    pub lengths: Lengths,
+}
+
+impl Settings {
+    pub const DEFAULT: Settings = Settings {
+        lengths: Lengths::DEFAULT,
+    };
+}
+
 /// How fast a scene runs against one tick a frame, for a scene whose own
 /// unit means nothing to a reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,7 +271,7 @@ impl SceneKind {
         background: Background,
         corpus: &Arc<Corpus>,
         speed: Speed,
-        lengths: Lengths,
+        settings: Settings,
     ) -> Box<dyn Scene> {
         let rng = Rng::seed_from_u64(seed);
         match self {
@@ -279,9 +293,12 @@ impl SceneKind {
             SceneKind::Drive => Box::new(Drive::new(rng, palette)),
             SceneKind::City => Box::new(City::new(rng, palette)),
             SceneKind::River => Box::new(River::new(rng, palette, Arc::clone(corpus))),
-            SceneKind::Hourglass => {
-                Box::new(Hourglass::new(rng, palette, Clock::monotonic(), lengths))
-            }
+            SceneKind::Hourglass => Box::new(Hourglass::new(
+                rng,
+                palette,
+                Clock::monotonic(),
+                settings.lengths,
+            )),
             SceneKind::Study => Box::new(Study::new(rng, palette)),
             SceneKind::Typing => Box::new(
                 Typing::new(rng, palette, Arc::clone(corpus), speed).with_background(background),

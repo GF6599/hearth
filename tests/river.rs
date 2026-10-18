@@ -12,8 +12,7 @@ use hearth::cli::Cli;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::history::{DEPTH, History};
-use hearth::scene::{ALL, Rng, Scene, SceneKind};
-use hearth::scenes::hourglass::Lengths;
+use hearth::scene::{ALL, Rng, Scene, SceneKind, Settings};
 use hearth::scenes::river::{NOTICE, READING, River};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
@@ -529,7 +528,7 @@ fn river_is_a_scene_by_name() {
         Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
-        Lengths::DEFAULT,
+        Settings::DEFAULT,
     );
     scene.tick(AREA);
 

@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene, SceneKind};
-use hearth::scenes::hourglass::Lengths;
+use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration};
 use hearth::scenes::typing::Speed;
 use hearth::theme;
@@ -272,7 +271,7 @@ fn murmuration_is_a_scene_by_name() {
         Background::Theme,
         &Arc::new(Corpus::embedded()),
         Speed::DEFAULT,
-        Lengths::DEFAULT,
+        Settings::DEFAULT,
     );
     scene.tick(AREA);
 
