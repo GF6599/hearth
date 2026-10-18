@@ -83,6 +83,10 @@ const ROUND: f32 = 0.8;
 const POST: i32 = 2;
 /// Cells from the right post out to the round marks.
 const MARKS: i32 = 2;
+/// `r` builds the scene again on a new clock, so the cycle starts again at
+/// the first work round.
+const HINT: [(&str, &str); 2] = [("r", " start the cycle again"), ("+", " time left")];
+const HINT_GAP: i32 = 3;
 const WIDTH: i32 = CELL_WIDTH as i32;
 const HEIGHT: i32 = CELL_HEIGHT as i32;
 
@@ -219,6 +223,33 @@ impl Glass {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Colours {
+    frame: Color,
+    glass: Color,
+    work: Color,
+    rest: Color,
+    done: Color,
+    to_do: Color,
+    key: Color,
+    words: Color,
+}
+
+impl Colours {
+    fn of(palette: &Palette) -> Self {
+        Self {
+            frame: palette.iris,
+            glass: palette.foam,
+            work: palette.gold,
+            rest: palette.rose,
+            done: palette.iris,
+            to_do: palette.muted,
+            key: palette.iris,
+            words: palette.subtle,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Work,
@@ -284,7 +315,7 @@ impl Phase {
 
 #[derive(Debug)]
 pub struct Hourglass {
-    palette: &'static Palette,
+    colours: Colours,
     rng: Rng,
     clock: Clock,
     lengths: Lengths,
@@ -308,7 +339,7 @@ pub struct Hourglass {
 impl Hourglass {
     pub fn new(rng: Rng, palette: &'static Palette, clock: Clock, lengths: Lengths) -> Self {
         Self {
-            palette,
+            colours: Colours::of(palette),
             rng,
             clock,
             lengths,
@@ -479,6 +510,35 @@ impl Hourglass {
             }
         }
     }
+
+    fn hint(&self, glass: Glass, row: i32) -> Vec<((i32, i32), char, Color)> {
+        let letters: usize = HINT
+            .iter()
+            .map(|(key, words)| key.chars().count() + words.chars().count())
+            .sum();
+        let (Ok(letters), Ok(gaps)) = (i32::try_from(letters), i32::try_from(HINT.len() - 1))
+        else {
+            return Vec::new();
+        };
+        let length = letters + gaps * HINT_GAP;
+        if length + 2 > i32::from(self.width) {
+            return Vec::new();
+        }
+        let mut column = glass.centre - length / 2;
+        let mut glyphs = Vec::new();
+        for (index, (key, words)) in HINT.iter().enumerate() {
+            if index > 0 {
+                column += HINT_GAP;
+            }
+            for (text, colour) in [(key, self.colours.key), (words, self.colours.words)] {
+                for glyph in text.chars() {
+                    glyphs.push(((column, row), glyph, colour));
+                    column += 1;
+                }
+            }
+        }
+        glyphs
+    }
 }
 
 impl Scene for Hourglass {
@@ -531,8 +591,8 @@ impl Scene for Hourglass {
                 );
             };
         for (x, y) in glass.walls() {
-            plot(&mut cells, x, y, self.palette.muted);
-            plot(&mut cells, glass.mirror(x), y, self.palette.muted);
+            plot(&mut cells, x, y, self.colours.glass);
+            plot(&mut cells, glass.mirror(x), y, self.colours.glass);
         }
         let across = usize::from(self.width) * CELL_WIDTH;
         for (index, _) in self.sand.iter().enumerate().filter(|(_, grain)| **grain) {
@@ -541,8 +601,8 @@ impl Scene for Hourglass {
                 continue;
             };
             let colour = match self.phase.kind {
-                Kind::Work => self.palette.gold,
-                Kind::Break => self.palette.foam,
+                Kind::Work => self.colours.work,
+                Kind::Break => self.colours.rest,
             };
             plot(&mut cells, x, y, colour);
         }
@@ -556,22 +616,23 @@ impl Scene for Hourglass {
         );
         let (top, bottom) = (glass.neck - glass.bulb - 1, glass.neck + glass.bulb + 1);
         for column in left..=right {
-            glyphs.push(((column, top - 1), '▄', self.palette.rose));
-            glyphs.push(((column, bottom + 1), '▀', self.palette.rose));
+            glyphs.push(((column, top - 1), '▄', self.colours.frame));
+            glyphs.push(((column, bottom + 1), '▀', self.colours.frame));
         }
         for row in top..=bottom {
-            glyphs.push(((left, row), '┃', self.palette.rose));
-            glyphs.push(((right, row), '┃', self.palette.rose));
+            glyphs.push(((left, row), '┃', self.colours.frame));
+            glyphs.push(((right, row), '┃', self.colours.frame));
         }
         for round in 0..ROUNDS {
             let row = glass.neck - 3 + 2 * i32::try_from(round).unwrap_or(0);
             let mark = if round < self.phase.done {
-                '⣿'
+                ('⣿', self.colours.done)
             } else {
-                '⠶'
+                ('⠶', self.colours.to_do)
             };
-            glyphs.push(((right + MARKS, row), mark, self.palette.iris));
+            glyphs.push(((right + MARKS, row), mark.0, mark.1));
         }
+        glyphs.extend(self.hint(glass, bottom + 2));
 
         for ((column, row), glyph, colour) in glyphs {
             let (Ok(column), Ok(row)) = (u16::try_from(column), u16::try_from(row)) else {

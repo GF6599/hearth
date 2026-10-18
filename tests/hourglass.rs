@@ -554,8 +554,10 @@ fn colour_of(buffer: &Buffer, area: Rect, glyph: &str) -> Color {
 }
 
 /// The colour of the glass's walls and of its sand. On each row between
-/// the two posts the outermost braille cells are wall, and any lit braille
-/// cell between them holds sand.
+/// the two posts the outermost braille cell is wall. Near a cap or the neck
+/// the wall spans more cells of a row, so the sand is the colour most cells
+/// between the walls take apart from the wall's, or the wall's when no
+/// other shows.
 fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
     let braille = |position: (u16, u16)| {
         buffer[position]
@@ -564,7 +566,8 @@ fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
             .next()
             .is_some_and(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
     };
-    let (mut glass, mut sand) = (None, None);
+    let mut glass = None;
+    let mut inner: Vec<Color> = Vec::new();
     for row in area.top()..area.bottom() {
         let posts: Vec<u16> = (area.left()..area.right())
             .filter(|&column| buffer[(column, row)].symbol() == "\u{2503}")
@@ -579,14 +582,21 @@ fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
             continue;
         };
         glass.get_or_insert(buffer[(*first, row)].fg);
-        if let Some(column) = inside
-            .iter()
-            .find(|column| *column != first && *column != last)
-        {
-            sand.get_or_insert(buffer[(*column, row)].fg);
-        }
+        inner.extend(
+            inside
+                .iter()
+                .filter(|column| *column != first && *column != last)
+                .map(|column| buffer[(*column, row)].fg),
+        );
     }
-    (glass.expect("no glass"), sand.expect("no sand"))
+    let glass = glass.expect("no glass");
+    let sand = inner
+        .iter()
+        .filter(|colour| **colour != glass)
+        .max_by_key(|colour| inner.iter().filter(|other| other == colour).count())
+        .copied()
+        .unwrap_or(glass);
+    (glass, sand)
 }
 
 /// Each part of the hourglass reads in its own colour, and the glass is not
