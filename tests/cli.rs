@@ -178,8 +178,8 @@ fn in_terminal(args: &[&str]) -> Command {
 
 /// Given: a config file that sets a theme, and a `git` first on the path
 /// that counts its runs and finds no history.
-/// When: hearth starts the river in a terminal, and `q` quits it after
-/// git has run.
+/// When: hearth starts the river in a terminal, and `q` quits it `SETTLE`
+/// after the first git run.
 /// Then: git ran once.
 ///
 /// Why it matters: each river that is built reads the history with its
@@ -187,6 +187,9 @@ fn in_terminal(args: &[&str]) -> Command {
 /// repository twice.
 #[test]
 fn the_river_reads_its_history_once_at_startup() {
+    // Quitting at the first run hides a second read that starts later.
+    const SETTLE: Duration = Duration::from_millis(400);
+
     // Given:
     let home = config_home("once", Some("theme = \"rose-pine-moon\"\n"));
     let calls = home.join("calls");
@@ -216,6 +219,7 @@ fn the_river_reads_its_history_once_at_startup() {
     while runs() == 0 && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
     }
+    thread::sleep(SETTLE);
     hearth.stdin.take().unwrap().write_all(b"q").unwrap();
     while hearth.try_wait().unwrap().is_none() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
