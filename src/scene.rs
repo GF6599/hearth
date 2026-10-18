@@ -12,6 +12,7 @@ use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scenes::aquarium::Aquarium;
 use crate::scenes::bonsai::Bonsai;
+use crate::scenes::city::City;
 use crate::scenes::constellations::Constellations;
 use crate::scenes::drive::Drive;
 use crate::scenes::embers::Embers;
@@ -130,6 +131,7 @@ pub enum SceneKind {
     Constellations,
     Solar,
     Drive,
+    City,
     River,
     Matrix,
     Fire,
@@ -152,6 +154,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Constellations,
     SceneKind::Solar,
     SceneKind::Drive,
+    SceneKind::City,
     SceneKind::River,
     SceneKind::Matrix,
     SceneKind::Fire,
@@ -183,6 +186,7 @@ impl SceneKind {
             SceneKind::Constellations => "constellations",
             SceneKind::Solar => "solar",
             SceneKind::Drive => "drive",
+            SceneKind::City => "city",
             SceneKind::River => "river",
             SceneKind::Hourglass => "hourglass",
             SceneKind::Study => "study",
@@ -208,6 +212,7 @@ impl SceneKind {
             SceneKind::Constellations => "stars that join into named figures",
             SceneKind::Solar => "eight planets with trails round the sun",
             SceneKind::Drive => "a night drive over hills and bends, past slower cars",
+            SceneKind::City => "a city at night, its windows lit over the water",
             SceneKind::River => "the git history as a river of lanes and stones",
             SceneKind::Hourglass => "an hourglass that keeps a Pomodoro cycle",
             SceneKind::Study => "a desk by a rainy window, a cat on the sill",
@@ -233,6 +238,7 @@ impl SceneKind {
             SceneKind::Constellations => None,
             SceneKind::Solar => None,
             SceneKind::Drive => None,
+            SceneKind::City => None,
             SceneKind::River => None,
             SceneKind::Hourglass => Some("after the Pomodoro Technique by Francesco Cirillo"),
             SceneKind::Study => Some("after the lofi study streams"),
@@ -271,6 +277,7 @@ impl SceneKind {
             SceneKind::Constellations => Box::new(Constellations::new(rng, palette)),
             SceneKind::Solar => Box::new(Solar::new(rng, palette)),
             SceneKind::Drive => Box::new(Drive::new(rng, palette)),
+            SceneKind::City => Box::new(City::new(rng, palette)),
             SceneKind::River => Box::new(River::new(rng, palette, Arc::clone(corpus))),
             SceneKind::Hourglass => {
                 Box::new(Hourglass::new(rng, palette, Clock::monotonic(), lengths))

@@ -96,8 +96,12 @@ fn assert_skyline_fits(rows: &[Vec<Color>], context: &str) {
             top >= rows.len() / 10,
             "{context}: the tower at column {x} reaches row {top}"
         );
+        // A near tower's antenna can stand in front of a far tower.
         assert!(
-            (top..=ground).all(|y| is_tower(rows[y][x]) || is_window(rows[y][x])),
+            (top..=ground).all(|y| is_tower(rows[y][x])
+                || is_window(rows[y][x])
+                || rows[y][x] == PALETTE.muted
+                || rows[y][x] == PALETTE.love),
             "{context}: the tower at column {x} does not stand on the ground"
         );
     }
@@ -133,8 +137,9 @@ fn windows_light_only_inside_towers_that_fit_the_pane() {
                     continue;
                 }
                 lit += 1;
-                let walls =
-                    x > 0 && x + 1 < row.len() && is_tower(row[x - 1]) && is_tower(row[x + 1]);
+                // A near tower's antenna can stand in front of a far wall.
+                let wall = |colour: Color| is_tower(colour) || colour == PALETTE.muted;
+                let walls = x > 0 && x + 1 < row.len() && wall(row[x - 1]) && wall(row[x + 1]);
                 assert!(
                     walls,
                     "seed {seed}: a lit window at {:?} outside a tower",
@@ -210,8 +215,7 @@ fn the_water_mirrors_the_lit_windows() {
     let mut mirrored = 0;
     for y in shore..rows.len().min(2 * shore) {
         let above = 2 * shore - 1 - y;
-        for x in 0..rows[y].len() {
-            let (water, window) = (rows[y][x], rows[above][x]);
+        for (x, (&water, &window)) in rows[y].iter().zip(&rows[above]).enumerate() {
             if water != PALETTE.base {
                 assert!(
                     is_window(water) && water == window,

@@ -1,5 +1,6 @@
 pub mod aquarium;
 pub mod bonsai;
+pub mod city;
 pub mod constellations;
 pub mod drive;
 pub mod embers;
