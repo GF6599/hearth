@@ -103,8 +103,10 @@ fn rows(buffer: &Buffer, area: Rect) -> Vec<String> {
         .collect()
 }
 
+type Cells = Vec<(u16, u16)>;
+
 /// The cells of the area that draw something in one of `colours`.
-fn cells(buffer: &Buffer, area: Rect, colours: &[Color]) -> Vec<(u16, u16)> {
+fn cells(buffer: &Buffer, area: Rect, colours: &[Color]) -> Cells {
     area.positions()
         .filter(|position| {
             let cell = &buffer[*position];
@@ -115,7 +117,7 @@ fn cells(buffer: &Buffer, area: Rect, colours: &[Color]) -> Vec<(u16, u16)> {
 }
 
 /// The groups of `cells` that touch across a side, each as its cells.
-fn groups(mut left: Vec<(u16, u16)>) -> Vec<Vec<(u16, u16)>> {
+fn groups(mut left: Cells) -> Vec<Cells> {
     let mut found = Vec::new();
     while let Some(start) = left.pop() {
         let mut group = vec![start];
@@ -591,7 +593,7 @@ fn the_water_flows_along_the_lanes() {
     let repo = branched("water");
     let mut scene = river(History::read(&repo));
     let (mut foam_frames, mut moved) = (0, 0);
-    let mut before: Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> = None;
+    let mut before: Option<(Cells, Cells)> = None;
 
     for _ in 0..400 {
         // When:

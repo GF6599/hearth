@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Style};
@@ -22,13 +23,31 @@ const LANE_GAP: i64 = 8;
 const WATER: i64 = 4;
 /// The cells from the rightmost lane at the subject's row to the subject.
 const SUBJECT_GAP: i64 = 2;
+/// The dot rows the river moves down in a tick: a commit about every one
+/// and a half seconds, slow enough to read its subject.
+const SCROLL: f64 = 0.5;
+/// The dot rows the river runs on past the newest commit before it starts
+/// again from the oldest, so the newest is not cut off the moment it is
+/// read.
+const PAUSE: i64 = 2 * ROW_GAP;
+/// The dot rows the foam moves down its lane in a tick, on top of the
+/// river's own move, so the water flows past the stones.
+const FLOW: f64 = 1.0;
+/// The dot rows from one band of foam to the next in a lane, and the dot
+/// rows one band covers.
+const FOAM_PERIOD: i64 = 20;
+const FOAM: i64 = 2;
+/// How many lanes have their own phase of foam before the phases repeat.
+const PHASES: usize = 16;
 
 /// What a cell shows when more than one thing falls in it, from the
 /// lowest. One braille cell holds one colour, so a stone covers the water
-/// in its cells.
+/// in its cells. Foam keeps the water's dots in its cells, so a band of
+/// foam leaves no gap in its lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
     Water,
+    Foam,
     Stone,
 }
 
@@ -50,23 +69,45 @@ pub struct River {
     rows: Vec<Row>,
     /// The most lanes the history holds at once.
     widest: usize,
+    ticks: u64,
+    /// Where the foam of each lane starts, so the lanes do not foam in step.
+    phases: Vec<i64>,
 }
 
 impl River {
-    pub fn new(_rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>) -> Self {
+    pub fn new(mut rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>) -> Self {
         let (rows, widest) = lay_out(corpus.history().commits());
+        let phases = (0..PHASES)
+            .map(|_| rng.random_range(0..FOAM_PERIOD))
+            .collect();
         Self {
             palette,
             corpus,
             rows,
             widest,
+            ticks: 0,
+            phases,
         }
     }
 
-    /// The world dot row at the middle of the pane. The oldest commit stands
-    /// there, so the river shows the newer commits above it.
+    /// The world dot row at the middle of the pane. It starts at the oldest
+    /// commit, with the newer commits above it, and moves up the history,
+    /// so the river flows down the pane. Past the newest commit it starts
+    /// again.
     fn focus(&self) -> i64 {
-        (self.rows.len() as i64 - 1) * ROW_GAP
+        let oldest = (self.rows.len() as i64 - 1) * ROW_GAP;
+        let travelled = (self.ticks as f64 * SCROLL) as i64;
+        oldest - travelled.rem_euclid(oldest + PAUSE)
+    }
+
+    /// The commit whose stone is nearest the middle row, if one is within
+    /// half the gap to the next.
+    fn at_middle(&self) -> Option<usize> {
+        let focus = self.focus();
+        if focus < -ROW_GAP / 2 {
+            return None;
+        }
+        Some(((focus + ROW_GAP / 2) / ROW_GAP) as usize).filter(|index| *index < self.rows.len())
     }
 
     /// The rightmost lane with water at the row of commit `index`.
@@ -184,7 +225,9 @@ fn ease(t: f64) -> f64 {
 }
 
 impl Scene for River {
-    fn tick(&mut self, _area: Rect) {}
+    fn tick(&mut self, _area: Rect) {
+        self.ticks += 1;
+    }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         if self.rows.is_empty() {
@@ -213,8 +256,14 @@ impl Scene for River {
             let index = y / CELL_HEIGHT * columns + x / CELL_WIDTH;
             let bit = braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
             match &mut cells[index] {
-                Some(cell) if cell.0 > layer => {}
                 Some(cell) if cell.0 == layer => cell.1 |= bit,
+                Some(cell) if cell.0 <= Layer::Foam && layer <= Layer::Foam => {
+                    cell.1 |= bit;
+                    if layer > cell.0 {
+                        (cell.0, cell.2) = (layer, colour);
+                    }
+                }
+                Some(cell) if cell.0 > layer => {}
                 cell => *cell = Some((layer, bit, colour)),
             }
         };
@@ -222,6 +271,18 @@ impl Scene for River {
         let first = ((top - ROW_GAP) / ROW_GAP).max(0) as usize;
         let last = ((top + down) / ROW_GAP + 1).max(0) as usize;
         let shown = first..=last.min(self.rows.len() - 1);
+        let flow = (self.ticks as f64 * FLOW) as i64;
+        let mut wet = |x: i64, y: i64, lane: usize| {
+            let phase = self.phases[lane % PHASES];
+            let (layer, colour) = if (top + y - flow + phase).rem_euclid(FOAM_PERIOD) < FOAM {
+                (Layer::Foam, self.palette.foam)
+            } else {
+                (Layer::Water, self.palette.pine)
+            };
+            for across in x..x + WATER {
+                plot(across, y, layer, colour);
+            }
+        };
         for index in shown.clone() {
             let row = &self.rows[index];
             let y = index as i64 * ROW_GAP - top;
@@ -230,16 +291,11 @@ impl Scene for River {
                 let (from_x, to_x) = (lane_x(from) as f64, lane_x(to) as f64);
                 for step in 0..=ROW_GAP {
                     let x = from_x + (to_x - from_x) * ease(step as f64 / ROW_GAP as f64);
-                    let x = x.round() as i64;
-                    for across in x..x + WATER {
-                        plot(across, y + step, Layer::Water, self.palette.pine);
-                    }
+                    wet(x.round() as i64, y + step, to);
                 }
                 if oldest {
                     for below in y + ROW_GAP..down {
-                        for across in lane_x(to)..lane_x(to) + WATER {
-                            plot(across, below, Layer::Water, self.palette.pine);
-                        }
+                        wet(lane_x(to), below, to);
                     }
                 }
             }
@@ -272,10 +328,19 @@ impl Scene for River {
                 .set_fg(colour);
         }
 
-        let at_middle = (self.focus() as f64 / ROW_GAP as f64).round() as usize;
+        let Some(at_middle) = self.at_middle() else {
+            return;
+        };
         let Some(commit) = self.corpus.history().commits().get(at_middle) else {
             return;
         };
+        let line = (at_middle as i64 * ROW_GAP - top).div_euclid(CELL_HEIGHT as i64);
+        let Ok(line) = u16::try_from(line) else {
+            return;
+        };
+        if line >= area.height {
+            return;
+        }
         let column = (lane_x(self.rightmost(at_middle)) + WATER) / CELL_WIDTH as i64 + SUBJECT_GAP;
         let Ok(column) = u16::try_from(column) else {
             return;
@@ -285,7 +350,7 @@ impl Scene for River {
         }
         buf.set_stringn(
             area.x + column,
-            area.y + (middle / CELL_HEIGHT as i64) as u16,
+            area.y + line,
             &commit.subject,
             usize::from(area.width - column),
             Style::default().fg(self.palette.text),
