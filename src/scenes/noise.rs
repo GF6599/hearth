@@ -17,6 +17,10 @@ pub struct Noise {
 
 const GLYPHS: &[char] = &[' ', ' ', ' ', '.', ':', '-', '=', '+', '*'];
 
+/// The chance that a cell draws a new glyph in a tick. A screen drawn
+/// again whole each tick flickers too fast to rest the eye.
+const RENEW: f64 = 0.5;
+
 impl Noise {
     pub fn new(rng: Rng, palette: &'static Palette) -> Self {
         Self {
@@ -30,10 +34,17 @@ impl Noise {
 
 impl Scene for Noise {
     fn tick(&mut self, area: Rect) {
+        let count = usize::try_from(area.area()).unwrap_or(0);
+        let resized = self.width != area.width || self.cells.len() != count;
         self.width = area.width;
-        self.cells = (0..area.area())
-            .map(|_| GLYPHS[self.rng.random_range(0..GLYPHS.len())])
-            .collect();
+        if resized {
+            self.cells = vec![' '; count];
+        }
+        for cell in &mut self.cells {
+            if resized || self.rng.random_bool(RENEW) {
+                *cell = GLYPHS[self.rng.random_range(0..GLYPHS.len())];
+            }
+        }
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
