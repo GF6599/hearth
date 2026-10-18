@@ -140,3 +140,103 @@ fn no_pipe_is_in_the_marker_colour() {
         }
     }
 }
+
+/// Each live pipe shows a colour that no other live pipe shows.
+/// Given: screens wide enough for two to five pipes, in every theme, at
+/// many seeds.
+/// When: the scene ticks once, so each pipe has drawn its first cell.
+/// Then: the cells show as many colours as there are pipes, unless the
+/// theme has fewer distinct colours for pipes than that.
+///
+/// Why it matters: two or three pipes that draw their colours at random
+/// often share one, and a screen of pipes in one colour reads as one pipe.
+#[test]
+fn each_live_pipe_shows_its_own_colour() {
+    for (name, palette) in theme::THEMES {
+        // Given:
+        let mut colours = vec![
+            palette.love,
+            palette.gold,
+            palette.rose,
+            palette.pine,
+            palette.foam,
+            palette.iris,
+        ];
+        colours.retain(|colour| *colour != palette.marker());
+        colours.sort_by_key(|colour| format!("{colour:?}"));
+        colours.dedup();
+        for width in [80, 120, 160, 200] {
+            let area = Rect::new(0, 0, width, 30);
+            for seed in 0..32 {
+                let mut scene = Pipes::new(Rng::seed_from_u64(seed), palette);
+
+                // When:
+                scene.tick(area);
+
+                // Then:
+                let buffer = render(&scene, area);
+                let mut shown: Vec<String> = buffer
+                    .area
+                    .positions()
+                    .filter(|&p| buffer[p].symbol() != " ")
+                    .map(|p| format!("{:?}", buffer[p].fg))
+                    .collect();
+                let pipes = shown.len();
+                shown.sort();
+                shown.dedup();
+                assert_eq!(
+                    shown.len(),
+                    pipes.min(colours.len()),
+                    "{name} width {width} seed {seed}: {shown:?}"
+                );
+            }
+        }
+    }
+}
+
+/// Given: a pipe in the last column, moving right.
+/// When: it moves right twice, so it loops to the first column.
+/// Then: the rune after the loop is in another colour than the one before.
+///
+/// Why it matters: a pipe that keeps one colour for the whole screen
+/// leaves one colour on a narrow pane, which holds a single pipe. In
+/// pipes.sh a pipe takes a new colour when it loops at an edge.
+#[test]
+fn a_pipe_takes_a_new_colour_when_it_loops_at_an_edge() {
+    // Given, when:
+    let area = Rect::new(0, 0, 10, 6);
+    let scene = Pipes::trace(
+        Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
+        area,
+        (9, 2),
+        Direction::Right,
+        &[Direction::Right, Direction::Right],
+    );
+
+    // Then:
+    let buffer = render(&scene, area);
+    assert_ne!(buffer[(9, 2)].fg, buffer[(0, 2)].fg);
+}
+
+/// Given: a screen narrow enough for one pipe.
+/// When: it ticks twenty times.
+/// Then: at least twenty-eight cells are drawn, three for every two ticks
+/// less a few the pipe crosses twice.
+///
+/// Why it matters: at one cell a tick the pipes crawl.
+#[test]
+fn a_pipe_lays_three_cells_every_two_ticks() {
+    // Given:
+    let area = Rect::new(0, 0, 60, 30);
+    let mut scene = Pipes::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+
+    // When:
+    for _ in 0..20 {
+        scene.tick(area);
+    }
+
+    // Then:
+    let count = drawn(&render(&scene, area));
+    assert!(count >= 28, "{count} cells drawn in twenty ticks");
+}
