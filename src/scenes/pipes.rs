@@ -16,6 +16,9 @@ const TURN_ODDS: u32 = 10;
 const COLUMNS_PER_PIPE: u16 = 40;
 const MOST_PIPES: usize = 6;
 
+/// Each pipe lays this many cells for each this many ticks.
+const STEPS: (u32, u32) = (3, 2);
+
 /// Every accent but the marker, because a turn in a pane corner in that
 /// colour reads as the focus mark.
 fn colours(palette: &Palette) -> Vec<Color> {
@@ -29,7 +32,12 @@ fn colours(palette: &Palette) -> Vec<Color> {
     ]
     .into_iter()
     .filter(|&colour| colour != palette.marker())
-    .collect()
+    .fold(Vec::new(), |mut distinct, colour| {
+        if !distinct.contains(&colour) {
+            distinct.push(colour);
+        }
+        distinct
+    })
 }
 
 /// The runes come from the same set as the frame, so the two match.
@@ -67,7 +75,7 @@ fn rune(from: Direction, to: Direction) -> &'static str {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Pipe {
     x: u16,
     y: u16,
@@ -83,6 +91,7 @@ pub struct Pipes {
     cells: Vec<Option<(&'static str, Color)>>,
     pipes: Vec<Pipe>,
     drawn: usize,
+    due: u32,
 }
 
 impl Pipes {
@@ -94,6 +103,7 @@ impl Pipes {
             cells: Vec::new(),
             pipes: Vec::new(),
             drawn: 0,
+            due: 0,
         }
     }
 
@@ -146,7 +156,7 @@ impl Pipes {
 
     fn spawn(&mut self) -> Pipe {
         let (width, height) = self.size;
-        let colour = self.colours[self.rng.random_range(0..self.colours.len())];
+        let colour = self.free_colour(None);
         let (x, y, heading) = match self.rng.random_range(0..4) {
             0 => (self.rng.random_range(0..width), 0, Direction::Down),
             1 => (self.rng.random_range(0..width), height - 1, Direction::Up),
@@ -161,6 +171,45 @@ impl Pipes {
         }
     }
 
+    /// A colour that no live pipe shows, and not `old`, while the roles
+    /// allow.
+    fn free_colour(&mut self, old: Option<Color>) -> Color {
+        let taken: Vec<Color> = self.pipes.iter().map(|pipe| pipe.colour).collect();
+        let fresh = |colour: &&Color| Some(**colour) != old;
+        let mut choices: Vec<Color> = self
+            .colours
+            .iter()
+            .filter(fresh)
+            .filter(|colour| !taken.contains(colour))
+            .copied()
+            .collect();
+        if choices.is_empty() {
+            choices = self.colours.iter().filter(fresh).copied().collect();
+        }
+        match choices.len() {
+            0 => self.colours[0],
+            count => choices[self.rng.random_range(0..count)],
+        }
+    }
+
+    /// The live pipes stay in place while each lays, so a pipe that loops
+    /// sees the colours of the others.
+    fn step(&mut self) {
+        for index in 0..self.pipes.len() {
+            let mut pipe = self.pipes[index];
+            let next = if self.rng.random_range(0..TURN_ODDS) == 0 {
+                pipe.heading.turned(self.rng.random_bool(0.5))
+            } else {
+                pipe.heading
+            };
+            self.lay(&mut pipe, next);
+            self.pipes[index] = pipe;
+        }
+        if self.drawn * 100 >= self.cells.len() * FILL_PERCENT {
+            self.clear();
+        }
+    }
+
     fn lay(&mut self, pipe: &mut Pipe, next: Direction) {
         let (width, height) = self.size;
         let index = usize::from(pipe.y) * usize::from(width) + usize::from(pipe.x);
@@ -170,6 +219,12 @@ impl Pipes {
             }
             *cell = Some((rune(pipe.heading, next), pipe.colour));
         }
+        let looped = match next {
+            Direction::Up => pipe.y == 0,
+            Direction::Down => pipe.y + 1 == height,
+            Direction::Left => pipe.x == 0,
+            Direction::Right => pipe.x + 1 == width,
+        };
         match next {
             Direction::Up => pipe.y = pipe.y.checked_sub(1).unwrap_or(height - 1),
             Direction::Down => pipe.y = (pipe.y + 1) % height,
@@ -177,6 +232,9 @@ impl Pipes {
             Direction::Right => pipe.x = (pipe.x + 1) % width,
         }
         pipe.heading = next;
+        if looped {
+            pipe.colour = self.free_colour(Some(pipe.colour));
+        }
     }
 }
 
@@ -188,19 +246,10 @@ impl Scene for Pipes {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let mut pipes = std::mem::take(&mut self.pipes);
-        for pipe in &mut pipes {
-            let next = if self.rng.random_range(0..TURN_ODDS) == 0 {
-                pipe.heading.turned(self.rng.random_bool(0.5))
-            } else {
-                pipe.heading
-            };
-            self.lay(pipe, next);
-        }
-        self.pipes = pipes;
-
-        if self.drawn * 100 >= self.cells.len() * FILL_PERCENT {
-            self.clear();
+        self.due += STEPS.0;
+        while self.due >= STEPS.1 {
+            self.due -= STEPS.1;
+            self.step();
         }
     }
 
