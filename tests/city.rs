@@ -15,6 +15,15 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
+/// The pixels a ripple moves a reflection to either side, at the most.
+const RIPPLE: usize = 3;
+/// About three seconds of ticks.
+const FEW_SECONDS: u32 = 50;
+/// A loop of the night and a half, so a run holds an evening and a late
+/// night from any start.
+const NIGHT_AND_A_HALF: u32 = 4500;
+/// Ticks enough for a few trains to cross.
+const TRAINS: u32 = 4000;
 const PALETTE: &Palette = &theme::ROSE_PINE;
 /// The quadrant glyphs, in the order of the quarters they set: upper left,
 /// upper right, lower left and lower right from the lowest bit.
@@ -191,45 +200,61 @@ fn the_stars_and_moon_stay_in_the_sky() {
     }
 }
 
-/// The water under the city mirrors the lit windows.
+/// The water under the city mirrors the lit windows, broken by ripples.
 /// Given: the scene at a hundred by thirty.
-/// When: it ticks and renders.
-/// Then: every lit pixel in the water is a lit window colour, the same as
-/// the pixel as far above the ground as it is below, and every lit window
-/// whose mirror falls in the pane shows there.
+/// When: it ticks and renders over a few seconds.
+/// Then: in every frame each lit pixel in the water is a lit window colour,
+/// and the row as far above the ground as it is below holds that colour
+/// within `RIPPLE` pixels to either side. The water shows over half of the
+/// lit windows whose mirror falls in the pane, and it changes in most
+/// frames.
 ///
 /// Why it matters: water that does not mirror the city reads as a flat
-/// band, and a reflection of something that is not there reads as a
-/// fault.
+/// band, a reflection of something that is not there reads as a fault,
+/// and water that never moves reads as a second city upside down.
 #[test]
-fn the_water_mirrors_the_lit_windows() {
+fn the_water_mirrors_the_lit_windows_through_ripples() {
     // Given:
     let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+    let (mut changed, mut before) = (0, None);
 
-    // When:
-    scene.tick(AREA);
-    let rows = frame(&scene, AREA);
+    for _ in 0..FEW_SECONDS {
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
 
-    // Then:
-    let shore = ground(&rows) + 1;
-    let mut mirrored = 0;
-    for y in shore..rows.len().min(2 * shore) {
-        let above = 2 * shore - 1 - y;
-        for (x, (&water, &window)) in rows[y].iter().zip(&rows[above]).enumerate() {
-            if water != PALETTE.base {
-                assert!(
-                    is_window(water) && water == window,
-                    "{:?} in the water mirrors {window:?}",
-                    (x, y)
-                );
-                mirrored += 1;
-            }
-            if is_window(window) {
-                assert_eq!(water, window, "no mirror at {:?}", (x, y));
+        // Then:
+        let shore = ground(&rows) + 1;
+        let (mut shown, mut windows) = (0, 0);
+        for y in shore..rows.len().min(2 * shore) {
+            let above = &rows[2 * shore - 1 - y];
+            for (x, &water) in rows[y].iter().enumerate() {
+                let near = x.saturating_sub(RIPPLE)..(x + RIPPLE + 1).min(above.len());
+                if water != PALETTE.base {
+                    assert!(
+                        is_window(water) && above[near].contains(&water),
+                        "{:?} in the water mirrors no lit window",
+                        (x, y)
+                    );
+                    shown += 1;
+                }
+                windows += usize::from(is_window(above[x]));
             }
         }
+        assert!(
+            shown * 2 > windows,
+            "the water shows {shown} of {windows} lit windows"
+        );
+        let water = rows[shore..].to_vec();
+        if before.as_ref().is_some_and(|before| *before != water) {
+            changed += 1;
+        }
+        before = Some(water);
     }
-    assert!(mirrored > 10, "only {mirrored} lit windows in the water");
+    assert!(
+        changed * 2 > FEW_SECONDS,
+        "the water changed in {changed} of {FEW_SECONDS} frames"
+    );
 }
 
 /// The skyline is built for each pane it is given.
@@ -323,4 +348,212 @@ fn city_is_a_scene_by_name() {
             .any(|colour| *colour == PALETTE.overlay)
     );
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.gold));
+}
+
+/// The first row of the raised line, the top row that is all its colour.
+fn rail(rows: &[Vec<Color>]) -> usize {
+    rows.iter()
+        .position(|row| row.iter().all(|colour| *colour == PALETTE.muted))
+        .expect("a raised line")
+}
+
+/// Whether a row of the city lies outside the rows a train passes on and
+/// the line it runs on.
+fn off_the_line(y: usize, rail: usize) -> bool {
+    y + 4 < rail || y > rail + 1
+}
+
+/// Windows light and go dark one at a time as the night passes.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over a loop of the night and a half.
+/// Then: off the line of the train, the towers and the places of the
+/// windows stay the same, at most one window changes from a frame to the
+/// next, and the count of lit windows both rises and falls by over a
+/// quarter of its most.
+///
+/// Why it matters: a city whose windows never change reads as a picture,
+/// and one whose windows flicker all at once reads as a fault.
+#[test]
+fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
+    // Given:
+    let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+    let mut counts = Vec::new();
+    let mut before: Option<Vec<(usize, usize, Color)>> = None;
+
+    for tick in 0..NIGHT_AND_A_HALF {
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let (rail, shore) = (rail(&rows), ground(&rows) + 1);
+        let city: Vec<(usize, usize, Color)> = rows[..shore]
+            .iter()
+            .enumerate()
+            .filter(|(y, _)| off_the_line(*y, rail))
+            .flat_map(|(y, row)| {
+                row.iter()
+                    .enumerate()
+                    .filter(|(_, colour)| is_tower(**colour) || is_window(**colour))
+                    .map(move |(x, colour)| (x, y, *colour))
+            })
+            .collect();
+        counts.push(
+            city.iter()
+                .filter(|(_, _, colour)| is_window(*colour))
+                .count(),
+        );
+        if let Some(before) = &before {
+            let places = |city: &[(usize, usize, Color)]| -> Vec<(usize, usize)> {
+                city.iter().map(|(x, y, _)| (*x, *y)).collect()
+            };
+            assert_eq!(
+                places(before),
+                places(&city),
+                "tick {tick}: the skyline moved"
+            );
+            let changes = before.iter().zip(&city).filter(|(a, b)| a != b).count();
+            assert!(
+                changes <= 1,
+                "tick {tick}: {changes} windows changed at once"
+            );
+        }
+        before = Some(city);
+    }
+    let most = *counts.iter().max().unwrap();
+    let (mut lowest, mut highest, mut rise, mut fall) = (usize::MAX, 0, 0, 0);
+    for &count in &counts {
+        lowest = lowest.min(count);
+        highest = highest.max(count);
+        rise = rise.max(count - lowest);
+        fall = fall.max(highest - count);
+    }
+    assert!(
+        rise * 4 > most && fall * 4 > most,
+        "the lit windows rose by {rise} and fell by {fall} of {most}"
+    );
+}
+
+/// The lights on the antennas blink.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over a few seconds.
+/// Then: the antenna lights stand in at least three places, and each place
+/// is lit in some frames and dark in others.
+///
+/// Why it matters: a warning light that never blinks reads as a red
+/// pixel stuck on the screen.
+#[test]
+fn the_antenna_lights_blink() {
+    // Given:
+    let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+    let mut lit: Vec<((usize, usize), u32)> = Vec::new();
+
+    for _ in 0..FEW_SECONDS {
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
+        for (y, row) in rows.iter().enumerate() {
+            for (x, colour) in row.iter().enumerate() {
+                if *colour != PALETTE.love {
+                    continue;
+                }
+                match lit.iter_mut().find(|(place, _)| *place == (x, y)) {
+                    Some((_, frames)) => *frames += 1,
+                    None => lit.push(((x, y), 1)),
+                }
+            }
+        }
+    }
+
+    // Then:
+    assert!(lit.len() >= 3, "lights at {lit:?}");
+    for (place, frames) in lit {
+        assert!(
+            frames < FEW_SECONDS,
+            "the light at {place:?} is lit in every frame"
+        );
+    }
+}
+
+/// A lit train crosses the city on its raised line now and then.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks long enough for a few trains.
+/// Then: each train, a run of six or more pixels of its body on the row
+/// above the line, comes in at one side of the pane, moves the same way in
+/// every frame, and leaves at the other side. No such run shows on any
+/// row above the train's rows, and more than one train crosses.
+///
+/// Why it matters: a train that jumps, turns back or stops halfway reads
+/// as a fault, and one that leaves its line reads as a crash.
+#[test]
+fn a_train_crosses_on_its_line_now_and_then() {
+    // Given:
+    let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+    let across = usize::from(AREA.width) * 2;
+    let runs = |row: &[Color]| -> Option<(usize, usize)> {
+        let mut found: Option<(usize, usize)> = None;
+        let mut start = None;
+        for (x, colour) in row.iter().chain([&Color::Reset]).enumerate() {
+            match (start, *colour == PALETTE.muted) {
+                (None, true) => start = Some(x),
+                (Some(from), false) => {
+                    if x - from >= 6 {
+                        found = Some(found.map_or((from, x - 1), |(left, _)| (left, x - 1)));
+                    }
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        found
+    };
+    let mut crossed = 0;
+    // The edge a train came in at, and its extent in the frame before.
+    let mut train: Option<(bool, (usize, usize))> = None;
+
+    for tick in 0..TRAINS {
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let rail = rail(&rows);
+        for (y, row) in rows.iter().enumerate().take(rail - 4) {
+            assert!(runs(row).is_none(), "tick {tick}: a train body on row {y}");
+        }
+        let now = runs(&rows[rail - 1]);
+        train = match (train, now) {
+            (None, None) => None,
+            (None, Some((left, right))) => {
+                assert!(
+                    left == 0 || right == across - 1,
+                    "tick {tick}: a train came in at {left} to {right}"
+                );
+                Some((left == 0, (left, right)))
+            }
+            (Some((from_left, (left, right))), Some((now_left, now_right))) => {
+                let forward = if from_left {
+                    now_left >= left && now_right >= right
+                } else {
+                    now_left <= left && now_right <= right
+                };
+                assert!(
+                    forward,
+                    "tick {tick}: the train moved from {left}..{right} to {now_left}..{now_right}"
+                );
+                Some((from_left, (now_left, now_right)))
+            }
+            (Some((from_left, (left, right))), None) => {
+                let other_side = if from_left {
+                    right == across - 1
+                } else {
+                    left == 0
+                };
+                assert!(other_side, "tick {tick}: a train left at {left} to {right}");
+                crossed += 1;
+                None
+            }
+        };
+    }
+    assert!(crossed >= 2, "{crossed} trains crossed");
 }
