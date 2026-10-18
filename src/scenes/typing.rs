@@ -9,6 +9,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
+use crate::braille;
+use crate::config::Background;
 use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
 use crate::minimap::Outline;
@@ -139,6 +141,7 @@ pub struct Typing {
     lines: Vec<Vec<(char, Color)>>,
     pause: u32,
     finished: bool,
+    background: Background,
 }
 
 impl Typing {
@@ -163,10 +166,16 @@ impl Typing {
             lines: vec![Vec::new()],
             pause: 0,
             finished: false,
+            background: Background::Theme,
         };
         scene.candidates = (0..scene.corpus.files().len()).collect();
         scene.open_next();
         scene
+    }
+
+    pub fn with_background(mut self, background: Background) -> Self {
+        self.background = background;
+        self
     }
 
     /// Picks a snippet at random from a random file, never the one on
@@ -344,6 +353,12 @@ impl Typing {
         for (y, row) in (frame.y..frame.bottom()).zip(cells) {
             for (x, halves) in (x..x + width).zip(row) {
                 let cell = &mut buf[(x, y)];
+                if self.background == Background::Terminal {
+                    if let Some((glyph, colour)) = dotted(halves) {
+                        cell.set_char(glyph).set_fg(colour);
+                    }
+                    continue;
+                }
                 match halves {
                     (Some(upper), lower) => {
                         cell.set_char('▀').set_fg(upper);
@@ -532,4 +547,15 @@ impl Scene for Typing {
             buf[(x, y)].set_char(' ').set_bg(self.palette.text);
         }
     }
+}
+
+/// Each line of a minimap cell as one row of dots, with a row clear between
+/// the two, so a terminal's own background shows between the lines. A cell
+/// has one colour, so the upper line's wins.
+fn dotted((upper, lower): (Option<Color>, Option<Color>)) -> Option<(char, Color)> {
+    let row = |line: Option<Color>, at: usize| {
+        line.map_or(0, |_| braille::dot(0, at) | braille::dot(1, at))
+    };
+    let colour = upper.or(lower)?;
+    Some((braille::glyph(row(upper, 0) | row(lower, 2)), colour))
 }

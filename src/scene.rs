@@ -276,7 +276,9 @@ impl SceneKind {
                 Box::new(Hourglass::new(rng, palette, Clock::monotonic(), lengths))
             }
             SceneKind::Study => Box::new(Study::new(rng, palette)),
-            SceneKind::Typing => Box::new(Typing::new(rng, palette, Arc::clone(corpus), speed)),
+            SceneKind::Typing => Box::new(
+                Typing::new(rng, palette, Arc::clone(corpus), speed).with_background(background),
+            ),
         }
     }
 

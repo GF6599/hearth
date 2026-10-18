@@ -176,6 +176,7 @@ fn the_terminal_background_keeps_every_picture() {
                 let at = format!("{name} {args:?} at {position:?}");
                 let painted = seen(&before[position], &behind);
                 if let (true, (Some(quarters), ..)) = (typing, &painted)
+                    && before[position].symbol() != " "
                     && quarters.iter().any(|colour| *colour != Color::Reset)
                 {
                     let cell = &after[position];
