@@ -20,6 +20,11 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
+const GLASS: Color = PALETTE.foam;
+const FRAME: Color = PALETTE.iris;
+const WORK_SAND: Color = PALETTE.gold;
+const BREAK_SAND: Color = PALETTE.rose;
+const DONE: Color = PALETTE.iris;
 const WORK: Duration = Lengths::DEFAULT.work;
 const BREAK: Duration = Lengths::DEFAULT.r#break;
 const LONG_BREAK: Duration = Lengths::DEFAULT.long_break;
@@ -75,7 +80,7 @@ fn dots(buffer: &Buffer, area: Rect) -> Vec<((usize, usize), Color)> {
 
 /// The work sand above the neck and below it.
 fn sand(buffer: &Buffer, area: Rect) -> (usize, usize) {
-    sand_in(buffer, area, PALETTE.gold)
+    sand_in(buffer, area, WORK_SAND)
 }
 
 /// Ticks the scene with the clock moving at the tick rate, until the clock
@@ -116,12 +121,12 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
         let (top, bottom) = sand(&buffer, AREA);
         assert_eq!(top + bottom, total, "grains at {step:?}");
         for ((x, y), colour) in dots(&buffer, AREA) {
-            if colour != PALETTE.gold {
+            if colour != WORK_SAND {
                 continue;
             }
             let row = u16::try_from(y / CELL_HEIGHT).unwrap();
             let column = u16::try_from(x / CELL_WIDTH).unwrap();
-            let wall = |other: u16| buffer[(other, row)].fg == PALETTE.muted;
+            let wall = |other: u16| buffer[(other, row)].fg == GLASS;
             assert!(
                 (0..column).any(wall) && (column + 1..AREA.width).any(wall),
                 "a grain at {:?} outside the glass at {step:?}",
@@ -151,13 +156,13 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
     let held = |x: usize, y: usize| {
         let row = u16::try_from(y / CELL_HEIGHT).unwrap();
         let column = u16::try_from(x / CELL_WIDTH).unwrap();
-        buffer[(column, row)].fg == PALETTE.muted
+        buffer[(column, row)].fg == GLASS
             || lit
                 .iter()
-                .any(|(dot, colour)| *dot == (x, y) && *colour == PALETTE.gold)
+                .any(|(dot, colour)| *dot == (x, y) && *colour == WORK_SAND)
     };
     for ((x, y), colour) in &lit {
-        if *colour == PALETTE.gold && *y >= neck {
+        if *colour == WORK_SAND && *y >= neck {
             assert!(
                 held(*x, y + 1) && held(x - 1, y + 1) && held(x + 1, y + 1),
                 "a grain at {:?} does not rest",
@@ -259,17 +264,17 @@ fn hourglass_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     let lit = dots(&buffer, AREA);
-    assert!(lit.iter().any(|(_, colour)| *colour == PALETTE.gold));
-    assert!(lit.iter().any(|(_, colour)| *colour == PALETTE.muted));
+    assert!(lit.iter().any(|(_, colour)| *colour == WORK_SAND));
+    assert!(lit.iter().any(|(_, colour)| *colour == GLASS));
 }
 
 /// The glass has round bulbs and stands in a frame.
 /// Given: a glass at a hundred by thirty.
 /// When: it renders.
 /// Then: the glass is narrowest on the middle row. Each bulb is widest on a
-/// row between its end and the neck, so it curves in at both ends. A rose
+/// row between its end and the neck, so it curves in at both ends. A frame
 /// plate lies across the rows above and below the glass, wider than the
-/// glass, and a rose post stands either side of every row of the glass.
+/// glass, and a frame post stands either side of every row of the glass.
 ///
 /// Why it matters: two straight cones read as a diagram, not as an
 /// hourglass.
@@ -292,7 +297,7 @@ fn the_glass_has_round_bulbs_in_a_frame() {
     };
     let glass: Vec<(u16, u16, u16)> = (0..AREA.height)
         .filter_map(|row| {
-            let walls = cells(row, PALETTE.muted);
+            let walls = cells(row, GLASS);
             Some((row, *walls.first()?, *walls.last()?))
         })
         .collect();
@@ -324,17 +329,17 @@ fn the_glass_has_round_bulbs_in_a_frame() {
         glass.iter().map(|(_, _, right)| *right).max().unwrap(),
     );
     for plate in [first - 1, last + 1] {
-        let rose = cells(plate, PALETTE.rose);
+        let frame = cells(plate, FRAME);
         assert!(
-            rose.first().is_some_and(|left| *left < outer_left)
-                && rose.last().is_some_and(|right| *right > outer_right),
+            frame.first().is_some_and(|left| *left < outer_left)
+                && frame.last().is_some_and(|right| *right > outer_right),
             "no plate across row {plate}"
         );
     }
     for (row, left, right) in &glass {
-        let rose = cells(*row, PALETTE.rose);
+        let frame = cells(*row, FRAME);
         assert!(
-            rose.iter().any(|post| post < left) && rose.iter().any(|post| post > right),
+            frame.iter().any(|post| post < left) && frame.iter().any(|post| post > right),
             "no post beside row {row}"
         );
     }
@@ -356,12 +361,11 @@ fn sand_in(buffer: &Buffer, area: Rect, colour: Color) -> (usize, usize) {
         })
 }
 
-/// The finished rounds the marks beside the glass show: full cells in iris.
+/// The finished rounds the marks beside the glass show: full cells in the
+/// colour of a finished round.
 fn rounds_done(buffer: &Buffer, area: Rect) -> usize {
     area.positions()
-        .filter(|position| {
-            buffer[*position].fg == PALETTE.iris && buffer[*position].symbol() == "\u{28ff}"
-        })
+        .filter(|position| buffer[*position].fg == DONE && buffer[*position].symbol() == "\u{28ff}")
         .count()
 }
 
@@ -369,8 +373,8 @@ fn rounds_done(buffer: &Buffer, area: Rect) -> usize {
 /// sand.
 /// Given: a glass at a hundred by thirty near the end of the work phase.
 /// When: the clock runs three seconds past the end.
-/// Then: before the end the sand is gold, and after it every grain is
-/// foam, and nearly all of it is back in the top.
+/// Then: before the end the sand is in the work colour, and after it every
+/// grain is in the break colour, and nearly all of it is back in the top.
 ///
 /// Why it matters: a glass that does not turn stops keeping time, and sand
 /// in the work colour during a break shows the wrong phase.
@@ -393,11 +397,11 @@ fn the_glass_turns_at_the_end_of_a_phase_to_break_sand() {
     // Then:
     let buffer = render(&scene, AREA, AREA);
     assert_eq!(
-        sand_in(&buffer, AREA, PALETTE.gold),
+        sand_in(&buffer, AREA, WORK_SAND),
         (0, 0),
         "work sand after the turn"
     );
-    let (top, bottom) = sand_in(&buffer, AREA, PALETTE.foam);
+    let (top, bottom) = sand_in(&buffer, AREA, BREAK_SAND);
     assert_eq!(top + bottom, total, "break sand after the turn");
     assert!(
         top > total * 95 / 100,
@@ -411,8 +415,8 @@ fn the_glass_turns_at_the_end_of_a_phase_to_break_sand() {
 /// break and into the next round, and the glass is read halfway through
 /// several phases.
 /// Then: the marks show the work rounds finished in the cycle, and the sand
-/// is gold in work and foam in a break, also ten seconds after a short
-/// break after the fourth round would have ended.
+/// is in the work colour in work and the break colour in a break, also ten
+/// seconds after a short break after the fourth round would have ended.
 ///
 /// Why it matters: the long break is the point of counting rounds, and
 /// marks that count wrong lose the cycle.
@@ -422,16 +426,12 @@ fn the_marks_count_the_rounds_and_the_long_break_follows_the_fourth() {
     let (mut scene, now) = hourglass(7);
     let long_break = WORK * 4 + BREAK * 3;
     let checks = [
-        (WORK / 2, 0, PALETTE.gold),
-        (WORK + BREAK / 2, 1, PALETTE.foam),
-        (WORK + BREAK + WORK / 2, 1, PALETTE.gold),
-        (WORK * 3 + BREAK * 3 + WORK / 2, 3, PALETTE.gold),
-        (
-            long_break + BREAK + Duration::from_secs(10),
-            4,
-            PALETTE.foam,
-        ),
-        (long_break + LONG_BREAK + WORK / 2, 0, PALETTE.gold),
+        (WORK / 2, 0, WORK_SAND),
+        (WORK + BREAK / 2, 1, BREAK_SAND),
+        (WORK + BREAK + WORK / 2, 1, WORK_SAND),
+        (WORK * 3 + BREAK * 3 + WORK / 2, 3, WORK_SAND),
+        (long_break + BREAK + Duration::from_secs(10), 4, BREAK_SAND),
+        (long_break + LONG_BREAK + WORK / 2, 0, WORK_SAND),
     ];
 
     for (at, done, colour) in checks {
@@ -465,7 +465,7 @@ fn the_long_break_drains_over_its_own_length() {
     let buffer = render(&scene, AREA, AREA);
 
     // Then:
-    let (top, bottom) = sand_in(&buffer, AREA, PALETTE.foam);
+    let (top, bottom) = sand_in(&buffer, AREA, BREAK_SAND);
     let share = top as f32 / (top + bottom) as f32;
     let left = 1.0 - into.as_secs_f32() / LONG_BREAK.as_secs_f32();
     assert!(
@@ -479,8 +479,8 @@ fn the_long_break_drains_over_its_own_length() {
 /// long break three.
 /// When: the clock runs three seconds past the end of the first round, and
 /// three seconds past the end of the first break.
-/// Then: the first time the sand is foam, and the second time it is gold
-/// again, with the first round marked both times.
+/// Then: the first time the sand is in the break colour, and the second
+/// time it is in the work colour again, with the first round marked both times.
 ///
 /// Why it matters: lengths set in the file that the glass ignores are a
 /// setting the user saved for nothing.
@@ -497,8 +497,8 @@ fn the_lengths_set_how_long_each_phase_runs() {
     let past = Duration::from_secs(3);
 
     for (at, colour, done) in [
-        (lengths.work + past, PALETTE.foam, 1),
-        (lengths.work + lengths.r#break + past, PALETTE.gold, 1),
+        (lengths.work + past, BREAK_SAND, 1),
+        (lengths.work + lengths.r#break + past, WORK_SAND, 1),
     ] {
         // When:
         run(&mut scene, &now, at, AREA);
@@ -544,4 +544,154 @@ fn the_time_left_names_the_phase_and_the_round() {
         // Then:
         assert_eq!(scene.time_left().as_deref(), Some(expected), "at {at:?}");
     }
+}
+
+fn colour_of(buffer: &Buffer, area: Rect, glyph: &str) -> Color {
+    area.positions()
+        .find(|position| buffer[*position].symbol() == glyph)
+        .map(|position| buffer[position].fg)
+        .unwrap_or_else(|| panic!("no {glyph} drawn"))
+}
+
+/// The colour of the glass's walls and of its sand. On each row between
+/// the two posts the outermost braille cells are wall, and any lit braille
+/// cell between them holds sand.
+fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
+    let braille = |position: (u16, u16)| {
+        buffer[position]
+            .symbol()
+            .chars()
+            .next()
+            .is_some_and(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
+    };
+    let (mut glass, mut sand) = (None, None);
+    for row in area.top()..area.bottom() {
+        let posts: Vec<u16> = (area.left()..area.right())
+            .filter(|&column| buffer[(column, row)].symbol() == "\u{2503}")
+            .collect();
+        let [left, right] = posts[..] else {
+            continue;
+        };
+        let inside: Vec<u16> = (left + 1..right)
+            .filter(|&column| braille((column, row)))
+            .collect();
+        let (Some(first), Some(last)) = (inside.first(), inside.last()) else {
+            continue;
+        };
+        glass.get_or_insert(buffer[(*first, row)].fg);
+        if let Some(column) = inside
+            .iter()
+            .find(|column| *column != first && *column != last)
+        {
+            sand.get_or_insert(buffer[(*column, row)].fg);
+        }
+    }
+    (glass.expect("no glass"), sand.expect("no sand"))
+}
+
+/// Each part of the hourglass reads in its own colour, and the glass is not
+/// a grey.
+/// Given: a glass at a hundred by thirty, halfway through the first work
+/// round, then halfway through the first break.
+/// When: it renders.
+/// Then: the walls are in none of the theme's greys (base, surface,
+/// overlay, muted or subtle). The frame, the walls, the work sand and the
+/// break sand take four colours that differ from each other.
+///
+/// Why it matters: grey walls fade into the background, so the glass reads
+/// as a few loose dots, and two parts in one colour run together.
+#[test]
+fn each_part_reads_in_its_own_colour_and_the_glass_is_not_grey() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    run(&mut scene, &now, WORK / 2, AREA);
+
+    // When:
+    let work = render(&scene, AREA, AREA);
+    run(&mut scene, &now, WORK + BREAK / 2, AREA);
+    let rest = render(&scene, AREA, AREA);
+
+    // Then:
+    let frame = colour_of(&work, AREA, "\u{2503}");
+    let (glass, work_sand) = glass_and_sand(&work, AREA);
+    let (_, break_sand) = glass_and_sand(&rest, AREA);
+    let greys = [
+        PALETTE.base,
+        PALETTE.surface,
+        PALETTE.overlay,
+        PALETTE.muted,
+        PALETTE.subtle,
+    ];
+    assert!(!greys.contains(&glass), "the glass is a grey: {glass:?}");
+    let parts = [frame, glass, work_sand, break_sand];
+    for (index, part) in parts.iter().enumerate() {
+        assert!(
+            !parts[index + 1..].contains(part),
+            "two parts share a colour: frame, glass, work sand, break sand {parts:?}"
+        );
+    }
+}
+
+fn text_of(buffer: &Buffer, area: Rect, row: u16) -> String {
+    (area.left()..area.right())
+        .map(|column| buffer[(column, area.y + row)].symbol())
+        .collect()
+}
+
+/// A hint under the glass names the keys.
+/// Given: a glass at a hundred by thirty, then the same glass on a pane
+/// thirty cells wide.
+/// When: each ticks and renders.
+/// Then: on the wide pane a row under the frame's lower plate reads "r
+/// start the cycle again" and "+ time left", centred under the frame to
+/// within two cells. The narrow pane has no room for the hint, so no row
+/// holds it, and the frame still stands.
+///
+/// Why it matters: `r` starts the cycle again and `+` shows the time left
+/// on the hourglass, and with nothing on screen to say so a user cannot
+/// find either.
+#[test]
+fn a_hint_under_the_glass_names_the_keys() {
+    // Given:
+    let (mut scene, _) = hourglass(7);
+    let narrow = Rect::new(0, 0, 30, 30);
+
+    // When:
+    scene.tick(AREA);
+    let wide = render(&scene, AREA, AREA);
+
+    // Then:
+    let plate = (0..AREA.height)
+        .rev()
+        .find(|&row| text_of(&wide, AREA, row).contains('\u{2580}'))
+        .expect("no lower plate");
+    let frame: Vec<u16> = (0..AREA.width)
+        .filter(|&column| wide[(column, plate)].symbol() == "\u{2580}")
+        .collect();
+    let middle = f32::from(frame[0] + frame[frame.len() - 1]) / 2.0;
+    let hint = (plate + 1..AREA.height)
+        .find(|&row| text_of(&wide, AREA, row).contains("time left"))
+        .unwrap_or_else(|| panic!("no hint under the plate at row {plate}"));
+    let text = text_of(&wide, AREA, hint);
+    assert!(
+        text.contains("r start the cycle again") && text.contains("+ time left"),
+        "the hint reads {text:?}"
+    );
+    let first = text.find('r').unwrap() as f32;
+    let last = (text.trim_end().chars().count() - 1) as f32;
+    assert!(
+        ((first + last) / 2.0 - middle).abs() <= 2.0,
+        "the hint spans {first} to {last}, the frame is centred on {middle}"
+    );
+
+    // When:
+    scene.tick(narrow);
+    let small = render(&scene, narrow, narrow);
+
+    // Then:
+    assert!(
+        (0..narrow.height).all(|row| !text_of(&small, narrow, row).contains("time")),
+        "a hint on a pane too narrow for it"
+    );
+    assert_eq!(colour_of(&small, narrow, "\u{2503}"), FRAME);
 }
