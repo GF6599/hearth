@@ -21,9 +21,18 @@ pub const READING: &str = "reading the history";
 const ROW_GAP: i64 = 12;
 /// The most dots from one lane to the next. A history with many lanes at
 /// once packs them closer, down to one cell.
-const LANE_GAP: i64 = 8;
-/// The width of a lane of water, in dots.
-const WATER: i64 = 4;
+const LANE_GAP: i64 = 12;
+/// The widest a lane of water grows, in dots, and the dots it leaves
+/// clear of the next lane, so lanes packed close still read as two.
+const WATER: i64 = 8;
+const LANE_CLEAR: i64 = 4;
+/// The share of the pane's dots across that the lanes may take, and the
+/// share of its cells the water takes at the least.
+const LANE_ROOM: (i64, i64) = (3, 5);
+const RIVER: (i64, i64) = (3, 5);
+/// The cells of water between the outer lanes and each bank, at the
+/// least.
+const SHORE: i64 = 3;
 /// The cells from the rightmost lane at the subject's row to the subject.
 const SUBJECT_GAP: i64 = 2;
 /// The dot rows the river moves down in a tick: a commit about every one
@@ -42,6 +51,15 @@ const FOAM_PERIOD: i64 = 20;
 const FOAM: i64 = 2;
 /// How many lanes have their own phase of foam before the phases repeat.
 const PHASES: usize = 16;
+/// The dot rows from one row of ripples to the next, and the share of the
+/// places on such a row that hold a ripple, one in this many. A ripple is
+/// two to four dots long, so it stays thinner than a lane's full cells.
+const RIPPLE_ROWS: i64 = 4;
+const RIPPLE_ODDS: u64 = 3;
+/// How fast each bank wanders, in radians a dot row, and how far, in
+/// cells. Each bank has its own phase, so the river widens and narrows.
+const MEANDER: f64 = 0.045;
+const MEANDER_REACH: f64 = 1.4;
 
 /// What a cell shows when more than one thing falls in it, from the
 /// lowest. One braille cell holds one colour, so a stone covers the water
@@ -49,9 +67,17 @@ const PHASES: usize = 16;
 /// foam leaves no gap in its lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
+    Bank,
+    Ripple,
     Water,
     Foam,
     Stone,
+}
+
+impl Layer {
+    fn is_liquid(self) -> bool {
+        matches!(self, Layer::Water | Layer::Foam)
+    }
 }
 
 /// One commit in the river: the lane its stone is in, and the lines from
@@ -78,6 +104,10 @@ pub struct River {
     ticks: u64,
     /// Where the foam of each lane starts, so the lanes do not foam in step.
     phases: Vec<i64>,
+    /// Seeds the ripples and the sand.
+    salt: u64,
+    /// Where the wander of each bank starts, as an angle.
+    banks: [f64; 2],
 }
 
 impl River {
@@ -107,6 +137,11 @@ impl River {
             widest: 0,
             ticks: 0,
             phases,
+            salt: rng.random(),
+            banks: [
+                rng.random_range(0.0..std::f64::consts::TAU),
+                rng.random_range(0.0..std::f64::consts::TAU),
+            ],
         }
     }
 
@@ -148,6 +183,18 @@ impl River {
             .map(|line| line.0)
             .chain(above.iter().map(|line| line.1))
             .fold(self.rows[index].lane, usize::max)
+    }
+
+    /// A number from `place` that looks random and is the same every frame,
+    /// so the ripples and the sand stay put on the water and the shore.
+    fn noise(&self, place: (i64, i64)) -> u64 {
+        let mut z = self
+            .salt
+            .wrapping_add((place.0 as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+            .wrapping_add((place.1 as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f));
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
     }
 
     fn draw_notice(&self, text: &str, area: Rect, buf: &mut Buffer) {
@@ -278,12 +325,33 @@ impl Scene for River {
         }
         let (across, down) = ((columns * CELL_WIDTH) as i64, (lines * CELL_HEIGHT) as i64);
         let middle = (lines / 2 * CELL_HEIGHT) as i64 + 2;
-        let widest = self.widest.max(1) as i64;
-        let gap = (across / 2 / widest).min(LANE_GAP) & !1;
-        let gap = gap.max(2);
-        let left = ((across / 4 - widest * gap / 2) & !1).max(2);
-        let lane_x = |lane: usize| left + lane as i64 * gap;
         let top = self.focus() - middle;
+
+        let widest = self.widest.max(1) as i64;
+        let room = across * LANE_ROOM.0 / LANE_ROOM.1;
+        let gap = ((room / widest).min(LANE_GAP) & !1).max(2);
+        let water = (gap - LANE_CLEAR).clamp(2, WATER);
+        let span = (widest - 1) * gap + water;
+        let left = ((across - span) / 2) & !1;
+        let lane_x = |lane: usize| left + lane as i64 * gap;
+
+        // The water's first and last column on each row. Wide at the
+        // least, so one lane still reads as a river, and never so wide that
+        // a bank leaves the pane.
+        let centre = columns as i64 / 2;
+        let half = (columns as i64 * RIVER.0 / RIVER.1 / 2)
+            .max(span / CELL_WIDTH as i64 / 2 + SHORE)
+            .min(columns as i64 / 2 - 3)
+            .max(0);
+        let shores: Vec<(i64, i64)> = (0..lines as i64)
+            .map(|line| {
+                let wander = |side: usize| {
+                    let at = (top + line * CELL_HEIGHT as i64) as f64 * MEANDER + self.banks[side];
+                    (at.sin() * MEANDER_REACH).round() as i64
+                };
+                (centre - half + wander(0), centre + half + wander(1))
+            })
+            .collect();
 
         let mut cells: Vec<Option<(Layer, u32, Color)>> = vec![None; columns * lines];
         let mut plot = |x: i64, y: i64, layer: Layer, colour: Color| {
@@ -295,7 +363,7 @@ impl Scene for River {
             let bit = braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
             match &mut cells[index] {
                 Some(cell) if cell.0 == layer => cell.1 |= bit,
-                Some(cell) if cell.0 <= Layer::Foam && layer <= Layer::Foam => {
+                Some(cell) if cell.0.is_liquid() && layer.is_liquid() => {
                     cell.1 |= bit;
                     if layer > cell.0 {
                         (cell.0, cell.2) = (layer, colour);
@@ -306,10 +374,56 @@ impl Scene for River {
             }
         };
 
+        // The shore: a line of sand beside the water and loose grains
+        // beyond it, both fixed to the ground so they flow with the river.
+        for (line, &(first, last)) in shores.iter().enumerate() {
+            for y in line as i64 * CELL_HEIGHT as i64..(line as i64 + 1) * CELL_HEIGHT as i64 {
+                let ground = top + y;
+                for (edge, outward) in [
+                    (first * CELL_WIDTH as i64 - 1, -1),
+                    (last * CELL_WIDTH as i64 + CELL_WIDTH as i64, 1),
+                ] {
+                    plot(edge, y, Layer::Bank, self.palette.gold);
+                    for step in 1..6 {
+                        let x = edge + outward * step;
+                        if self
+                            .noise((x * outward, ground))
+                            .is_multiple_of(step as u64 + 1)
+                        {
+                            plot(x, y, Layer::Bank, self.palette.gold);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Ripples on the open water, short dashes across the flow that move
+        // down with the foam, faster than the banks.
+        let flow = (self.ticks as f64 * FLOW) as i64;
+        for y in 0..down {
+            let water = top + y - flow;
+            if water.rem_euclid(RIPPLE_ROWS) != 0 {
+                continue;
+            }
+            let (first, last) = shores[(y / CELL_HEIGHT as i64) as usize];
+            let (from, to) = (first * CELL_WIDTH as i64, (last + 1) * CELL_WIDTH as i64);
+            for place in (from / 6)..=(to / 6) {
+                let noise = self.noise((place, water.div_euclid(RIPPLE_ROWS)));
+                if !noise.is_multiple_of(RIPPLE_ODDS) {
+                    continue;
+                }
+                let start = place * 6 + (noise >> 8) as i64 % 2;
+                for x in start..start + 2 + (noise >> 16) as i64 % 3 {
+                    if (from..to).contains(&x) {
+                        plot(x, y, Layer::Ripple, self.palette.pine);
+                    }
+                }
+            }
+        }
+
         let first = ((top - ROW_GAP) / ROW_GAP).max(0) as usize;
         let last = ((top + down) / ROW_GAP + 1).max(0) as usize;
         let shown = first..=last.min(self.rows.len() - 1);
-        let flow = (self.ticks as f64 * FLOW) as i64;
         let mut wet = |x: i64, y: i64, lane: usize| {
             let phase = self.phases[lane % PHASES];
             let (layer, colour) = if (top + y - flow + phase).rem_euclid(FOAM_PERIOD) < FOAM {
@@ -317,7 +431,7 @@ impl Scene for River {
             } else {
                 (Layer::Water, self.palette.pine)
             };
-            for across in x..x + WATER {
+            for across in x..x + water {
                 plot(across, y, layer, colour);
             }
         };
@@ -347,8 +461,8 @@ impl Scene for River {
                 self.palette.subtle
             };
             for dy in -2..=1 {
-                for dx in -2..=WATER + 1 {
-                    let corner = (dx == -2 || dx == WATER + 1) && (dy == -2 || dy == 1);
+                for dx in -2..=water + 1 {
+                    let corner = (dx == -2 || dx == water + 1) && (dy == -2 || dy == 1);
                     if !corner {
                         plot(x + dx, y + dy, Layer::Stone, colour);
                     }
@@ -357,13 +471,15 @@ impl Scene for River {
         }
 
         for (index, cell) in cells.into_iter().enumerate() {
-            let Some((_, dots, colour)) = cell else {
-                continue;
-            };
-            let (column, line) = ((index % columns) as u16, (index / columns) as u16);
-            buf[Position::new(area.x + column, area.y + line)]
-                .set_char(braille::glyph(dots))
-                .set_fg(colour);
+            let (column, line) = (index % columns, index / columns);
+            let (first, last) = shores[line];
+            let position = Position::new(area.x + column as u16, area.y + line as u16);
+            if (first..=last).contains(&(column as i64)) {
+                buf[position].set_bg(self.palette.overlay);
+            }
+            if let Some((_, dots, colour)) = cell {
+                buf[position].set_char(braille::glyph(dots)).set_fg(colour);
+            }
         }
 
         let Some(at_middle) = self.at_middle() else {
@@ -379,7 +495,7 @@ impl Scene for River {
         if line >= area.height {
             return;
         }
-        let column = (lane_x(self.rightmost(at_middle)) + WATER) / CELL_WIDTH as i64 + SUBJECT_GAP;
+        let column = (lane_x(self.rightmost(at_middle)) + water) / CELL_WIDTH as i64 + SUBJECT_GAP;
         let Ok(column) = u16::try_from(column) else {
             return;
         };

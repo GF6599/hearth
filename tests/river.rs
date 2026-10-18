@@ -140,6 +140,18 @@ fn cells(buffer: &Buffer, area: Rect, colours: &[Color]) -> Cells {
         .collect()
 }
 
+/// The cells of the lanes: pine or foam with five dots or more. A ripple on
+/// the open water is pine too, but it holds four dots at the most.
+fn lanes(buffer: &Buffer, area: Rect) -> Cells {
+    cells(buffer, area, &[PALETTE.pine, PALETTE.foam])
+        .into_iter()
+        .filter(|position| {
+            let glyph = buffer[*position].symbol().chars().next().unwrap_or(' ');
+            (glyph as u32).wrapping_sub(0x2800).count_ones() >= 5
+        })
+        .collect()
+}
+
 /// The groups of `cells` that touch across a side, each as its cells.
 fn groups(mut left: Cells) -> Vec<Cells> {
     let mut found = Vec::new();
@@ -295,7 +307,7 @@ fn a_branch_that_splits_and_merges_draws_two_lanes_that_meet() {
         *stone_rows.iter().min().unwrap(),
         *stone_rows.iter().max().unwrap(),
     );
-    let water = cells(&buffer, AREA, &[PALETTE.pine, PALETTE.foam]);
+    let water = lanes(&buffer, AREA);
     assert!(
         water.iter().all(|(_, y)| (top..=bottom).contains(y)),
         "water outside rows {top} to {bottom}: {:#?}",
@@ -496,15 +508,15 @@ fn river_is_a_scene_by_name() {
     assert!(rows.iter().any(|row| row.contains(NOTICE)), "{rows:#?}");
 }
 
-/// The subject at the pane's middle row, if one shows there: the text after
-/// the last glyph of the river on that row.
+/// The subject at the pane's middle row, if one shows there: the piece of
+/// the row between braille glyphs that holds a letter or a digit, because
+/// water and sand lie on both sides of it.
 fn middle_subject(buffer: &Buffer, area: Rect) -> Option<String> {
     let row = &rows(buffer, area)[usize::from(area.height / 2)];
-    let text = row
-        .rsplit(|c: char| ('\u{2800}'..='\u{28ff}').contains(&c))
-        .next()?
-        .trim();
-    (!text.is_empty()).then(|| text.to_string())
+    row.split(|c: char| ('\u{2800}'..='\u{28ff}').contains(&c))
+        .map(str::trim)
+        .find(|piece| piece.chars().any(|c| c.is_ascii_alphanumeric()))
+        .map(str::to_string)
 }
 
 /// Each subject that shows at the middle row as the river ticks, once for
