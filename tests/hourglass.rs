@@ -20,10 +20,10 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
-const GLASS: Color = PALETTE.foam;
-const FRAME: Color = PALETTE.iris;
+const GLASS: Color = PALETTE.subtle;
+const FRAME: Color = PALETTE.pine;
 const WORK_SAND: Color = PALETTE.gold;
-const BREAK_SAND: Color = PALETTE.rose;
+const BREAK_SAND: Color = PALETTE.foam;
 const DONE: Color = PALETTE.iris;
 const WORK: Duration = Lengths::DEFAULT.work;
 const BREAK: Duration = Lengths::DEFAULT.r#break;
@@ -600,18 +600,18 @@ fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
 }
 
 /// Each part of the hourglass reads in its own colour, and the glass is not
-/// a grey.
+/// a dim grey.
 /// Given: a glass at a hundred by thirty, halfway through the first work
 /// round, then halfway through the first break.
 /// When: it renders.
-/// Then: the walls are in none of the theme's greys (base, surface,
-/// overlay, muted or subtle). The frame, the walls, the work sand and the
+/// Then: the walls are in none of the theme's dim greys (base, surface,
+/// overlay or muted). The frame, the walls, the work sand and the
 /// break sand take four colours that differ from each other.
 ///
-/// Why it matters: grey walls fade into the background, so the glass reads
+/// Why it matters: dim grey walls fade into the background, so the glass reads
 /// as a few loose dots, and two parts in one colour run together.
 #[test]
-fn each_part_reads_in_its_own_colour_and_the_glass_is_not_grey() {
+fn each_part_reads_in_its_own_colour_and_the_glass_is_not_dim() {
     // Given:
     let (mut scene, now) = hourglass(7);
     run(&mut scene, &now, WORK / 2, AREA);
@@ -630,9 +630,11 @@ fn each_part_reads_in_its_own_colour_and_the_glass_is_not_grey() {
         PALETTE.surface,
         PALETTE.overlay,
         PALETTE.muted,
-        PALETTE.subtle,
     ];
-    assert!(!greys.contains(&glass), "the glass is a grey: {glass:?}");
+    assert!(
+        !greys.contains(&glass),
+        "the glass is a dim grey: {glass:?}"
+    );
     let parts = [frame, glass, work_sand, break_sand];
     for (index, part) in parts.iter().enumerate() {
         assert!(
