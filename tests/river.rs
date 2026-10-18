@@ -361,6 +361,38 @@ fn a_subject_with_control_characters_shows_without_them() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// Given: a repository whose only commit's subject is in Chinese, two
+/// cells wide a glyph.
+/// When: its history is read, and the river renders it with that commit
+/// at the middle row.
+/// Then: the subject keeps its wide glyphs, and the pane shows them.
+///
+/// Why it matters: a history written in a language with wide glyphs would
+/// show only its spaces and Latin words.
+#[test]
+fn a_subject_in_wide_glyphs_keeps_them() {
+    // Given:
+    let repo = scratch("wide");
+    git(&repo, &["init", "-q", "-b", "main"]);
+    commit(&repo, "a.txt", "修复登录 bug");
+
+    // When:
+    let history = History::read(&repo);
+    let mut scene = river(&repo);
+    scene.tick(AREA);
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    assert_eq!(history.commits()[0].subject, "修复登录 bug");
+    let rows = rows(&buffer, AREA);
+    assert!(
+        rows.iter()
+            .any(|row| row.contains('修') && row.contains('录')),
+        "{rows:#?}"
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// Given: a directory that is not a git repository.
 /// When: its history is read, and the river renders it.
 /// Then: the history is empty, and the pane shows the notice.
