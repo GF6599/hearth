@@ -752,3 +752,45 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
         "{passed} cars ahead came near and dropped behind"
     );
 }
+
+/// The land beside the road holds still while the car drives.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over the track, and each pixel beside the road that is
+/// grass or night in two frames in a row is compared.
+/// Then: under one such pixel in a hundred changes its colour from a frame
+/// to the next.
+///
+/// Why it matters: bands of grass that flash past across the whole width
+/// make the drive hard to watch, and the edge stripes, the dashes and the
+/// posts already give the speed.
+#[test]
+fn the_land_beside_the_road_holds_still() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let land = |colour: Color| colour == PALETTE.pine || colour == PALETTE.base;
+    scene.tick(AREA);
+    let mut before = pixels(&render(&scene, AREA, AREA), AREA);
+    let (mut changed, mut compared) = (0_usize, 0_usize);
+
+    for _ in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        let after = pixels(&render(&scene, AREA, AREA), AREA);
+        for &(y, left, right) in &road(&after) {
+            for x in (0..left).chain(right + 1..after[y].len()) {
+                let (was, now) = (before[y][x], after[y][x]);
+                if land(was) && land(now) {
+                    compared += 1;
+                    changed += usize::from(was != now);
+                }
+            }
+        }
+        before = after;
+    }
+
+    // Then:
+    assert!(
+        changed * 100 < compared,
+        "{changed} of {compared} land pixels changed colour"
+    );
+}
