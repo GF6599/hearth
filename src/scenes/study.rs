@@ -80,11 +80,16 @@ const RAIN: Area = (4, 3, 26, 19);
 const STEAM: Area = (63, 17, 8, 9);
 const LAMP: Area = (32, 15, 7, 16);
 const SWING: Area = (25, 22, 7, 7);
-/// The column of the lamp's bulb, the rows of wall its light falls on,
-/// from under the shade to the desk, and the row of the desk it lights.
+/// The column of the lamp's bulb, the rows of wall under the shade its
+/// light falls on, and the row of the desk it lights.
 const BULB: usize = 35;
-const LIT_WALL: (usize, usize) = (19, 30);
+const LIT_WALL: (usize, usize) = (19, 22);
 const LIT_DESK: usize = 30;
+/// The light on the wall under the shade, a row of it for each row down:
+/// the pixels from the bulb that take gold, those that take rose, and how
+/// many in turn are lit, so the light thins out as it falls. The pole and
+/// the base stay in front of it.
+const HALO: [(usize, usize, usize); 3] = [(1, 3, 2), (0, 2, 2), (0, 3, 4)];
 /// Each layer that moves, by name, and the area it draws in. No layer
 /// draws outside its own area, so the rest of the room stays still.
 pub const LAYERS: [(&str, Area); 5] = [
@@ -363,14 +368,12 @@ impl Study {
                         b'G' => *pixel = palette.rose,
                         _ => {}
                     }
-                } else if (LIT_WALL.0..LIT_WALL.1).contains(&y) {
-                    let reach = 1 + (y - LIT_WALL.0) / 3;
-                    match letter {
-                        b'w' if off < reach || (off == reach && (x + y).is_multiple_of(2)) => {
-                            *pixel = palette.muted;
-                        }
-                        b'm' if off <= reach => *pixel = palette.subtle,
-                        _ => {}
+                } else if (LIT_WALL.0..LIT_WALL.1).contains(&y) && letter == b'w' {
+                    let (gold, rose, every) = HALO[y - LIT_WALL.0];
+                    if off <= gold {
+                        *pixel = palette.gold;
+                    } else if off <= rose && (x + y).is_multiple_of(every) {
+                        *pixel = palette.rose;
                     }
                 } else if y == LIT_DESK && letter == b'd' && off <= 3 {
                     *pixel = if off <= 2 { palette.gold } else { palette.rose };
