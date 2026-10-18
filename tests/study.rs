@@ -350,9 +350,10 @@ fn window_in_room() -> (Vec<Vec<Color>>, (isize, isize)) {
 /// window part of the picture, and on a hundred by thirty.
 /// When: both render.
 /// Then: the small pane shows the window part, the window, the cat and the
-/// sill, the same as it is in the room. The window's frame, in muted,
-/// lies whole inside the pane with a pixel or more to spare on every side,
-/// and it has as much room on its left as on its right, to a pixel.
+/// sill, the same as it is in the room. The window's frame, the muted
+/// pixels of the window part, lies whole inside the part with a pixel or
+/// more to spare on every side, and it has as much room on its left as on
+/// its right, to a pixel.
 ///
 /// Why it matters: a room cut to a small pane is a strip of desk that
 /// reads as nothing, and a window cut at its frame reads as a fault.
@@ -379,28 +380,23 @@ fn below_the_least_size_the_whole_window_shows() {
             );
         }
     }
-    let frame: Vec<(usize, usize)> = smaller
-        .iter()
-        .enumerate()
-        .flat_map(|(y, row)| {
-            row.iter()
-                .enumerate()
-                .filter(|(_, colour)| **colour == PALETTE.muted)
-                .map(move |(x, _)| (x, y))
+    let frame: Vec<(usize, usize)> = (0..WINDOW.3)
+        .flat_map(|y| (0..WINDOW.2).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            smaller[(top + y as isize) as usize][(left + x as isize) as usize] == PALETTE.muted
         })
         .collect();
-    let (wide, tall) = (smaller[0].len(), smaller.len());
     assert!(!frame.is_empty(), "no frame");
     for &(x, y) in &frame {
         assert!(
-            x > 0 && y > 0 && x + 1 < wide && y + 1 < tall,
-            "the frame reaches the pane's edge at {:?}",
+            x > 0 && y > 0 && x + 1 < WINDOW.2 && y + 1 < WINDOW.3,
+            "the frame reaches the window part's edge at {:?}",
             (x, y)
         );
     }
     let first = frame.iter().map(|(x, _)| *x).min().unwrap();
     let last = frame.iter().map(|(x, _)| *x).max().unwrap();
-    let right = wide - 1 - last;
+    let right = WINDOW.2 - 1 - last;
     assert!(
         first.abs_diff(right) <= 1,
         "the frame has {first} pixels on its left and {right} on its right"
@@ -483,7 +479,10 @@ fn the_window_shows_a_night_sky() {
 /// When: it ticks over about two minutes.
 /// Then: in the first frame the gold of the lamp reaches ten rows or more
 /// below the top of its shade, and in some frame of the run the lower half
-/// of the lamp's area holds less gold than in the first.
+/// of the lamp's area holds less gold than in the first. The pixels of the
+/// lamp's area that differ between the first frame and the dimmest fill
+/// every row from the shade to the desk, twelve rows or more, so the light
+/// lies on the wall as well as on the desk.
 ///
 /// Why it matters: a lamp that throws no light reads as a picture of a
 /// lamp, and a glow that stays bright while the bulb dims reads as a
@@ -511,17 +510,28 @@ fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
     let bright = gold(&first, lower).len();
 
     // When:
-    let mut dimmest = bright;
+    let (mut dimmest, mut dim) = (bright, first.clone());
     for _ in 0..RUN {
         scene.tick(FITTED);
         let rows = view(&scene, FITTED.width, FITTED.height);
-        dimmest = dimmest.min(gold(&rows, lower).len());
+        let count = gold(&rows, lower).len();
+        if count < dimmest {
+            (dimmest, dim) = (count, rows);
+        }
     }
 
     // Then:
     assert!(
         dimmest < bright,
         "the glow held {bright} gold pixels in every frame"
+    );
+    let lit: Vec<usize> = (top..top + tall)
+        .filter(|&y| (left..left + wide).any(|x| first[y][x] != dim[y][x]))
+        .collect();
+    let (from, to) = (lit[0], lit[lit.len() - 1]);
+    assert!(
+        lit.len() == to - from + 1 && to - from >= 12,
+        "the light changes rows {lit:?}"
     );
 }
 

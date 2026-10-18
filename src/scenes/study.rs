@@ -12,22 +12,23 @@ use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
 /// The room, a letter to a pixel. Each letter is a role of the theme:
-/// `w` wall, `f` window frame, `s` night sky, `b` town, `y` and `r` lit
-/// town windows, `T` moon, pages and the lamp's bulb, `l` sill, `c` cat,
-/// `d` desk top, `n` desk front, `m` metal and the monitor, `k` screen,
-/// and `L`, `I`, `G`, `P`, `R`, `F` the colours of books, lamp and mug.
+/// `w` wall, `f` window frame, `s` night sky, `v` stars, `b` town, `y` and
+/// `r` lit town windows, `T` moon, pages and the lamp's bulb, `l` sill, `c`
+/// cat, `d` desk top, `n` desk front, `m` metal and the monitor, `k`
+/// screen, and `L`, `I`, `G`, `P`, `R`, `F` the colours of books, lamp and
+/// mug.
 const ART: [&str; 40] = [
     "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
     "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
     "wwwffffffffffffffffffffffffffffwwwwwwwwwwwwwwwLwGPwFwwwwwwwwwwwwwwwwwwww",
     "wwwfssssssssssssffssssssssssssfwwwwwwwwwwwwwwwLIGPRFIwwwwwRwwwwwwwwwwwww",
-    "wwwfsssTTsssssssffssssssssssssfwwwwwwwwwwwwwwwLIGPRFIwwwwRRwwwwwwwwwwwww",
-    "wwwfssTTTTssssssffssssssssssssfwwwwwwwwwwwwdddddddddddddddddddddwwwwwwww",
+    "wwwfsssTTsssvsssffsssssssssvssfwwwwwwwwwwwwwwwLIGPRFIwwwwRRwwwwwwwwwwwww",
+    "wwwfssTTTTssssssffssvsssssssssfwwwwwwwwwwwwdddddddddddddddddddddwwwwwwww",
     "wwwfssTTTTssssssffssssssssssssfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwfsssTTsssssssffssssssssssssfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwfssssssssssssffssssssssssssfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwfssssssssssssffssssssssssssfwwwwwwwwwwmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww",
-    "wwwfssssssssssssffssssssssssssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
+    "wwwfsssTTsssssssffsssssssssssvfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwfssssssssssssffssssssvsssssfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwfssssssssssvsffssssssssssssfwwwwwwwwwwmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww",
+    "wwwfssssssvsssssffssssvsssssssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
     "wwwfssssssssssssffbbbbssssssssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
     "wwwffffffffffffffffffffffffffffwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
     "wwwfsssbbbbsssssffbbbcsssbcbssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
@@ -61,9 +62,10 @@ const ART: [&str; 40] = [
 
 /// The picture's width and height, in pixels.
 pub const PICTURE: (usize, usize) = (72, 40);
-/// The part of the picture that a pane under `LEAST` shows, from its top
-/// left: the window, the cat and the sill.
-pub const WINDOW: (usize, usize) = (32, 26);
+/// The part of the picture that a pane under `LEAST` shows: the window,
+/// the cat and the sill, with a pixel of wall on each side of the frame,
+/// so the window is in its middle.
+pub const WINDOW: Area = (2, 1, 30, 24);
 /// The fewest cells across and down at which the whole room shows. A pane
 /// cut further shows a strip of desk that reads as nothing.
 pub const LEAST: (u16, u16) = (48, 16);
@@ -71,12 +73,18 @@ pub const LEAST: (u16, u16) = (48, 16);
 pub type Area = (usize, usize, usize, usize);
 
 const SCREEN: Area = (42, 10, 20, 16);
-/// The glass the rain runs on, the steam over the mug, the lamp's shade
-/// and bulb, and the room the cat's tail swings in, the same way.
+/// The glass the rain runs on, the steam over the mug, the lamp with the
+/// light it throws on the wall and the desk, and the room the cat's tail
+/// swings in, the same way.
 const RAIN: Area = (4, 3, 26, 19);
 const STEAM: Area = (63, 17, 8, 9);
-const LAMP: Area = (32, 15, 7, 4);
+const LAMP: Area = (32, 15, 7, 16);
 const SWING: Area = (25, 22, 7, 7);
+/// The column of the lamp's bulb, the rows of wall its light falls on,
+/// from under the shade to the desk, and the row of the desk it lights.
+const BULB: usize = 35;
+const LIT_WALL: (usize, usize) = (19, 30);
+const LIT_DESK: usize = 30;
 /// Each layer that moves, by name, and the area it draws in. No layer
 /// draws outside its own area, so the rest of the room stays still.
 pub const LAYERS: [(&str, Area); 5] = [
@@ -89,7 +97,7 @@ pub const LAYERS: [(&str, Area); 5] = [
 const SYNTAX: [fn(&Palette) -> Color; 4] = [|p| p.iris, |p| p.foam, |p| p.gold, |p| p.subtle];
 /// The letters of the picture outside the glass. The rain runs over these
 /// only, because the frame and the cat are inside the room.
-const OUTSIDE: &[u8] = b"sbyrT";
+const OUTSIDE: &[u8] = b"sbyrTv";
 const DROPS: usize = 14;
 /// The ticks from one pixel typed on the screen to the next, half a
 /// second. The cursor blinks at twice this.
@@ -253,8 +261,10 @@ impl Study {
         let palette = self.palette;
         match letter {
             b'f' | b'm' => palette.muted,
-            b's' | b'P' => palette.pine,
-            b'b' | b'k' => palette.base,
+            b'P' => palette.pine,
+            b's' | b'k' => palette.base,
+            b'b' => palette.overlay,
+            b'v' => palette.subtle,
             b'y' | b'G' => palette.gold,
             b'r' | b'R' => palette.rose,
             b'T' | b'c' => palette.text,
@@ -340,16 +350,30 @@ impl Study {
     }
 
     fn draw_lamp(&self, rows: &mut [Vec<Color>]) {
-        if self.flicker.is_multiple_of(2) {
-            return;
-        }
         let (left, top, wide, tall) = LAMP;
-        for (row, line) in rows.iter_mut().zip(ART).skip(top).take(tall) {
-            for (pixel, letter) in row.iter_mut().zip(line.bytes()).skip(left).take(wide) {
-                match letter {
-                    b'T' => *pixel = self.palette.gold,
-                    b'G' => *pixel = self.palette.rose,
-                    _ => {}
+        let dim = !self.flicker.is_multiple_of(2);
+        let palette = self.palette;
+        for (y, (row, line)) in rows.iter_mut().zip(ART).enumerate().skip(top).take(tall) {
+            let cells = row.iter_mut().zip(line.bytes()).enumerate();
+            for (x, (pixel, letter)) in cells.skip(left).take(wide) {
+                let off = x.abs_diff(BULB);
+                if dim {
+                    match letter {
+                        b'T' => *pixel = palette.gold,
+                        b'G' => *pixel = palette.rose,
+                        _ => {}
+                    }
+                } else if (LIT_WALL.0..LIT_WALL.1).contains(&y) {
+                    let reach = 1 + (y - LIT_WALL.0) / 3;
+                    match letter {
+                        b'w' if off < reach || (off == reach && (x + y).is_multiple_of(2)) => {
+                            *pixel = palette.muted;
+                        }
+                        b'm' if off <= reach => *pixel = palette.subtle,
+                        _ => {}
+                    }
+                } else if y == LIT_DESK && letter == b'd' && off <= 3 {
+                    *pixel = if off <= 2 { palette.gold } else { palette.rose };
                 }
             }
         }
@@ -420,19 +444,20 @@ impl Scene for Study {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let pixels = self.pixels();
-        let (wide, tall) = if area.width >= LEAST.0 && area.height >= LEAST.1 {
-            PICTURE
+        let (from_x, from_y, wide, tall) = if area.width >= LEAST.0 && area.height >= LEAST.1 {
+            (0, 0, PICTURE.0, PICTURE.1)
         } else {
             WINDOW
         };
-        // Half the room left over, less than none where the view is cut. A
-        // pixel past the view's edge takes the edge's colour, so the wall,
-        // the sill and the desk run on to the pane's edges.
-        let left = (area.width as isize - wide as isize) / 2;
-        let top = (area.height as isize * 2 - tall as isize) / 2;
+        // The view is centred, so a pane too small for it cuts it evenly.
+        // Past the view the room around it shows, and a pixel past the
+        // picture's edge takes the edge's colour, so the wall, the sill and
+        // the desk run on to the pane's edges.
+        let left = from_x as isize - (area.width as isize - wide as isize) / 2;
+        let top = from_y as isize - (area.height as isize * 2 - tall as isize) / 2;
         let at = |x: isize, y: isize| {
-            let x = (x - left).clamp(0, wide as isize - 1) as usize;
-            let y = (y - top).clamp(0, tall as isize - 1) as usize;
+            let x = (x + left).clamp(0, PICTURE.0 as isize - 1) as usize;
+            let y = (y + top).clamp(0, PICTURE.1 as isize - 1) as usize;
             pixels[y][x]
         };
         for row in 0..area.height {
