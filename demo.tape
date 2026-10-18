@@ -38,6 +38,12 @@ Tab
 # drive
 Sleep 7s
 Tab
+# city
+Sleep 7s
+Tab
+# river
+Sleep 7s
+Tab
 # matrix
 Sleep 4s
 Tab
@@ -61,6 +67,9 @@ Sleep 5s
 Tab
 # hourglass
 Sleep 5s
+Tab
+# study
+Sleep 7s
 Tab
 # typing
 Sleep 5s
