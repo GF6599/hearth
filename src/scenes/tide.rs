@@ -21,7 +21,7 @@ pub const HIGH_TIDE: f32 = 0.5;
 /// of the pane's height.
 pub const SWASH: f32 = 0.12;
 /// The sixteenths of each tile of dry sand that are grains.
-pub const GRAINS: usize = 2;
+pub const GRAINS: usize = 1;
 /// Ticks from the sea leaving a pixel of sand to the sand being dry, about
 /// half a minute.
 pub const DRY_TICKS: u32 = 500;
@@ -178,7 +178,7 @@ impl Tide {
             && pixels.iter().all(|each| *each == Pixel::Sand)
         {
             let colour = if object.shell {
-                self.palette.rose
+                self.palette.love
             } else {
                 self.palette.subtle
             };
@@ -186,7 +186,7 @@ impl Tide {
                 if object.mask >> quarter & 1 == 1 {
                     colour
                 } else {
-                    self.palette.base
+                    self.palette.gold
                 }
             });
         }
@@ -196,10 +196,10 @@ impl Tide {
                 Pixel::Foam => self.palette.foam,
                 Pixel::Sea if shore => self.palette.foam,
                 Pixel::Sea => self.palette.pine,
-                Pixel::Sand if shore => self.palette.base,
+                Pixel::Sand if shore => self.palette.gold,
                 Pixel::Sand if wet && self.damp(x, row) => self.palette.muted,
-                Pixel::Sand if !wet && grain(x, row) => self.palette.gold,
-                Pixel::Sand => self.palette.base,
+                Pixel::Sand if !wet && grain(x, row) => self.palette.rose,
+                Pixel::Sand => self.palette.gold,
             }
         })
     }
