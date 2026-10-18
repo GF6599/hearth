@@ -1,8 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use std::collections::HashSet;
+use std::fs;
 use std::sync::Arc;
 
+use clap::Parser;
+use hearth::app::App;
+use hearth::cli::Cli;
+use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, TICK_RATE};
 use hearth::scenes::typing::{MOST_SNIPPET_LINES, Speed, Typing};
@@ -1142,4 +1147,195 @@ fn a_long_doc_comment_keeps_the_lines_nearest_the_definition() {
             "{doc_lines}"
         );
     }
+}
+
+/// Two areas and the rows of code that the frame on each holds.
+const SHORT_AREA: Rect = Rect::new(0, 0, 60, 12);
+const SHORT_AREA_ROWS: usize = 8;
+const TALL_AREA: Rect = Rect::new(0, 0, 60, 40);
+const TALL_AREA_ROWS: usize = 28;
+
+fn function(name: &str, lines: usize) -> String {
+    match lines {
+        1 => format!("fn {name}() {{}}\n"),
+        _ => format!("fn {name}() {{\n{}}}\n", "    step();\n".repeat(lines - 2)),
+    }
+}
+
+/// Functions of 1, 6 and 20 lines: under half of both areas, over half of
+/// the short area only, and over half of both.
+fn three_lengths() -> String {
+    [function("tiny", 1), function("mid", 6), function("big", 20)].join("\n")
+}
+
+fn config(name: &str, text: &str) -> Config {
+    let dir = std::env::temp_dir().join(format!("hearth-typing-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
+    fs::write(&path, text).unwrap();
+    Config::load(&path).unwrap()
+}
+
+fn typing_app(config: &Config, seed: u64, files: &[(&str, &str)]) -> App {
+    let seed = seed.to_string();
+    let cli = Cli::try_parse_from(["hearth", "typing", "--seed", &seed]).unwrap();
+    let files = files
+        .iter()
+        .map(|&(path, text)| (path.to_string(), text.to_string()));
+    cli.app(config, Arc::new(Corpus::from_files(files)))
+}
+
+fn app_frame(app: &App, area: Rect) -> Buffer {
+    let mut buffer = Buffer::empty(area);
+    app.render(area, &mut buffer);
+    buffer
+}
+
+/// The function the breadcrumb names, or an empty string with none.
+fn function_on_screen(app: &App, area: Rect) -> String {
+    let buffer = app_frame(app, area);
+    (area.y..area.bottom())
+        .find_map(|y| {
+            let row = row_text(&buffer, y);
+            let (_, after) = row.split_once("› fn ")?;
+            after.split_whitespace().next().map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn first_functions(config: &Config, files: &[(&str, &str)], area: Rect) -> HashSet<String> {
+    (0..24)
+        .map(|seed| {
+            let mut app = typing_app(config, seed, files);
+            app.tick(area);
+            function_on_screen(&app, area)
+        })
+        .collect()
+}
+
+fn functions_over(app: &mut App, area: Rect, ticks: usize) -> HashSet<String> {
+    (0..ticks)
+        .map(|_| {
+            app.tick(area);
+            function_on_screen(app, area)
+        })
+        .collect()
+}
+
+/// A function shorter than half the frame is skipped, and the limit
+/// follows the size of the frame.
+/// Given: a file with functions of 1, 6 and 20 lines, and no config.
+/// When: the scene opens its first function with 24 seeds, on an area whose
+/// frame holds 8 rows of code and on one whose frame holds 28.
+/// Then: the 8 row frame opens the 6 and the 20 line functions and never
+/// the 1 line one, and the 28 row frame opens only the 20 line one. Two
+/// runs with one seed draw the same frames.
+///
+/// Why it matters: a short function fills a corner of a tall frame and
+/// ends at once, so the screen is mostly empty for most of the run.
+#[test]
+fn a_function_too_short_for_the_frame_is_skipped() {
+    // Given:
+    let file = three_lengths();
+    let files = [("a.rs", file.as_str())];
+    let config = config("default", "");
+    for (area, rows) in [(SHORT_AREA, SHORT_AREA_ROWS), (TALL_AREA, TALL_AREA_ROWS)] {
+        let mut app = typing_app(&config, 7, &files);
+        app.tick(area);
+        let code_rows = frame(&app_frame(&app, area)).height - 2;
+        assert_eq!(usize::from(code_rows), rows, "{area:?}");
+    }
+
+    // When, then:
+    let short = first_functions(&config, &files, SHORT_AREA);
+    assert_eq!(short, HashSet::from(["mid".to_string(), "big".to_string()]));
+    let tall = first_functions(&config, &files, TALL_AREA);
+    assert_eq!(tall, HashSet::from(["big".to_string()]));
+    let mut first = typing_app(&config, 7, &files);
+    let mut second = typing_app(&config, 7, &files);
+    for _ in 0..300 {
+        first.tick(TALL_AREA);
+        second.tick(TALL_AREA);
+        assert_eq!(app_frame(&first, TALL_AREA), app_frame(&second, TALL_AREA));
+    }
+}
+
+/// Given: a config whose `[typing]` table sets `shortest` to 0, and a file
+/// with functions of 1, 6 and 20 lines.
+/// When: the scene opens its first function with 24 seeds, on an area whose
+/// frame holds 28 rows of code.
+/// Then: it opens each of the three functions.
+///
+/// Why it matters: a repository of short functions is still worth typing
+/// for a user who asks for every function.
+#[test]
+fn a_shortest_of_zero_skips_nothing() {
+    let file = three_lengths();
+    let config = config("zero", "[typing]\nshortest = 0\n");
+    let seen = first_functions(&config, &[("a.rs", &file)], TALL_AREA);
+    let all = ["tiny", "mid", "big"].map(str::to_string);
+    assert_eq!(seen, HashSet::from(all));
+}
+
+/// Given: `a.rs` with functions of 1 and 6 lines, and `b.rs` with one of 20.
+/// When: the scene types for 1000 ticks with each of 8 seeds, on an area
+/// whose frame holds 28 rows of code.
+/// Then: it only ever types the function in `b.rs`.
+///
+/// Why it matters: a file whose functions are all short would otherwise
+/// show a short function whenever it is the file drawn.
+#[test]
+fn a_file_with_no_long_function_falls_back_to_the_next_file() {
+    let short = [function("tiny", 1), function("mid", 6)].join("\n");
+    let long = function("big", 20);
+    let files = [("a.rs", short.as_str()), ("b.rs", long.as_str())];
+    let config = config("next-file", "");
+    for seed in 0..8 {
+        let mut app = typing_app(&config, seed, &files);
+        let seen = functions_over(&mut app, TALL_AREA, 1000);
+        assert_eq!(seen, HashSet::from(["big".to_string()]), "seed {seed}");
+    }
+}
+
+/// Given: a repository whose functions of 1 and 6 lines are both under half
+/// of a frame that holds 28 rows of code.
+/// When: the scene types for 1000 ticks, long enough for several functions.
+/// Then: it types the 6 line function, again and again, and never the 1
+/// line one.
+///
+/// Why it matters: a repository with no long function must still show
+/// something, and the longest one fills the most of the frame.
+#[test]
+fn with_no_long_function_the_longest_is_typed() {
+    let file = [function("tiny", 1), function("mid", 6)].join("\n");
+    let config = config("longest", "");
+    for seed in 0..8 {
+        let mut app = typing_app(&config, seed, &[("a.rs", &file)]);
+        let seen = functions_over(&mut app, TALL_AREA, 1000);
+        assert_eq!(seen, HashSet::from(["mid".to_string()]), "seed {seed}");
+    }
+}
+
+/// Given: a config whose `shortest` is 1, an area whose frame holds 58 rows
+/// of code, and a file with a 1 line function and two functions longer
+/// than the cap.
+/// When: the scene opens its first function with 24 seeds.
+/// Then: it opens each of the two long functions and never the short one.
+///
+/// Why it matters: no snippet is longer than the cap, so a limit past it
+/// would find no function long enough and type the same one every time.
+#[test]
+fn a_function_at_the_cap_is_long_enough_for_any_frame() {
+    let area = Rect::new(0, 0, 60, 80);
+    let file = [
+        function("tiny", 1),
+        function("first", MOST_SNIPPET_LINES + 5),
+        function("second", MOST_SNIPPET_LINES + 10),
+    ]
+    .join("\n");
+    let config = config("cap", "[typing]\nshortest = 1\n");
+    let seen = first_functions(&config, &[("a.rs", &file)], area);
+    let long = ["first", "second"].map(str::to_string);
+    assert_eq!(seen, HashSet::from(long));
 }

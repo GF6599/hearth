@@ -127,7 +127,9 @@ fn the_command_line_comes_before_the_file() {
 
 /// Given: files with a word for a speed, a speed between two steps, a
 /// typing speed of zero, a key no scene has, a scene that does not exist,
-/// a theme that does not exist, and text that is not TOML.
+/// a theme that does not exist, a `shortest` over 1, under 0, not a
+/// number or a word, a key the typing table does not have, a typing value
+/// that is not a table, and text that is not TOML.
 /// When: each loads.
 /// Then: each fails with a message that names the file and, where there
 /// is one, the key.
@@ -150,6 +152,16 @@ fn a_bad_value_names_the_file_and_the_key() {
         ("nap", "[hourglass]\nnap = 3\n", "hourglass.nap"),
         ("flat", "hourglass = 5\n", "hourglass"),
         ("rate", "[speed]\nhourglass = 2\n", "speed.hourglass"),
+        ("over-one", "[typing]\nshortest = 1.5\n", "typing.shortest"),
+        (
+            "under-zero",
+            "[typing]\nshortest = -0.25\n",
+            "typing.shortest",
+        ),
+        ("nan", "[typing]\nshortest = nan\n", "typing.shortest"),
+        ("half", "[typing]\nshortest = \"half\"\n", "typing.shortest"),
+        ("fill-unknown", "[typing]\nlongest = 1\n", "typing.longest"),
+        ("fill-flat", "typing = 0.5\n", "typing"),
         ("broken", "[speed\n", ""),
     ];
     for (name, text, key) in cases {
@@ -622,4 +634,27 @@ fn plus_and_minus_on_the_hourglass_show_the_time_left() {
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
     }
+}
+
+/// Given: files whose `[typing]` table sets `shortest` to the whole 0, the
+/// whole 1 and 0.25, and a file with a key hearth does not know.
+/// When: each loads.
+/// Then: the first three load, and the last fails with a message that
+/// lists `typing` among the settings.
+///
+/// Why it matters: TOML reads `0` and `1` as whole numbers, so a share
+/// read only as a float refuses the two ends of its own range.
+#[test]
+fn the_typing_table_takes_a_share_from_0_to_1() {
+    for (name, text) in [
+        ("fill-0", "[typing]\nshortest = 0\n"),
+        ("fill-1", "[typing]\nshortest = 1\n"),
+        ("fill-quarter", "[typing]\nshortest = 0.25\n"),
+    ] {
+        let path = config_file(name, Some(text));
+        assert!(Config::load(&path).is_ok(), "{name}");
+    }
+    let path = config_file("fill-list", Some("speeds = 1\n"));
+    let error = Config::load(&path).unwrap_err();
+    assert!(error.contains("typing"), "{error}");
 }
