@@ -20,6 +20,10 @@ const GAP: u16 = 2;
 
 const THUMB: &str = "┃";
 
+/// The keys of a running scene, on the row under the list. Nothing names
+/// them inside a scene, and the picker is where a first-time user starts.
+pub const SCENE_KEYS: &str = "in a scene  tab next  v/s split  x close  h/j/k/l focus  esc back";
+
 /// The list scrolls before it gives up rows, but the mark takes rows only
 /// while this many scenes stay in view with their summaries, and the
 /// summaries go only when this many no longer fit.
@@ -327,6 +331,25 @@ impl Widget for Picker<'_> {
             }
         }
         Paragraph::new(rows).render(inner, buf);
+        self.render_scene_keys(area, frame, buf);
+    }
+}
+
+impl Picker<'_> {
+    /// On the row under the list frame, from its left edge, whole or not at
+    /// all, so no key shows cut.
+    fn render_scene_keys(&self, area: Rect, frame: Rect, buf: &mut Buffer) {
+        let y = frame.bottom();
+        let room = usize::from(area.right().saturating_sub(frame.x));
+        if y >= area.bottom() || SCENE_KEYS.chars().count() > room {
+            return;
+        }
+        let (lead, keys) = SCENE_KEYS.split_at("in a scene".len());
+        let line = Line::from(vec![
+            Span::styled(lead, Style::default().fg(self.palette.muted)),
+            Span::styled(keys, Style::default().fg(self.palette.subtle)),
+        ]);
+        buf.set_line(frame.x, y, &line, area.right() - frame.x);
     }
 }
 
