@@ -76,9 +76,6 @@ const ROUNDS: u32 = 4;
 const FILL: f32 = 0.45;
 /// Rows of cells kept free above and below the frame.
 const MARGIN: i32 = 1;
-/// How far round a sine each bulb runs from the neck. Past the peak, so a
-/// bulb is widest a little beyond its middle and curves in toward its cap.
-const ROUND: f32 = 0.8;
 /// Cells from the glass's widest wall out to a post of the frame.
 const POST: i32 = 2;
 /// Cells from the right post out to the round marks.
@@ -124,66 +121,74 @@ impl Glass {
         })
     }
 
-    /// The half width of the inside at a row: one cell at the neck, out
-    /// along a sine to the widest row and in again toward the cap.
-    fn half_width(&self, row: i32) -> Option<i32> {
-        let from_neck = (row - self.neck).abs();
-        let turn = std::f32::consts::PI * ROUND * from_neck as f32 / self.bulb as f32;
-        (from_neck <= self.bulb).then(|| (self.reach as f32 * turn.sin()).round() as i32)
-    }
-
-    /// Whether a dot is inside the glass, where sand can go.
-    fn holds(&self, x: i32, y: i32) -> bool {
-        x >= 0
-            && y >= 0
-            && self
-                .half_width(y.div_euclid(HEIGHT))
-                .is_some_and(|half| (x.div_euclid(WIDTH) - self.centre).abs() <= half)
-    }
-
-    /// The columns and rows of dots that the inside spans.
-    fn span(&self) -> (Range<i32>, Range<i32>) {
+    fn caps(&self) -> (i32, i32) {
         (
-            (self.centre - self.reach) * WIDTH..(self.centre + self.reach + 1) * WIDTH,
-            (self.neck - self.bulb) * HEIGHT..(self.neck + self.bulb + 1) * HEIGHT,
+            (self.neck - self.bulb) * HEIGHT - 1,
+            (self.neck + self.bulb + 1) * HEIGHT,
+        )
+    }
+
+    /// The dots of the inside on each side of the middle at a row of dots
+    /// between the caps: one in the neck, then out along the profile of a
+    /// bulb. Each row takes its own width, so the outline curves at the
+    /// size of a dot and not of a cell.
+    fn half_width(&self, y: i32) -> Option<i32> {
+        let (top, bottom) = self.caps();
+        if y <= top || y >= bottom {
+            return None;
+        }
+        let gate = self.gate();
+        let from_neck = if y < gate {
+            gate - y
+        } else {
+            y - (gate + HEIGHT - 1)
+        };
+        if from_neck <= 0 {
+            return Some(1);
+        }
+        let widest = self.reach * WIDTH + 1;
+        let share = profile(from_neck as f32 / (self.bulb * HEIGHT) as f32);
+        Some(1 + ((widest - 1) as f32 * share).round() as i32)
+    }
+
+    fn wall(&self, y: i32) -> Option<i32> {
+        self.half_width(y).map(|half| self.centre * WIDTH - half)
+    }
+
+    /// The columns and rows of dots that the inside can span.
+    fn span(&self) -> (Range<i32>, Range<i32>) {
+        let widest = self.reach * WIDTH + 1;
+        let (top, bottom) = self.caps();
+        (
+            self.centre * WIDTH - widest + 1..self.centre * WIDTH + widest + 1,
+            top + 1..bottom,
         )
     }
 
     /// The dots of the left wall and the caps, as far as the middle. Where
-    /// two rows differ in width, the slant between them lies in the
-    /// narrower row, whose outer cells are free, so a wall never enters a
-    /// cell of the inside. The neck is narrower than both its neighbours,
-    /// so it takes both slants and pinches in.
+    /// the wall moves more than a dot from one row to the next, a run on
+    /// the narrower row joins the two, outside its inside, so the outline
+    /// has no break.
     fn walls(&self) -> Vec<(i32, i32)> {
-        let edge = |half: i32| (self.centre - half - 1) * WIDTH + 1;
+        let (top, bottom) = self.caps();
         let mut dots = Vec::new();
-        let mut slant = |from: i32, to: i32, y: i32| {
-            let xs: Vec<i32> = if from <= to {
-                (from..=to).collect()
-            } else {
-                (to..=from).rev().collect()
-            };
-            let split = xs.len().div_ceil(2);
-            for (step, x) in xs.into_iter().enumerate() {
-                dots.push((x, if step < split { y } else { y + 1 }));
-            }
-        };
-        for row in self.neck - self.bulb..=self.neck + self.bulb {
-            let Some(half) = self.half_width(row) else {
+        for y in top + 1..bottom {
+            let Some(x) = self.wall(y) else {
                 continue;
             };
-            let y = row * HEIGHT;
-            let above = self.half_width(row - 1).filter(|&wider| wider > half);
-            let below = self.half_width(row + 1).filter(|&wider| wider > half);
-            slant(edge(above.unwrap_or(half)), edge(half), y);
-            slant(edge(half), edge(below.unwrap_or(half)), y + 2);
+            dots.push((x, y));
+            if let Some(next) = self.wall(y + 1) {
+                let (row, run) = if next > x {
+                    (y + 1, x + 1..next)
+                } else {
+                    (y, next + 1..x)
+                };
+                dots.extend(run.map(|x| (x, row)));
+            }
         }
-        for (row, y) in [
-            (self.neck - self.bulb, (self.neck - self.bulb) * HEIGHT - 1),
-            (self.neck + self.bulb, (self.neck + self.bulb + 1) * HEIGHT),
-        ] {
-            let half = self.half_width(row).unwrap_or(0);
-            dots.extend((edge(half)..=self.centre * WIDTH).map(|x| (x, y)));
+        for (cap, beside) in [(top, top + 1), (bottom, bottom - 1)] {
+            let from = self.wall(beside).unwrap_or(self.centre * WIDTH - 1);
+            dots.extend((from..=self.centre * WIDTH).map(|x| (x, cap)));
         }
         dots
     }
@@ -197,29 +202,22 @@ impl Glass {
     fn gate(&self) -> i32 {
         self.neck * HEIGHT
     }
+}
 
-    /// The dots of the inside between two rows of cells, from `first` on
-    /// toward `last`, and in each row from the middle out, the order in
-    /// which sand poured in settles.
-    fn room(&self, first: i32, last: i32) -> Vec<(i32, i32)> {
-        let rows: Vec<i32> = if first <= last {
-            (first * HEIGHT..(last + 1) * HEIGHT).collect()
-        } else {
-            (last * HEIGHT..(first + 1) * HEIGHT).rev().collect()
-        };
-        let middle = 2 * self.centre * WIDTH + 1;
-        rows.into_iter()
-            .flat_map(|y| {
-                let mut row: Vec<(i32, i32)> = self
-                    .span()
-                    .0
-                    .filter(|&x| self.holds(x, y))
-                    .map(|x| (x, y))
-                    .collect();
-                row.sort_by_key(|&(x, _)| (2 * x - middle).abs());
-                row
-            })
-            .collect()
+/// The width of a bulb at a share of its height out from the neck, as a
+/// share of its widest. It swells from the neck along a quarter sine to the
+/// widest row a little past the middle, then rounds over along a quarter
+/// ellipse to the cap, which stays wide enough to sit on the plate.
+fn profile(along: f32) -> f32 {
+    const WIDEST_AT: f32 = 0.55;
+    const CAP: f32 = 0.62;
+    if along <= WIDEST_AT {
+        (std::f32::consts::FRAC_PI_2 * along / WIDEST_AT)
+            .sin()
+            .powf(0.7)
+    } else {
+        let over = (along - WIDEST_AT) / (1.0 - WIDEST_AT);
+        CAP + (1.0 - CAP) * (1.0 - over * over).max(0.0).sqrt()
     }
 }
 
@@ -327,6 +325,10 @@ pub struct Hourglass {
     phase: Phase,
     /// Whether each dot of the pane holds a grain, row by row.
     sand: Vec<bool>,
+    /// Whether each dot of the pane is inside the glass, row by row: inside
+    /// the outline, in a cell that holds no dot of a wall, because a cell
+    /// takes one colour.
+    inside: Vec<bool>,
     total: usize,
     /// The grains above the neck.
     top: usize,
@@ -348,6 +350,7 @@ impl Hourglass {
             glass: None,
             phase: Phase::at(Duration::ZERO, lengths),
             sand: Vec::new(),
+            inside: Vec::new(),
             total: 0,
             top: 0,
             moving: BTreeSet::new(),
@@ -358,6 +361,60 @@ impl Hourglass {
     /// the phase and none at its end.
     fn due(&self) -> usize {
         (self.total as f64 * self.phase.left(self.clock.elapsed())).ceil() as usize
+    }
+
+    fn holds(&self, x: i32, y: i32) -> bool {
+        self.place(x, y).is_some_and(|index| self.inside[index])
+    }
+
+    /// The dots of the inside between two rows of cells, from `first` on
+    /// toward `last`, and in each row from the middle out, the order in
+    /// which sand poured in settles.
+    fn room(&self, glass: Glass, first: i32, last: i32) -> Vec<(i32, i32)> {
+        let rows: Vec<i32> = if first <= last {
+            (first * HEIGHT..(last + 1) * HEIGHT).collect()
+        } else {
+            (last * HEIGHT..(first + 1) * HEIGHT).rev().collect()
+        };
+        let middle = 2 * glass.centre * WIDTH + 1;
+        rows.into_iter()
+            .flat_map(|y| {
+                let mut row: Vec<(i32, i32)> = glass
+                    .span()
+                    .0
+                    .filter(|&x| self.holds(x, y))
+                    .map(|x| (x, y))
+                    .collect();
+                row.sort_by_key(|&(x, _)| (2 * x - middle).abs());
+                row
+            })
+            .collect()
+    }
+
+    fn fill_inside(&mut self, glass: Glass) {
+        let cells: BTreeSet<(i32, i32)> = glass
+            .walls()
+            .into_iter()
+            .flat_map(|(x, y)| [(x, y), (glass.mirror(x), y)])
+            .map(|(x, y)| (x.div_euclid(WIDTH), y.div_euclid(HEIGHT)))
+            .collect();
+        self.inside = vec![false; self.sand.len()];
+        let (columns, rows) = glass.span();
+        for y in rows {
+            let Some(half) = glass.half_width(y) else {
+                continue;
+            };
+            for x in columns.clone() {
+                let from_middle = (2 * x - (2 * glass.centre * WIDTH + 1)).abs();
+                let free = !cells.contains(&(x.div_euclid(WIDTH), y.div_euclid(HEIGHT)));
+                if from_middle < 2 * half
+                    && free
+                    && let Some(index) = self.place(x, y)
+                {
+                    self.inside[index] = true;
+                }
+            }
+        }
     }
 
     fn grain(&self, x: i32, y: i32) -> bool {
@@ -387,14 +444,16 @@ impl Hourglass {
         self.phase = Phase::at(self.clock.elapsed(), self.lengths);
         self.glass = Glass::fit(self.width, self.height);
         let Some(glass) = self.glass else {
+            self.inside = Vec::new();
             self.total = 0;
             self.top = 0;
             return;
         };
-        let top = glass.room(glass.neck - 1, glass.neck - glass.bulb);
+        self.fill_inside(glass);
+        let top = self.room(glass, glass.neck - 1, glass.neck - glass.bulb);
         self.total = (top.len() as f32 * FILL) as usize;
         let due = self.due();
-        let bottom = glass.room(glass.neck + glass.bulb, glass.neck + 1);
+        let bottom = self.room(glass, glass.neck + glass.bulb, glass.neck + 1);
         for (x, y) in top
             .into_iter()
             .take(due)
@@ -491,7 +550,7 @@ impl Hourglass {
             if !self.grain(x, y) || (y < gate && below >= gate) {
                 continue;
             }
-            let open = |s: &Self, to: i32| glass.holds(to, below) && !s.grain(to, below);
+            let open = |s: &Self, to: i32| s.holds(to, below) && !s.grain(to, below);
             let to = if open(self, x) {
                 Some(x)
             } else {
