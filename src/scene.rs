@@ -6,6 +6,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 
 use crate::clock::Clock;
 use crate::config::Background;
@@ -116,6 +117,23 @@ impl std::fmt::Display for Rate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(RATES[self.0].1)
     }
+}
+
+/// A line of text in the middle of `area`, for a scene with nothing else
+/// to draw.
+pub fn draw_notice(text: &str, area: Rect, palette: &Palette, buf: &mut Buffer) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let length = text.chars().count() as u16;
+    let x = area.x + area.width.saturating_sub(length) / 2;
+    buf.set_stringn(
+        x,
+        area.y + area.height / 2,
+        text,
+        usize::from(area.width - (x - area.x)),
+        Style::default().fg(palette.subtle),
+    );
 }
 
 pub trait Scene {

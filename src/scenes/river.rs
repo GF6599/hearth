@@ -10,7 +10,7 @@ use ratatui::style::{Color, Style};
 use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::corpus::Corpus;
 use crate::history::{Commit, History};
-use crate::scene::{Rng, Scene};
+use crate::scene::{self, Rng, Scene};
 use crate::splitmix;
 use crate::theme::Palette;
 
@@ -195,21 +195,6 @@ impl River {
                 .wrapping_add((place.1 as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f)),
         )
     }
-
-    fn draw_notice(&self, text: &str, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-        let length = text.chars().count() as u16;
-        let x = area.x + area.width.saturating_sub(length) / 2;
-        buf.set_stringn(
-            x,
-            area.y + area.height / 2,
-            text,
-            usize::from(area.width - (x - area.x)),
-            Style::default().fg(self.palette.subtle),
-        );
-    }
 }
 
 /// Lays the commits out in lanes the way `git log --graph` does, the
@@ -311,11 +296,11 @@ impl Scene for River {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         if self.reading.is_some() {
-            self.draw_notice(READING, area, buf);
+            scene::draw_notice(READING, area, self.palette, buf);
             return;
         }
         if self.rows.is_empty() {
-            self.draw_notice(NOTICE, area, buf);
+            scene::draw_notice(NOTICE, area, self.palette, buf);
             return;
         }
         let (columns, lines) = (usize::from(area.width), usize::from(area.height));
