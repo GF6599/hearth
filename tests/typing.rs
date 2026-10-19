@@ -10,7 +10,7 @@ use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, TICK_RATE};
-use hearth::scenes::typing::{MOST_SNIPPET_LINES, Speed, Typing};
+use hearth::scenes::typing::{MOST_SNIPPET_LINES, Shortest, Speed, Typing};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -1338,4 +1338,66 @@ fn a_function_at_the_cap_is_long_enough_for_any_frame() {
     let seen = first_functions(&config, &[("a.rs", &file)], area);
     let long = ["first", "second"].map(str::to_string);
     assert_eq!(seen, HashSet::from(long));
+}
+
+/// A large repository is measured off the UI thread, so the first frame
+/// comes at once and the scene then types a function long enough.
+/// Given: 500 files of one 3 line function each and one file with a 30
+/// line function, more text than the UI thread measures in one tick.
+/// When: the scene ticks once, and then until code shows.
+/// Then: the first frame holds no code, and the code that shows is the 30
+/// line function.
+///
+/// Why it matters: measuring every file on the UI thread kept the screen
+/// of a large repository black for seconds, and no key could quit it.
+#[test]
+fn a_large_repository_is_measured_off_the_ui_thread() {
+    // Given:
+    let mut files: Vec<(String, String)> = (0..500)
+        .map(|index| {
+            let text =
+                format!("/// Returns {index}.\nfn short_{index}() -> u32 {{\n    {index}\n}}\n");
+            (
+                format!("short/s{index}.rs"),
+                text + &format!("// {}\n", "-".repeat(40)),
+            )
+        })
+        .collect();
+    let body: String = (0..28)
+        .map(|line| format!("    let v{line} = {line};\n"))
+        .collect();
+    files.push((
+        "long.rs".to_string(),
+        format!("fn long_one() {{\n{body}}}\n"),
+    ));
+    let corpus = Arc::new(Corpus::from_files(files));
+    let mut scene = Typing::new(
+        Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
+        corpus,
+        Speed::DEFAULT,
+    )
+    .with_shortest(Shortest::from_share(0.5).unwrap());
+    let has_frame = |buffer: &Buffer| buffer.content.iter().any(|cell| cell.symbol() == "┌");
+
+    // When:
+    scene.tick(TALL_AREA);
+    let first = render(&scene, TALL_AREA, TALL_AREA);
+    let mut shown = first.clone();
+    for _ in 0..2000 {
+        if has_frame(&shown) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        scene.tick(TALL_AREA);
+        shown = render(&scene, TALL_AREA, TALL_AREA);
+    }
+
+    // Then:
+    assert!(!has_frame(&first), "the first tick waited for the scan");
+    assert!(
+        breadcrumb(&shown).contains("long_one"),
+        "{}",
+        breadcrumb(&shown)
+    );
 }
