@@ -10,7 +10,7 @@ use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, TICK_RATE};
-use hearth::scenes::typing::{MOST_SNIPPET_LINES, Shortest, Speed, Typing};
+use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -1342,39 +1342,21 @@ fn a_function_at_the_cap_is_long_enough_for_any_frame() {
 
 /// A large repository is measured off the UI thread, so the first frame
 /// comes at once and the scene then types a function long enough.
-/// Given: 500 files of one 3 line function each and one file with a 30
-/// line function, more text than the UI thread measures in one tick.
+/// Given: the large corpus, whose only functions that fill half the frame
+/// are the long ones.
 /// When: the scene ticks once, and then until code shows.
-/// Then: the first frame holds no code, and the code that shows is the 30
-/// line function.
+/// Then: the first frame holds the notice and no code, and the code that
+/// shows is a long function.
 ///
 /// Why it matters: measuring every file on the UI thread kept the screen
 /// of a large repository black for seconds, and no key could quit it.
 #[test]
 fn a_large_repository_is_measured_off_the_ui_thread() {
     // Given:
-    let mut files: Vec<(String, String)> = (0..500)
-        .map(|index| {
-            let text =
-                format!("/// Returns {index}.\nfn short_{index}() -> u32 {{\n    {index}\n}}\n");
-            (
-                format!("short/s{index}.rs"),
-                text + &format!("// {}\n", "-".repeat(40)),
-            )
-        })
-        .collect();
-    let body: String = (0..28)
-        .map(|line| format!("    let v{line} = {line};\n"))
-        .collect();
-    files.push((
-        "long.rs".to_string(),
-        format!("fn long_one() {{\n{body}}}\n"),
-    ));
-    let corpus = Arc::new(Corpus::from_files(files));
     let mut scene = Typing::new(
         Rng::seed_from_u64(7),
         &theme::ROSE_PINE,
-        corpus,
+        large_corpus(),
         Speed::DEFAULT,
     )
     .with_shortest(Shortest::from_share(0.5).unwrap());
@@ -1395,9 +1377,86 @@ fn a_large_repository_is_measured_off_the_ui_thread() {
 
     // Then:
     assert!(!has_frame(&first), "the first tick waited for the scan");
+    let notice = (0..TALL_AREA.height).any(|y| row_text(&first, y).contains(FINDING));
+    assert!(notice, "no notice on the first frame");
     assert!(
-        breadcrumb(&shown).contains("long_one"),
+        breadcrumb(&shown).contains("fn long_"),
         "{}",
         breadcrumb(&shown)
     );
+}
+
+/// More text than the UI thread measures itself, so the scene scans it.
+fn large_corpus() -> Arc<Corpus> {
+    let mut files: Vec<(String, String)> = (0..500)
+        .map(|index| {
+            let text =
+                format!("/// Returns {index}.\nfn short_{index}() -> u32 {{\n    {index}\n}}\n");
+            (
+                format!("short/s{index}.rs"),
+                text + &format!("// {}\n", "-".repeat(40)),
+            )
+        })
+        .collect();
+    let body: String = (0..18)
+        .map(|line| format!("    let v{line} = {line};\n"))
+        .collect();
+    for file in 0..4 {
+        let text = (0..2)
+            .map(|function| format!("fn long_{file}_{function}() {{\n{body}}}\n\n"))
+            .collect::<String>();
+        files.push((format!("long{file}.rs"), text));
+    }
+    Arc::new(Corpus::from_files(files))
+}
+
+fn snippets_typed(mut scene: Typing, count: usize, pause: std::time::Duration) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for _ in 0..20_000 {
+        scene.tick(TALL_AREA);
+        let buffer = render(&scene, TALL_AREA, TALL_AREA);
+        if buffer.content.iter().any(|cell| cell.symbol() == "┌") {
+            let name = breadcrumb(&buffer);
+            if names.last() != Some(&name) {
+                names.push(name);
+                if names.len() == count {
+                    return names;
+                }
+            }
+        }
+        std::thread::sleep(pause);
+    }
+    panic!("typed {names:?} and no more");
+}
+
+/// A seed fixes the functions the scene types, however long it waits for
+/// the scan.
+/// Given: two scenes with one seed over a large corpus, one ticked with a
+/// pause that lets the scan keep ahead, and one ticked with none, which
+/// runs into waits.
+/// When: each types six functions.
+/// Then: both type the same six, in the same order.
+///
+/// Why it matters: a wait adds ticks, and every tick draws from the scene's
+/// random source, so a choice drawn from it would follow the speed of the
+/// machine and not the seed.
+#[test]
+fn a_seed_fixes_the_functions_however_long_the_scan_takes() {
+    // Given:
+    let scene = || {
+        Typing::new(
+            Rng::seed_from_u64(7),
+            &theme::ROSE_PINE,
+            large_corpus(),
+            Speed::from_cps(1000).unwrap(),
+        )
+        .with_shortest(Shortest::from_share(0.5).unwrap())
+    };
+
+    // When:
+    let patient = snippets_typed(scene(), 6, std::time::Duration::from_millis(5));
+    let hasty = snippets_typed(scene(), 6, std::time::Duration::ZERO);
+
+    // Then:
+    assert_eq!(patient, hasty);
 }
