@@ -10,7 +10,7 @@ use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::events::{EventSource, handle_events};
 use hearth::scene::{ALL, SceneKind};
-use hearth::scenes::typing::Speed;
+use hearth::scenes::typing::{FINDING, Speed};
 use hearth::theme;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -68,6 +68,28 @@ fn frame(app: &App, width: u16, height: u16) -> Buffer {
         .draw(|f| app.render(f.area(), f.buffer_mut()))
         .unwrap();
     terminal.backend().buffer().clone()
+}
+
+/// Ticks until the typing scene has found a function. It measures this
+/// corpus off the UI thread, and a wait draws nothing, so the frames after
+/// it are the same for one seed.
+fn found(app: &mut App, width: u16, height: u16) {
+    let area = Rect::new(0, 0, width, height);
+    for _ in 0..2000 {
+        let buffer = frame(app, width, height);
+        if !buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains(FINDING)
+        {
+            return;
+        }
+        app.tick(area);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("the typing scene found no function");
 }
 
 fn corpus() -> Arc<Corpus> {
@@ -463,6 +485,9 @@ fn a_restart_keeps_the_typing_speed() {
     send(&mut app, vec![key('r')]);
     let mut kept = App::configured(Some(SceneKind::Typing), 8, corpus(), &typing_at(faster));
     let mut dropped = App::new(SceneKind::Typing, 8, corpus());
+    for each in [&mut app, &mut kept, &mut dropped] {
+        found(each, width, HEIGHT);
+    }
     for _ in 0..17 {
         for each in [&mut app, &mut kept, &mut dropped] {
             each.tick(area);

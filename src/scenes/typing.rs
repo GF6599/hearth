@@ -2,8 +2,11 @@ use std::fmt;
 use std::ops::{Range, RangeInclusive};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 
-use rand::RngExt;
+use rand::seq::SliceRandom;
+use rand::{RngExt, SeedableRng};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -15,12 +18,19 @@ use crate::config::Background;
 use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
 use crate::minimap::Outline;
-use crate::scene::{Rng, Scene, TICK_RATE};
+use crate::scene::{self, Rng, Scene, TICK_RATE};
 use crate::snippet;
 use crate::theme::{self, Palette};
 use crate::tree::{self, Tree};
 
 pub use crate::snippet::MOST_SNIPPET_LINES;
+
+pub const FINDING: &str = "finding a function long enough";
+
+/// The most text the UI thread measures itself. The grammar takes about
+/// 1.25 ms a KB, so this is about two thirds of a tick, and a small
+/// repository shows its code on the first frame with no notice.
+const INLINE_BYTES: usize = 32 * 1024;
 
 /// Pauses count in keystrokes, so a faster speed shortens them too.
 const LINE_PAUSE: RangeInclusive<u32> = 2..=8;
@@ -160,8 +170,21 @@ pub struct Typing {
     /// tick to the next, so a speed under one keystroke per tick still types.
     credit: f64,
     /// The lines of the longest function in each file, 0 for none, once
-    /// the file is parsed. A file known to be too short is not parsed again.
+    /// the file is measured. A file known to be too short is not parsed again.
     longest: Vec<Option<usize>>,
+    /// The files in an order the seed fixes. The scan measures them in this
+    /// order and the picks take them in it, so the seed fixes the snippets
+    /// however long the scan takes.
+    order: Vec<usize>,
+    /// The place in `order` where the next pick starts.
+    next: usize,
+    /// Each file and its longest function, on their way from the scan
+    /// thread. `None` once the scan ends, and for a corpus the UI thread
+    /// measures itself.
+    scan: Option<Receiver<(usize, usize)>>,
+    /// Chooses the function in a file. `rng` draws on every tick, and a
+    /// wait for the scan adds ticks, so the choice has a source of its own.
+    picks: Rng,
     shortest: Shortest,
     /// The rows of code the frame holds, learned on each tick, because only
     /// the area gives the frame its size. `None` before the first tick,
@@ -190,13 +213,27 @@ pub struct Typing {
 
 impl Typing {
     /// Types every function, however short, unless `with_shortest` says
-    /// otherwise.
-    pub fn new(rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>, speed: Speed) -> Self {
+    /// otherwise. A corpus of more than `INLINE_BYTES` is measured on a
+    /// thread of its own, so a large repository does not hold up a tick.
+    pub fn new(mut rng: Rng, palette: &'static Palette, corpus: Arc<Corpus>, speed: Speed) -> Self {
         let tree = Tree::new(corpus.files().iter().map(|source| source.path.as_str()));
+        let mut order: Vec<usize> = (0..corpus.files().len()).collect();
+        order.shuffle(&mut rng);
+        let picks = Rng::seed_from_u64(rng.random());
+        let bytes: usize = corpus.files().iter().map(|source| source.text.len()).sum();
+        let scan = if bytes > INLINE_BYTES {
+            scan(Arc::clone(&corpus), order.clone())
+        } else {
+            None
+        };
         Self {
             rng,
             palette,
             longest: vec![None; corpus.files().len()],
+            order,
+            next: 0,
+            scan,
+            picks,
             corpus,
             speed,
             credit: 0.0,
@@ -228,27 +265,54 @@ impl Typing {
         self
     }
 
-    /// Picks a snippet that fills the frame at random from a random file,
-    /// never the one on screen again while another exists. With no other
-    /// that fills it, the longest function in the corpus. Each file is
-    /// tried once at most, so the search ends.
+    fn receive(&mut self) {
+        let mut ended = false;
+        if let Some(scan) = &self.scan {
+            loop {
+                match scan.try_recv() {
+                    Ok((file, lines)) => self.longest[file] = Some(lines),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        ended = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if ended {
+            self.scan = None;
+        }
+    }
+
+    /// Opens a function that fills the frame from the next file in `order`
+    /// that holds one, never the one on screen again while another fills
+    /// it. With none, the longest function in the corpus. A file the scan
+    /// has not reached ends the search, and the snippet on screen stays
+    /// until a later call finds the file measured.
     fn open_next(&mut self) {
-        let previous = self.current.take();
-        self.glyphs.clear();
-        self.offset = 0;
-        self.lines = vec![Vec::new()];
-        self.finished = false;
+        self.receive();
+        let previous = self.current;
         let (shortest, rows) = (self.shortest, self.rows.unwrap_or(0));
         let fills = |lines: usize| shortest.fills(lines, rows);
         let corpus = Arc::clone(&self.corpus);
-        let mut untried: Vec<usize> = (0..self.longest.len())
-            .filter(|&file| self.longest[file].is_none_or(|lines| lines > 0 && fills(lines)))
-            .collect();
-        while !untried.is_empty() {
-            let file = untried.swap_remove(self.rng.random_range(0..untried.len()));
+        let count = self.order.len();
+        for step in 0..count {
+            let place = (self.next + step) % count;
+            let file = self.order[place];
             let source = &corpus.files()[file];
-            let (highlighted, spans) = snippets(source, self.palette);
-            self.longest[file] = Some(spans.iter().map(Range::len).max().unwrap_or(0));
+            let (highlighted, spans) = match self.longest[file] {
+                Some(lines) if lines == 0 || !fills(lines) => continue,
+                Some(_) => snippets(source, self.palette),
+                None if self.scan.is_some() => {
+                    self.next = place;
+                    return;
+                }
+                None => {
+                    let measured = snippets(source, self.palette);
+                    self.longest[file] = Some(measured.1.iter().map(Range::len).max().unwrap_or(0));
+                    measured
+                }
+            };
             let long: Vec<Range<usize>> = spans
                 .into_iter()
                 .filter(|span| fills(span.len()) && previous != Some((file, span.start)))
@@ -256,7 +320,8 @@ impl Typing {
             if long.is_empty() {
                 continue;
             }
-            let span = long[self.rng.random_range(0..long.len())].clone();
+            let span = long[self.picks.random_range(0..long.len())].clone();
+            self.next = (place + 1) % count;
             self.open(file, source, &highlighted, span);
             return;
         }
@@ -283,6 +348,9 @@ impl Typing {
         highlighted: &highlight::Highlighted,
         span: Range<usize>,
     ) {
+        self.offset = 0;
+        self.lines = vec![Vec::new()];
+        self.finished = false;
         self.current = Some((file, span.start));
         // The lines above the definition are comments and attributes,
         // which name no function, so the first name is the snippet's own.
@@ -511,6 +579,26 @@ pub fn has_snippet(corpus: &Corpus) -> bool {
         .any(|source| !snippets(source, &theme::ROSE_PINE).1.is_empty())
 }
 
+/// Measures the longest function of each file in `order` on a thread of its
+/// own. The thread ends when the scene that reads it is gone.
+fn scan(corpus: Arc<Corpus>, order: Vec<usize>) -> Option<Receiver<(usize, usize)>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("typing scan".into())
+        .spawn(move || {
+            for file in order {
+                // Only the functions count here, so any palette does.
+                let (_, spans) = snippets(&corpus.files()[file], &theme::ROSE_PINE);
+                let lines = spans.iter().map(Range::len).max().unwrap_or(0);
+                if sender.send((file, lines)).is_err() {
+                    return;
+                }
+            }
+        })
+        .ok()
+        .map(|_| receiver)
+}
+
 fn snippets(source: &SourceFile, palette: &Palette) -> (highlight::Highlighted, Vec<Range<usize>>) {
     let highlighted = highlight::highlight(&source.path, &source.text, palette);
     let lines: Vec<&str> = source.text.lines().collect();
@@ -558,11 +646,15 @@ fn glyphs(
 
 impl Scene for Typing {
     fn tick(&mut self, area: Rect) {
-        let opened = self.rows.is_some();
         // The rules above and below the code take a row each.
         self.rows = Some(frame_height(area).saturating_sub(2));
-        if !opened {
+        if self.current.is_none() {
             self.open_next();
+            // The wait for the first function draws nothing, so the frames
+            // after it do not depend on how long it took.
+            if self.current.is_none() {
+                return;
+            }
         }
         self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
         while self.credit >= 1.0 {
@@ -577,6 +669,9 @@ impl Scene for Typing {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let Some((_, first)) = self.current else {
+            if self.scan.is_some() {
+                scene::draw_notice(FINDING, area, self.palette, buf);
+            }
             return;
         };
         if area.is_empty() {

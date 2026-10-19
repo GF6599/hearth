@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use clap::Parser;
 use hearth::app::App;
@@ -10,6 +12,7 @@ use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::scene::{ALL, SceneKind};
+use hearth::scenes::typing::FINDING;
 use hearth::theme::{self, Palette};
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -48,15 +51,37 @@ fn starts() -> Vec<Vec<&'static str>> {
     starts
 }
 
-fn frame(args: &[&str], config: &Config) -> Buffer {
-    let cli = Cli::try_parse_from(args).unwrap();
-    let mut app: App = cli.app(config, Arc::new(Corpus::embedded()));
-    for _ in 0..40 {
-        app.tick(AREA);
-    }
+fn render(app: &App) -> Buffer {
     let mut buffer = Buffer::empty(AREA);
     app.render(AREA, &mut buffer);
     buffer
+}
+
+fn shows_text(buffer: &Buffer, text: &str) -> bool {
+    (AREA.y..AREA.bottom()).any(|y| {
+        (AREA.x..AREA.right())
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+            .contains(text)
+    })
+}
+
+/// The frame after 40 ticks. The typing scene measures this corpus off the
+/// UI thread, so its 40 ticks start once it has found a function.
+fn frame(args: &[&str], config: &Config) -> Buffer {
+    let cli = Cli::try_parse_from(args).unwrap();
+    let mut app: App = cli.app(config, Arc::new(Corpus::embedded()));
+    for _ in 0..2000 {
+        if !shows_text(&render(&app), FINDING) {
+            break;
+        }
+        app.tick(AREA);
+        thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..40 {
+        app.tick(AREA);
+    }
+    render(&app)
 }
 
 /// The colours a cell shows, a quarter at a time for a quadrant glyph and
