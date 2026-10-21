@@ -9,7 +9,9 @@ use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
-use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration};
+use hearth::scenes::murmuration::{
+    FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration, PIXELS_PER_BIRD,
+};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -74,7 +76,7 @@ fn assert_inside(scene: &Murmuration, area: Rect, when: &str) {
 
 /// Given: a small, a mid-sized and a wide area.
 /// When: the scene ticks once on each.
-/// Then: the flock holds one bird for each `DOTS_PER_BIRD` pixels, and no
+/// Then: the flock holds one bird for each `PIXELS_PER_BIRD` pixels, and no
 /// fewer and no more than the bounds of `FLOCK`.
 ///
 /// Why it matters: a fixed count is a speck on a wide terminal and a
@@ -87,7 +89,7 @@ fn the_flock_grows_with_the_pane_within_its_bounds() {
 
         // Then:
         let count = usize::from(area.width) * usize::from(area.height) * CELL_WIDTH * CELL_HEIGHT;
-        let expected = (count / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
+        let expected = (count / PIXELS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
         assert_eq!(scene.birds().count(), expected, "{area:?}");
     }
 }

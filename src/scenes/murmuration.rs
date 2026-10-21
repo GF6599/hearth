@@ -13,7 +13,7 @@ use crate::theme::{self, Palette};
 
 /// The flock holds one bird for this many pixels of the pane, within the
 /// bounds of `FLOCK`.
-pub const DOTS_PER_BIRD: usize = 80;
+pub const PIXELS_PER_BIRD: usize = 80;
 pub const FLOCK: RangeInclusive<usize> = 60..=500;
 
 /// A cell with more pixels than this draws in the bright role.
@@ -148,7 +148,7 @@ impl Murmuration {
         if pixels == 0 || self.sky == 0 {
             return;
         }
-        let count = (pixels / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
+        let count = (pixels / PIXELS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
         let (width, height) = (self.width as f32, self.sky as f32);
         let centre = (width / 2.0, height / 2.0);
         let radius = (count as f32).sqrt() * SPAWN_SPREAD;
