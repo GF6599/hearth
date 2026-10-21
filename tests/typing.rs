@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::HashSet;
 use std::fs;
 use std::sync::Arc;
@@ -7,8 +9,9 @@ use std::sync::Arc;
 use clap::Parser;
 use hearth::app::App;
 use hearth::cli::Cli;
-use hearth::config::Config;
+use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{FRAME_RATE, FRAMES_PER_TICK, Rng, Scene};
 use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
 use hearth::theme;
@@ -970,20 +973,35 @@ fn a_long_name_is_cut_inside_the_tree() {
     }
 }
 
-/// `None` is a half with no glyph in it.
-fn minimap(buffer: &Buffer) -> Vec<Vec<(Option<Color>, Option<Color>)>> {
+/// Each minimap cell as its pixels, or none for a cell that holds no
+/// octant glyph.
+fn minimap_cells(buffer: &Buffer) -> Vec<Vec<Option<[Color; 8]>>> {
     let frame = frame(buffer);
     (frame.y..frame.bottom())
         .map(|y| {
             (frame.right() + 1..buffer.area.right() - 1)
-                .map(|x| {
-                    let cell = &buffer[(x, y)];
-                    let lower_bg = (cell.bg != Color::Reset).then_some(cell.bg);
-                    match cell.symbol() {
-                        "▀" => (Some(cell.fg), lower_bg),
-                        "▄" => (None, Some(cell.fg)),
-                        _ => (None, None),
-                    }
+                .map(|x| pixels::shown(&buffer[(x, y)]))
+                .collect()
+        })
+        .collect()
+}
+
+/// The colour of a pixel that draws a line, or none for the background.
+fn lit(colour: Color) -> Option<Color> {
+    (colour != theme::ROSE_PINE.base && colour != Color::Reset).then_some(colour)
+}
+
+/// The upper and the lower half of each minimap cell, each by its top
+/// pixel. `None` is a half with nothing drawn in it.
+fn minimap(buffer: &Buffer) -> Vec<Vec<(Option<Color>, Option<Color>)>> {
+    minimap_cells(buffer)
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|cell| {
+                    cell.map_or((None, None), |pixels| {
+                        (lit(pixels[0]), lit(pixels[CELL_HEIGHT / 2 * CELL_WIDTH]))
+                    })
                 })
                 .collect()
         })
@@ -1103,6 +1121,72 @@ fn the_minimap_draws_each_line_from_its_indent_to_its_end() {
     assert_eq!(lit(1), (0..13).collect::<Vec<_>>());
     assert_eq!(lit(2), (0..=6).collect::<Vec<_>>());
     assert_eq!(lit(3), (6..=12).collect::<Vec<_>>());
+}
+
+/// Over the terminal's own background, each minimap line is one row of
+/// pixels with a clear row under it, in one colour a cell.
+/// Given: a function whose lines have their own lengths and indents, typed
+/// on the theme's background and on the terminal's.
+/// When: the scene types it whole on each.
+/// Then: each minimap cell on the terminal's background is an octant cell.
+/// Its top row of pixels shows where the theme draws an upper line, and its
+/// third row where the theme draws a lower line. Its second and fourth
+/// rows are clear, and its lit pixels take one colour, the upper line's
+/// where both show.
+///
+/// Why it matters: a solid block of lines over a transparent terminal
+/// reads as a panel, and a glyph that is no octant draws the lines in
+/// another shape and weight than every other scene.
+#[test]
+fn the_minimap_over_the_terminal_draws_one_row_of_pixels_a_line() {
+    // Given:
+    let file = format!(
+        "fn f() {{\n    {}\n    {}\n{}{}\n    {}\n}}\n",
+        "x".repeat(76),
+        "y".repeat(36),
+        " ".repeat(40),
+        "z".repeat(40),
+        "w".repeat(20),
+    );
+    let area = Rect::new(0, 0, 120, 26);
+    let typed = |background: Background| {
+        let mut scene = Typing::new(
+            Rng::seed_from_u64(7),
+            &theme::ROSE_PINE,
+            corpus(&file),
+            Speed::DEFAULT,
+        )
+        .with_background(background);
+        settled(&mut scene, area)
+    };
+
+    // When:
+    let painted = minimap(&typed(Background::Theme));
+    let clear = minimap_cells(&typed(Background::Terminal));
+
+    // Then:
+    assert!(
+        painted
+            .iter()
+            .flatten()
+            .any(|&(upper, lower)| upper.is_some() && lower.is_some())
+    );
+    for (y, (painted, clear)) in painted.iter().zip(&clear).enumerate() {
+        for (x, (&(upper, lower), cell)) in painted.iter().zip(clear).enumerate() {
+            let at = format!("({x}, {y})");
+            assert!(cell.is_some(), "{at} is not an octant cell");
+            let pixels = cell.unwrap();
+            let line = |row: usize| -> [Option<Color>; CELL_WIDTH] {
+                std::array::from_fn(|column| lit(pixels[row * CELL_WIDTH + column]))
+            };
+            let colour = upper.or(lower);
+            let expect = |half: Option<Color>| [half.and(colour); CELL_WIDTH];
+            assert_eq!(line(0), expect(upper), "{at} top row");
+            assert_eq!(line(1), [None; CELL_WIDTH], "{at} second row");
+            assert_eq!(line(2), expect(lower), "{at} third row");
+            assert_eq!(line(3), [None; CELL_WIDTH], "{at} fourth row");
+        }
+    }
 }
 
 /// Given: one file, on a 120 column area and on a 40 column area, whose
