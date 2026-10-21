@@ -65,10 +65,14 @@ const SAND_SHADOW: f32 = 0.15;
 /// the dry and does not end in a hard line.
 const WET_SHADES: usize = 8;
 const WET: f32 = 0.28;
+/// The share of the dark in a shell or a pebble the sea has just left. A
+/// shell or a pebble darkens less than sand, so it keeps the colour of its
+/// own kind.
+const WET_OBJECT: f32 = 0.11;
 /// The most a shell leans from love to rose, and a pebble from subtle to
 /// muted, so each one has a shade of its own.
 const SHELL_TINT: f32 = 0.5;
-const PEBBLE_TINT: f32 = 0.6;
+const PEBBLE_TINT: f32 = 0.3;
 /// The chance that a cell the sea can reach holds a shell or a pebble.
 const OBJECT_CHANCE: f64 = 1.0 / 40.0;
 /// The pixels a shell fills, by the bits of an octant glyph, row by row
@@ -157,7 +161,12 @@ impl Shades {
             blended(palette, palette.gold, palette.muted, SAND_SHADOW),
         ];
         let sand = std::array::from_fn(|shade| {
-            wet_tones(palette, ramp(palette, &dry, step(shade, SAND_SHADES)), dark)
+            wet_tones(
+                palette,
+                ramp(palette, &dry, step(shade, SAND_SHADES)),
+                dark,
+                WET,
+            )
         });
         Self {
             sea,
@@ -196,11 +205,12 @@ fn ramp(palette: &Palette, stops: &[Color], at: f32) -> Color {
     )
 }
 
-/// `dry` at each step of wetness, mixed toward `wet` as the sea just left
-/// it, so a wet thing darkens and dries back to its own colour.
-fn wet_tones(palette: &Palette, dry: Color, wet: Color) -> [Color; WET_SHADES + 1] {
+/// `dry` at each step of wetness, mixed toward `wet` by up to `most` as the
+/// sea just left it, so a wet thing darkens and dries back to its own
+/// colour.
+fn wet_tones(palette: &Palette, dry: Color, wet: Color, most: f32) -> [Color; WET_SHADES + 1] {
     std::array::from_fn(|wetness| {
-        blended(palette, dry, wet, WET * wetness as f32 / WET_SHADES as f32)
+        blended(palette, dry, wet, most * wetness as f32 / WET_SHADES as f32)
     })
 }
 
@@ -366,7 +376,7 @@ impl Tide {
                 };
                 Some(Object {
                     mask,
-                    tones: wet_tones(self.palette, tone, self.shades.dark),
+                    tones: wet_tones(self.palette, tone, self.shades.dark, WET_OBJECT),
                 })
             })
             .collect();
