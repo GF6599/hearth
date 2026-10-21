@@ -480,3 +480,75 @@ fn tide_is_a_scene_by_name() {
     let grid = pixels(&buffer, AREA);
     assert!(waterlines(&grid).iter().all(|line| *line > 0));
 }
+
+/// A pane tall enough that the edge of a wave runs over many pixel rows in
+/// one tick.
+const TALL: Rect = Rect::new(0, 0, 8, 600);
+/// The pixel rows a waterline must move in one tick for a quarter of that
+/// move to show as at least one pixel row.
+const LEAP: usize = 6;
+
+/// The edge of a wave glides over the sand between two ticks.
+/// Given: the scene on a pane eight cells wide and six hundred tall, at the
+/// first tick after which a waterline moves by `LEAP` pixel rows or more.
+/// When: it renders a quarter, a half and three quarters of the way to the
+/// next tick, and again at no progress.
+/// Then: at no progress the frame is the frame of a scene that was never
+/// given progress. In each column that moves by `LEAP` or more, the
+/// waterline at each progress lies strictly between its lines at the two
+/// ticks, in the order of the progress.
+///
+/// Why it matters: at a slow rate a scene ticks once in eight or sixteen
+/// frames, and a waterline that waits for the tick moves in jumps.
+#[test]
+fn the_waterline_glides_between_two_ticks() {
+    // Given:
+    let mut scene = ticked(7, TALL, 1);
+    let mut next = ticked(7, TALL, 2);
+    let lines = |scene: &Tide| waterlines(&pixels(&render(scene, TALL, TALL), TALL));
+    let (mut from, mut to) = (lines(&scene), lines(&next));
+    for _ in 0..TIDE_TICKS {
+        if from.iter().zip(&to).any(|(a, b)| a.abs_diff(*b) >= LEAP) {
+            break;
+        }
+        scene.tick(TALL);
+        next.tick(TALL);
+        (from, to) = (to, lines(&next));
+    }
+    let moving: Vec<usize> = (0..from.len())
+        .filter(|x| from[*x].abs_diff(to[*x]) >= LEAP)
+        .collect();
+    assert!(
+        !moving.is_empty(),
+        "no waterline moves {LEAP} rows in a tick"
+    );
+    let still = render(&scene, TALL, TALL);
+
+    // When:
+    let gliding: Vec<Vec<usize>> = [0.25, 0.5, 0.75]
+        .into_iter()
+        .map(|progress| {
+            scene.set_progress(progress);
+            lines(&scene)
+        })
+        .collect();
+    scene.set_progress(0.0);
+
+    // Then:
+    assert_eq!(
+        render(&scene, TALL, TALL),
+        still,
+        "the frame at no progress"
+    );
+    for x in moving {
+        let path: Vec<usize> = std::iter::once(from[x])
+            .chain(gliding.iter().map(|lines| lines[x]))
+            .chain(std::iter::once(to[x]))
+            .collect();
+        let order = from[x].cmp(&to[x]);
+        assert!(
+            path.windows(2).all(|pair| pair[0].cmp(&pair[1]) == order),
+            "column {x}: waterline {path:?} from one tick to the next"
+        );
+    }
+}
