@@ -28,6 +28,8 @@ const FEW_SECONDS: u32 = 50;
 const NIGHT_AND_A_HALF: u32 = 4500;
 /// Ticks enough for a few trains to cross.
 const TRAINS: u32 = 4000;
+/// The progress between two ticks that a glide test draws at.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
 const PALETTE: &Palette = &theme::ROSE_PINE;
 
 fn render(scene: &City, area: Rect, canvas: Rect) -> Buffer {
@@ -778,4 +780,111 @@ fn a_train_crosses_on_its_line_now_and_then() {
         };
     }
     assert!(crossed >= 2, "{crossed} trains crossed");
+}
+
+/// The leftmost and the rightmost pixel of the train on its lowest row, or
+/// none when no train shows.
+fn train_ends(rows: &[Vec<Color>]) -> Option<(usize, usize)> {
+    let row = &rows[rail(rows) - 1];
+    let left = row.iter().position(|colour| *colour == PALETTE.muted)?;
+    let right = row.iter().rposition(|colour| *colour == PALETTE.muted)?;
+    Some((left, right))
+}
+
+/// Asserts that each column of the train's rows holds the train in all of
+/// them, in its body or its windows, or no pixel of its body.
+fn assert_train_upright(rows: &[Vec<Color>], context: &str) {
+    let rail = rail(rows);
+    let train = &rows[rail - 2 * CELL_HEIGHT..rail];
+    for x in 0..rows[0].len() {
+        let column: Vec<Color> = train.iter().map(|row| row[x]).collect();
+        if column.contains(&PALETTE.muted) {
+            assert!(
+                column
+                    .iter()
+                    .all(|colour| *colour == PALETTE.muted || *colour == PALETTE.gold),
+                "{context}: column {x} of the train holds {column:?}"
+            );
+        }
+    }
+}
+
+/// The train glides a pixel at a time between ticks.
+/// Given: the scene at a hundred by thirty, and a second scene from the
+/// same seed that is never told its progress.
+/// When: both tick until the first train has crossed, and before each tick
+/// the first renders at no progress and at a quarter, a half and three
+/// quarters of the way to the next.
+/// Then: at no progress the first draws the frame of the second. Where an
+/// end of the train is inside the pane at two ticks in a row, at each
+/// progress it lies between its places at the two ticks, and strictly
+/// between them from a half on, over a hundred times. In every frame each
+/// column of the train's rows holds the train in all of them or none of its
+/// body, so the ends of the carriages stand straight.
+///
+/// Why it matters: a train that moves a cell once a tick steps visibly at a
+/// half or a quarter of the speed, and a notch at the end of a carriage
+/// reads as a fault.
+#[test]
+fn the_train_glides_between_ticks() {
+    // Given:
+    let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+    let mut plain = City::new(Rng::seed_from_u64(7), PALETTE);
+    let across = usize::from(AREA.width) * CELL_WIDTH;
+    let inside = |end: usize| end > 0 && end + 1 < across;
+    type Ends = Option<(usize, usize)>;
+    // The train's ends at the last tick, and at each progress after it.
+    let mut last: Option<(Ends, Vec<Ends>)> = None;
+    let (mut seen, mut glided) = (false, 0);
+
+    for tick in 0..TRAINS {
+        // When:
+        scene.tick(AREA);
+        plain.tick(AREA);
+        scene.set_progress(0.0);
+        let rows = frame(&scene, AREA);
+        let now = train_ends(&rows);
+
+        // Then:
+        assert_eq!(rows, frame(&plain, AREA), "tick {tick}");
+        if let Some((Some(before), between)) = &last
+            && let Some(after) = now
+        {
+            for (progress, ends) in BETWEEN.iter().zip(between) {
+                let (left, right) = ends.expect("a train between ticks");
+                let strictly = *progress >= 0.5;
+                for (end, before, after) in [(left, before.0, after.0), (right, before.1, after.1)]
+                {
+                    if !inside(before) || !inside(after) {
+                        continue;
+                    }
+                    glided += usize::from(strictly);
+                    let (low, high) = (before.min(after), before.max(after));
+                    assert!(
+                        if strictly {
+                            low < end && end < high
+                        } else {
+                            low <= end && end <= high
+                        },
+                        "tick {tick}: an end at {end} at progress {progress}, from {before} to {after}"
+                    );
+                }
+            }
+        }
+        let between = BETWEEN
+            .iter()
+            .map(|progress| {
+                scene.set_progress(*progress);
+                let rows = frame(&scene, AREA);
+                assert_train_upright(&rows, &format!("tick {tick} at progress {progress}"));
+                train_ends(&rows)
+            })
+            .collect();
+        seen |= now.is_some();
+        if seen && now.is_none() {
+            break;
+        }
+        last = Some((now, between));
+    }
+    assert!(glided > 100, "the ends of the train glided {glided} times");
 }
