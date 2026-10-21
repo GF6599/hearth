@@ -1,8 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::fire::{self, Fire, MAX_HEAT};
-use hearth::theme;
+use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -52,24 +53,113 @@ fn band_of(colour: Color) -> usize {
         .unwrap_or_else(|| panic!("{colour:?} is not on the ramp"))
 }
 
-/// The heat grid read back from a render as bands of the ramp: the
-/// foreground of a cell is the upper heat row and the background the lower
-/// one, so the grid has twice the rows of the area.
-fn bands(buffer: &Buffer, area: Rect) -> Vec<Vec<usize>> {
-    let mut rows = Vec::with_capacity(usize::from(area.height) * 2);
-    for y in area.rows() {
-        let upper: Vec<usize> = y
-            .columns()
-            .map(|cell| band_of(buffer[(cell.x, cell.y)].fg))
-            .collect();
-        let lower: Vec<usize> = y
-            .columns()
-            .map(|cell| band_of(buffer[(cell.x, cell.y)].bg))
-            .collect();
-        rows.push(upper);
-        rows.push(lower);
+/// The pixels across and down in each cell.
+const ACROSS: usize = octant::CELL_WIDTH;
+const DOWN: usize = octant::CELL_HEIGHT;
+
+/// The pixels of each cell of a render, as the glyph and its two colours
+/// draw them. A cell that is not an octant glyph gives `None` for each.
+fn shown(buffer: &Buffer, area: Rect) -> Vec<Vec<Option<Color>>> {
+    let width = usize::from(area.width) * ACROSS;
+    let mut rows = vec![vec![None; width]; usize::from(area.height) * DOWN];
+    for position in area.positions() {
+        let cell = &buffer[position];
+        let Some(bits) =
+            (0..=u8::MAX).find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
+        else {
+            continue;
+        };
+        let left = usize::from(position.x - area.x) * ACROSS;
+        let top = usize::from(position.y - area.y) * DOWN;
+        for pixel in 0..ACROSS * DOWN {
+            let colour = if bits >> pixel & 1 == 1 {
+                cell.fg
+            } else {
+                cell.bg
+            };
+            rows[top + pixel / ACROSS][left + pixel % ACROSS] = Some(colour);
+        }
     }
     rows
+}
+
+const DARK: Color = Color::Rgb(0, 0, 0);
+const LIGHT: Color = Color::Rgb(255, 255, 255);
+
+/// Rose Pine with each stop of the ramp from `band` up in light and every
+/// other colour in dark. A cell of the whole ramp can hold three colours
+/// and draws only two, but a cell of two tones draws each pixel as it is.
+fn from_band(band: usize) -> &'static Palette {
+    let tone = |colour: Color| {
+        if RAMP[band..].contains(&colour) {
+            LIGHT
+        } else {
+            DARK
+        }
+    };
+    let rose_pine = &theme::ROSE_PINE;
+    Box::leak(Box::new(Palette {
+        base: tone(rose_pine.base),
+        surface: tone(rose_pine.surface),
+        overlay: tone(rose_pine.overlay),
+        muted: tone(rose_pine.muted),
+        subtle: tone(rose_pine.subtle),
+        text: tone(rose_pine.text),
+        love: tone(rose_pine.love),
+        gold: tone(rose_pine.gold),
+        rose: tone(rose_pine.rose),
+        pine: tone(rose_pine.pine),
+        foam: tone(rose_pine.foam),
+        iris: tone(rose_pine.iris),
+    }))
+}
+
+/// One fire for each band above the coldest, from one seed. A palette
+/// changes no tick, so the fires burn in step, and each one's light pixels
+/// are those at its band or above.
+struct Banded {
+    fires: Vec<Fire>,
+}
+
+impl Banded {
+    fn new(seed: u64) -> Self {
+        Self {
+            fires: (1..=FULL)
+                .map(|band| Fire::new(Rng::seed_from_u64(seed), from_band(band)))
+                .collect(),
+        }
+    }
+
+    fn tick(&mut self, area: Rect) {
+        for fire in &mut self.fires {
+            fire.tick(area);
+        }
+    }
+
+    fn renders(&self, area: Rect, canvas: Rect) -> Vec<Buffer> {
+        self.fires
+            .iter()
+            .map(|fire| render(fire, area, canvas))
+            .collect()
+    }
+
+    /// The band of each pixel of the area: the number of fires that draw
+    /// it light.
+    fn bands(&self, area: Rect, canvas: Rect) -> Vec<Vec<usize>> {
+        let lit: Vec<Vec<Vec<Option<Color>>>> = self
+            .renders(area, canvas)
+            .iter()
+            .map(|buffer| shown(buffer, area))
+            .collect();
+        let mut bands =
+            vec![vec![0; usize::from(area.width) * ACROSS]; usize::from(area.height) * DOWN];
+        for (y, row) in bands.iter_mut().enumerate() {
+            for (x, band) in row.iter_mut().enumerate() {
+                *band = lit.iter().filter(|rows| rows[y][x] == Some(LIGHT)).count();
+            }
+        }
+        bands
+    }
 }
 
 /// The dither pattern repeats every four pixels in each direction.
@@ -195,18 +285,18 @@ fn every_cell_is_a_rose_pine_colour() {
 
 /// Given: a scene on a twelve by six area.
 /// When: it ticks and renders twenty times.
-/// Then: on every frame the lower half of every bottom cell is at full
-/// heat.
+/// Then: on every frame the lowest row of pixels, a quarter of every
+/// bottom cell, is at full heat.
 ///
 /// Why it matters: the bottom row is the fuel. A tick that decays it puts
 /// the fire out within seconds.
 #[test]
 fn the_bottom_row_stays_at_full_heat() {
     let area = Rect::new(0, 0, 12, 6);
-    let mut scene = scene(7);
+    let mut fires = Banded::new(7);
     for tick in 0..20 {
-        scene.tick(area);
-        let grid = bands(&render(&scene, area, area), area);
+        fires.tick(area);
+        let grid = fires.bands(area, area);
         let bottom = grid.last().unwrap();
         assert!(
             bottom.iter().all(|&band| band == FULL),
@@ -215,11 +305,16 @@ fn the_bottom_row_stays_at_full_heat() {
     }
 }
 
+/// The heat climbs two rows of pixels a tick, half a cell, and drifts a
+/// pixel to the side for each row, so it comes from as far as two pixels
+/// to either side.
+const CLIMB: usize = 2;
+
 /// Given: a scene on a sixteen by eight area.
 /// When: it ticks forty times, with a render after each.
-/// Then: every pixel's stop is at most one above the hottest of the three
-/// pixels below it on the frame before, which is as far as the dither can
-/// lift a pixel.
+/// Then: every pixel's stop is at most one above the hottest of the five
+/// pixels two rows below it on the frame before, which is as far as the
+/// dither can lift a pixel.
 ///
 /// Why it matters: heat that appears from nowhere, or climbs, reads as
 /// sparks in the sky instead of a fire.
@@ -227,20 +322,20 @@ fn the_bottom_row_stays_at_full_heat() {
 fn heat_only_comes_from_below() {
     // Given:
     let area = Rect::new(0, 0, 16, 8);
-    let mut scene = scene(7);
-    scene.tick(area);
-    let mut previous = bands(&render(&scene, area, area), area);
+    let mut fires = Banded::new(7);
+    fires.tick(area);
+    let mut previous = fires.bands(area, area);
 
     // When:
     for tick in 0..40 {
-        scene.tick(area);
-        let current = bands(&render(&scene, area, area), area);
+        fires.tick(area);
+        let current = fires.bands(area, area);
 
         // Then:
-        for (y, row) in current.iter().enumerate().take(current.len() - 1) {
-            let below = &previous[y + 1];
+        for (y, row) in current.iter().enumerate().take(current.len() - CLIMB) {
+            let below = &previous[y + CLIMB];
             for (x, &band) in row.iter().enumerate() {
-                let hottest_below = (x.saturating_sub(1)..=(x + 1).min(below.len() - 1))
+                let hottest_below = (x.saturating_sub(CLIMB)..=(x + CLIMB).min(below.len() - 1))
                     .map(|sx| below[sx])
                     .max()
                     .unwrap();
@@ -254,6 +349,68 @@ fn heat_only_comes_from_below() {
     }
 }
 
+/// The heat climbs half a cell a tick, in rows a quarter of a cell tall.
+/// Given: a scene on a twelve by twenty-four area, tall enough that the
+/// heat cools little in a row.
+/// When: it ticks once.
+/// Then: the lowest three rows of pixels are warm across the whole width,
+/// and every row above them is cold.
+///
+/// Why it matters: a fire that climbs a whole cell a tick rises at twice
+/// its pace, and one drawn in half cells shows its flames in coarse steps.
+#[test]
+fn the_heat_climbs_half_a_cell_a_tick_in_quarter_cells() {
+    // Given:
+    let area = Rect::new(0, 0, 12, 24);
+    let mut fires = Banded::new(7);
+
+    // When:
+    fires.tick(area);
+
+    // Then:
+    let grid = fires.bands(area, area);
+    let warm = grid.len() - 1 - CLIMB;
+    for (y, row) in grid.iter().enumerate() {
+        let expected = y >= warm;
+        assert!(
+            row.iter().all(|&band| (band > 0) == expected),
+            "row {y} of {}: {row:?}",
+            grid.len()
+        );
+    }
+}
+
+/// Given: a scene on a forty by twenty area.
+/// When: it ticks thirty times and renders.
+/// Then: some cells draw an octant glyph that splits a half of the cell,
+/// across or down.
+///
+/// Why it matters: a fire drawn only in half blocks has a quarter of the
+/// pixels the screen can show, and its flames look coarse.
+#[test]
+fn the_flames_draw_in_octant_glyphs() {
+    // Given:
+    let area = Rect::new(0, 0, 40, 20);
+    let mut scene = scene(7);
+
+    // When:
+    for _ in 0..30 {
+        scene.tick(area);
+    }
+    let buffer = render(&scene, area, area);
+
+    // Then:
+    let halves = [0x00, 0x0f, 0xf0, 0xff].map(octant::glyph);
+    let split = area
+        .positions()
+        .filter(|position| {
+            let glyph = buffer[*position].symbol().chars().next().unwrap();
+            !halves.contains(&glyph)
+        })
+        .count();
+    assert!(split > 0, "every cell is a half block or a space");
+}
+
 /// Given: a scene that ticked on a twenty by ten area.
 /// When: it ticks and renders on a five by three area inside a larger
 /// canvas, then on one cell, then on none.
@@ -263,9 +420,9 @@ fn heat_only_comes_from_below() {
 fn a_smaller_area_drops_the_old_buffer() {
     // Given:
     let canvas = Rect::new(0, 0, 10, 10);
-    let mut scene = scene(7);
+    let mut fires = Banded::new(7);
     for _ in 0..5 {
-        scene.tick(Rect::new(0, 0, 20, 10));
+        fires.tick(Rect::new(0, 0, 20, 10));
     }
 
     // When, then:
@@ -274,15 +431,16 @@ fn a_smaller_area_drops_the_old_buffer() {
         Rect::new(2, 2, 1, 1),
         Rect::new(2, 2, 0, 0),
     ] {
-        scene.tick(area);
-        let buffer = render(&scene, area, canvas);
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
+        fires.tick(area);
+        for buffer in fires.renders(area, canvas) {
+            for position in canvas.positions() {
+                if !area.contains(position) {
+                    assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
+                    assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
+                }
             }
         }
-        if let Some(bottom) = bands(&buffer, area).last() {
+        if let Some(bottom) = fires.bands(area, canvas).last() {
             assert!(bottom.iter().all(|&band| band == FULL), "{bottom:?}");
         }
     }
