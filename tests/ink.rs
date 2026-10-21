@@ -110,20 +110,30 @@ fn every_pixel_is_the_water_mixed_toward_an_accent() {
 /// Given: the scene on a hundred by thirty area, in three seeds.
 /// When: it renders after three hundred ticks.
 /// Then: over a fifth of the inked pixels are mixes, neither the water nor
-/// an accent.
+/// an accent, and of the inked pixels beside the water, over three in four
+/// are faint: less than half as far in brightness from the water as the
+/// dimmest accent.
 ///
 /// Why it matters: a cloud of solid particles reads as a spray of blocks
-/// and not as ink that thins into the water.
+/// and not as ink that thins into the water, and a cloud whose rim is as
+/// strong as its middle has a hard edge however many mixes it holds.
 #[test]
 fn a_cloud_fades_out_at_its_edges() {
+    let palette = &theme::ROSE_PINE;
+    let water = theme::luma(palette.base);
+    let accents = ink::accents(palette);
+    let dimmest = accents
+        .iter()
+        .map(|accent| theme::luma(*accent).abs_diff(water))
+        .min()
+        .unwrap();
     for seed in [1, 7, 42] {
         // When:
-        let scene = ticked(seed, &theme::ROSE_PINE, AREA, 300);
+        let scene = ticked(seed, palette, AREA, 300);
         let buffer = render(&scene, AREA, AREA);
 
         // Then:
-        let accents = ink::accents(&theme::ROSE_PINE);
-        let inked = pixels::showing(&buffer, AREA, |colour| colour != theme::ROSE_PINE.base);
+        let inked = pixels::showing(&buffer, AREA, |colour| colour != palette.base);
         let mixed = inked
             .iter()
             .filter(|(_, colour)| !accents.contains(colour))
@@ -132,6 +142,31 @@ fn a_cloud_fades_out_at_its_edges() {
             mixed * 5 > inked.len(),
             "seed {seed}: {mixed} of {} inked pixels are mixes",
             inked.len()
+        );
+        let grid = pixels::grid(&buffer, AREA, |_, cell| {
+            pixels::shown(cell).unwrap_or([cell.bg; pixels::PIXELS])
+        });
+        let beside_water = |x: usize, y: usize| {
+            [(0, 1), (2, 1), (1, 0), (1, 2)].iter().any(|(dx, dy)| {
+                let (Some(x), Some(y)) = ((x + dx).checked_sub(1), (y + dy).checked_sub(1)) else {
+                    return false;
+                };
+                grid.get(y).and_then(|row| row.get(x)) == Some(&palette.base)
+            })
+        };
+        let rim: Vec<Color> = inked
+            .iter()
+            .filter(|((x, y), _)| beside_water(*x, *y))
+            .map(|(_, colour)| *colour)
+            .collect();
+        let faint = rim
+            .iter()
+            .filter(|colour| theme::luma(**colour).abs_diff(water) * 2 < dimmest)
+            .count();
+        assert!(
+            faint * 4 > rim.len() * 3,
+            "seed {seed}: {faint} of {} pixels at the rim of the ink are faint",
+            rim.len()
         );
     }
 }
