@@ -295,6 +295,41 @@ pub fn settle<L: Layer>(pixels: [Option<(L, Color)>; 8], empty: Color) -> [Color
     })
 }
 
+/// The points across each side of a pixel that sample its coverage. Four
+/// give 17 steps of coverage, enough that the step between two is not seen
+/// in a mix of two theme colours.
+const SAMPLES: usize = 4;
+
+/// Where each sample lies from the centre of its pixel, across or down.
+const OFFSETS: [f32; SAMPLES] = [-0.375, -0.125, 0.125, 0.375];
+
+/// The furthest a sample lies from the centre of its pixel.
+const REACH: f32 = 0.375 * std::f32::consts::SQRT_2;
+
+/// Every pixel along one side that a shape from `low` to `high` can touch,
+/// cut to the `count` pixels of the canvas, so a shape past an edge draws
+/// only the part inside.
+fn span(low: f32, high: f32, count: usize) -> Range<usize> {
+    let start = (low - 1.0).floor().max(0.0) as usize;
+    let end = (high + 2.0).ceil().max(0.0) as usize;
+    start.min(count)..end.min(count)
+}
+
+/// The distance from `point` to the nearest point of the segment from
+/// `from` to `to`.
+fn distance(point: (f32, f32), from: (f32, f32), to: (f32, f32)) -> f32 {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = dx * dx + dy * dy;
+    // A segment of no length is a point, and the share along it would be
+    // 0 / 0.
+    let along = if length == 0.0 {
+        0.0
+    } else {
+        (((point.0 - from.0) * dx + (point.1 - from.1) * dy) / length).clamp(0.0, 1.0)
+    };
+    (point.0 - from.0 - along * dx).hypot(point.1 - from.1 - along * dy)
+}
+
 /// The pixels of a frame, `CELL_WIDTH` across and `CELL_HEIGHT` down in
 /// each cell, that draw into a buffer one glyph to a cell.
 #[derive(Debug, Clone)]
@@ -346,15 +381,112 @@ impl Canvas {
         }
     }
 
-    pub fn blend(&mut self, _x: usize, _y: usize, _colour: Color, _coverage: f32) {}
+    /// Mixes `colour` into the pixel at (x, y) by `coverage`, the share of
+    /// the pixel a shape covers, from 0 to 1. A pixel past an edge is
+    /// dropped.
+    pub fn blend(&mut self, x: usize, y: usize, colour: Color, coverage: f32) {
+        if let Some(index) = self.index(x, y) {
+            self.pixels[index] = mix(self.pixels[index], colour, coverage);
+        }
+    }
 
-    pub fn disc(&mut self, _centre: (f32, f32), _radius: f32, _colour: Color) {}
+    /// Fills the disc of `radius` round `centre`. As for every shape, a
+    /// point is in pixels, and the centre of the pixel at (x, y) lies at
+    /// (x, y), so a shape on whole numbers centres on whole pixels.
+    pub fn disc(&mut self, centre: (f32, f32), radius: f32, colour: Color) {
+        let (x, y) = centre;
+        let bounds = [x - radius, y - radius, x + radius, y + radius];
+        self.fill(bounds, colour, |px, py| (px - x).hypot(py - y) - radius);
+    }
 
-    pub fn line(&mut self, _from: (f32, f32), _to: (f32, f32), _width: f32, _colour: Color) {}
+    /// Draws a line `width` pixels wide from `from` to `to`, with round
+    /// ends, so lines that meet at a point join without a notch.
+    pub fn line(&mut self, from: (f32, f32), to: (f32, f32), width: f32, colour: Color) {
+        let half = width / 2.0;
+        let bounds = [
+            from.0.min(to.0) - half,
+            from.1.min(to.1) - half,
+            from.0.max(to.0) + half,
+            from.1.max(to.1) + half,
+        ];
+        self.fill(bounds, colour, |x, y| distance((x, y), from, to) - half);
+    }
 
-    pub fn polygon(&mut self, _corners: &[(f32, f32)], _colour: Color) {}
+    /// Fills the polygon with `corners` in order, the last joined to the
+    /// first. Where its sides cross, a point is inside when a ray from it
+    /// crosses the sides an odd number of times.
+    pub fn polygon(&mut self, corners: &[(f32, f32)], colour: Color) {
+        let bounds = corners.iter().fold(
+            [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ],
+            |[left, top, right, bottom], &(x, y)| {
+                [left.min(x), top.min(y), right.max(x), bottom.max(y)]
+            },
+        );
+        let sides = || corners.iter().zip(corners.iter().cycle().skip(1));
+        self.fill(bounds, colour, |x, y| {
+            let mut inside = false;
+            let mut nearest = f32::INFINITY;
+            for (&from, &to) in sides() {
+                nearest = nearest.min(distance((x, y), from, to));
+                if (from.1 > y) != (to.1 > y)
+                    && x < from.0 + (y - from.1) / (to.1 - from.1) * (to.0 - from.0)
+                {
+                    inside = !inside;
+                }
+            }
+            if inside { -nearest } else { nearest }
+        });
+    }
 
-    pub fn gradient(&mut self, _rows: Range<usize>, _top: Color, _bottom: Color) {}
+    /// Fills each row of `rows` across the canvas with a mix from `top` in
+    /// the first row to `bottom` in the last. Rows past the bottom edge are
+    /// dropped, and the rows left keep the colours of the whole span.
+    pub fn gradient(&mut self, rows: Range<usize>, top: Color, bottom: Color) {
+        let steps = rows.len().saturating_sub(1).max(1) as f32;
+        let width = self.width();
+        for y in rows.start..rows.end.min(self.height()) {
+            let colour = mix(top, bottom, (y - rows.start) as f32 / steps);
+            self.pixels[y * width..(y + 1) * width].fill(colour);
+        }
+    }
+
+    /// Blends `colour` into each pixel by its coverage of the shape whose
+    /// signed distance is `edge`: how far a point lies outside the shape,
+    /// and below 0 inside. `bounds` holds the shape: left, top, right and
+    /// bottom.
+    ///
+    /// The coverage of a pixel is the share of `SAMPLES` by `SAMPLES`
+    /// points evenly spread over it that lie inside. Each shape takes the
+    /// same points, so a frame draws the same each time. A pixel whose
+    /// centre lies further than `REACH` from the edge has every point on
+    /// one side, so it needs one distance and no samples.
+    fn fill(&mut self, bounds: [f32; 4], colour: Color, edge: impl Fn(f32, f32) -> f32) {
+        let [left, top, right, bottom] = bounds;
+        for y in span(top, bottom, self.height()) {
+            for x in span(left, right, self.width()) {
+                let (cx, cy) = (x as f32, y as f32);
+                let centre = edge(cx, cy);
+                let coverage = if centre <= -REACH {
+                    1.0
+                } else if centre >= REACH {
+                    continue;
+                } else {
+                    let inside = OFFSETS
+                        .iter()
+                        .flat_map(|dy| OFFSETS.iter().map(move |dx| (dx, dy)))
+                        .filter(|(dx, dy)| edge(cx + *dx, cy + *dy) < 0.0)
+                        .count();
+                    inside as f32 / (SAMPLES * SAMPLES) as f32
+                };
+                self.blend(x, y, colour, coverage);
+            }
+        }
+    }
 
     /// Draws each cell into `buf` from the top left of `area`. Cells past
     /// the area are not drawn.
