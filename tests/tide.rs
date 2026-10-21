@@ -2,11 +2,12 @@
 
 mod pixels;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::tide::{DRY_TICKS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
 use hearth::scenes::typing::Speed;
@@ -768,5 +769,79 @@ fn the_waterline_glides_between_two_ticks() {
             path.windows(2).all(|pair| pair[0].cmp(&pair[1]) == order),
             "column {x}: waterline {path:?} from one tick to the next"
         );
+    }
+}
+
+/// Each colour within a channel step of `colour`.
+fn around(colour: Color) -> Vec<(u8, u8, u8)> {
+    let (r, g, b) = channels(colour);
+    (0..27)
+        .map(|at| {
+            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
+            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
+        })
+        .collect()
+}
+
+/// Every colour within a channel step of a mix strictly between `base` and
+/// one of `colours`, sampled finely along each mix, less the colours within
+/// a step of the base or of one of `colours` themselves.
+fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
+    let mut near: HashSet<(u8, u8, u8)> = colours
+        .iter()
+        .flat_map(|colour| {
+            (1..200).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
+        })
+        .collect();
+    for end in colours.iter().chain([&base]) {
+        for each in around(*end) {
+            near.remove(&each);
+        }
+    }
+    near
+}
+
+/// Over the terminal's background the beach mixes no colour with the base.
+/// Given: the scene in flat Rose Pine, whose base and surface are the
+/// terminal's own background.
+/// When: it ticks and renders over two minutes.
+/// Then: no pixel lies on a mix from the base toward pine, foam, gold, rose
+/// or love, the colours the beach draws.
+///
+/// Why it matters: a mix with a see-through base is an opaque colour that
+/// darkens toward the theme's base, which the user does not see, so deep
+/// water and wet sand show a colour that is not on their screen.
+#[test]
+fn over_the_terminal_background_nothing_mixes_with_the_base() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[0];
+    let drawn = [
+        palette.pine,
+        palette.foam,
+        palette.gold,
+        palette.rose,
+        palette.love,
+    ];
+    let mixes = base_mixes(palette.base, &drawn);
+    let mut scene = Tide::new(Rng::seed_from_u64(7), palette);
+    for tick in 0..2000 {
+        scene.tick(AREA);
+        if tick % 100 != 0 {
+            continue;
+        }
+
+        // When:
+        let grid = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        for (y, row) in grid.iter().enumerate() {
+            for (x, colour) in row.iter().enumerate() {
+                assert!(
+                    !mixes.contains(&channels(*colour)),
+                    "tick {tick}: {colour:?} at {:?} mixes with the base",
+                    (x, y)
+                );
+            }
+        }
     }
 }
