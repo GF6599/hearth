@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::dither;
-use crate::quadrant;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -22,8 +22,9 @@ pub const EMIT_TICKS: u32 = 24;
 /// it out all at once.
 pub const LIFETIME: RangeInclusive<u32> = 320..=640;
 /// The ink in one pixel that colours the whole of it. Less colours that
-/// share of a dither tile.
-pub const FULL_INK: f32 = 1.0;
+/// share of a dither tile. Two units of ink in a square unit colour it
+/// whole, and a pixel is a quarter of a square unit.
+pub const FULL_INK: f32 = 0.5;
 
 const PARTICLES_PER_TICK: usize = 32;
 /// Speeds in pixels a tick. The head enters fast and slows as the water
@@ -53,9 +54,11 @@ const MARGIN: f32 = 0.15;
 /// Keeps a clamped particle strictly inside the last pixel.
 const INSIDE: f32 = 0.01;
 
-/// A cell draws two by two pixels. The ink moves in square units, one
-/// cell across by half a cell down, so a pixel is half a unit across.
-const PIXELS_ACROSS: usize = 2;
+/// The ink moves in square units, one cell across by half a cell down, so
+/// a pixel is half a unit across and half a unit down.
+const UNITS_DOWN: usize = 2;
+const PIXELS_ACROSS: usize = CELL_WIDTH;
+const PIXELS_DOWN: usize = CELL_HEIGHT / UNITS_DOWN;
 const SHADES: f32 = dither::SHADES as f32;
 
 /// The roles a drop can take, in the order `shade` reads its inks.
@@ -265,12 +268,12 @@ impl Ink {
     /// among the four pixels nearest it, by how near each is, so a cloud
     /// that thins stays a cloud and does not break into lone dots.
     fn inks(&self) -> Vec<[f32; 5]> {
-        let columns = self.width * PIXELS_ACROSS;
-        let mut inks = vec![[0.0_f32; 5]; columns * self.rows];
+        let (columns, rows) = (self.width * PIXELS_ACROSS, self.rows * PIXELS_DOWN);
+        let mut inks = vec![[0.0_f32; 5]; columns * rows];
         for drop in &self.drops {
             for particle in &drop.particles {
                 let x = particle.x * PIXELS_ACROSS as f32 - 0.5;
-                let y = particle.y - 0.5;
+                let y = particle.y * PIXELS_DOWN as f32 - 0.5;
                 let (left, top) = (x.floor(), y.floor());
                 let (right_share, lower_share) = (x - left, y - top);
                 for (column, across) in [(left, 1.0 - right_share), (left + 1.0, right_share)] {
@@ -279,7 +282,7 @@ impl Ink {
                             continue;
                         }
                         let (column, row) = (column as usize, row as usize);
-                        if column < columns && row < self.rows {
+                        if column < columns && row < rows {
                             inks[row * columns + column][drop.accent] +=
                                 particle.ink() * across * down;
                         }
@@ -301,7 +304,7 @@ impl Ink {
 impl Scene for Ink {
     fn tick(&mut self, area: Rect) {
         let width = usize::from(area.width);
-        let rows = usize::from(area.height) * 2;
+        let rows = usize::from(area.height) * UNITS_DOWN;
         if (width, rows) != (self.width, self.rows) {
             self.width = width;
             self.rows = rows;
@@ -357,28 +360,15 @@ impl Scene for Ink {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        let width = u16::try_from(self.width).unwrap_or(u16::MAX);
+        let height = u16::try_from(self.rows / UNITS_DOWN).unwrap_or(u16::MAX);
         let inks = self.inks();
-        let columns = self.width * PIXELS_ACROSS;
-        for y in 0..area.height {
-            let top = usize::from(y) * 2;
-            if top + 1 >= self.rows {
-                break;
-            }
-            for x in 0..area.width {
-                if usize::from(x) >= self.width {
-                    break;
-                }
-                let left = usize::from(x) * PIXELS_ACROSS;
-                let pixels = std::array::from_fn(|quarter| {
-                    let (column, row) = (left + quarter % 2, top + quarter / 2);
-                    shade(self.palette, &inks[row * columns + column], column, row)
-                });
-                let (glyph, ink, water) = quadrant::cell(pixels, self.palette.base);
-                buf[(area.x + x, area.y + y)]
-                    .set_char(glyph)
-                    .set_fg(ink)
-                    .set_bg(water);
-            }
+        let mut canvas = Canvas::new(width, height, self.palette.base);
+        let columns = canvas.width();
+        for (index, ink) in inks.iter().enumerate() {
+            let (column, row) = (index % columns, index / columns);
+            canvas.set(column, row, shade(self.palette, ink, column, row));
         }
+        canvas.render(area, buf);
     }
 }
