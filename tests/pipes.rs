@@ -4,9 +4,10 @@ mod pixels;
 
 use std::collections::BTreeSet;
 
+use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::pipes::{Direction, FILL_PERCENT, Pipes};
-use hearth::theme;
+use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -47,23 +48,99 @@ fn places(lit: &[((usize, usize), Color)]) -> BTreeSet<(usize, usize)> {
     lit.iter().map(|(place, _)| *place).collect()
 }
 
+/// The colours a pipe can take: every accent but the marker.
+fn pipe_colours(palette: &Palette) -> Vec<Color> {
+    [
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.pine,
+        palette.foam,
+        palette.iris,
+    ]
+    .into_iter()
+    .filter(|colour| *colour != palette.marker())
+    .collect()
+}
+
+/// The pixels of `lit` in a pipe's own colour, whole and not mixed: the
+/// path of each pipe, without its soft edges.
+fn paths(lit: &[((usize, usize), Color)], palette: &Palette) -> Vec<((usize, usize), Color)> {
+    let colours = pipe_colours(palette);
+    lit.iter()
+        .filter(|(_, colour)| colours.contains(colour))
+        .copied()
+        .collect()
+}
+
+/// Each pixel of `path` and the eight round it.
+fn round(path: &BTreeSet<(usize, usize)>) -> BTreeSet<(usize, usize)> {
+    path.iter()
+        .flat_map(|&(x, y)| {
+            (x.saturating_sub(1)..=x + 1)
+                .flat_map(move |nx| (y.saturating_sub(1)..=y + 1).map(move |ny| (nx, ny)))
+        })
+        .collect()
+}
+
+/// How far `colour` lies from `from` towards `to`, from 0 to 1, or none for
+/// a colour that is no mix of the two. Either end reads exactly. A mix is
+/// read back to within two in each channel, so the rounding of a mix to 8
+/// bits does not count.
+fn share(colour: Color, from: Color, to: Color) -> Option<f32> {
+    const STEPS: u16 = 128;
+    if colour == from {
+        return Some(0.0);
+    }
+    if colour == to {
+        return Some(1.0);
+    }
+    let Color::Rgb(r, g, b) = colour else {
+        return None;
+    };
+    (0..=STEPS)
+        .map(|step| f32::from(step) / f32::from(STEPS))
+        .filter_map(|share| {
+            let Color::Rgb(mr, mg, mb) = octant::mix(from, to, share) else {
+                return None;
+            };
+            let gap = [r.abs_diff(mr), g.abs_diff(mg), b.abs_diff(mb)]
+                .into_iter()
+                .max()
+                .unwrap_or(0);
+            (gap <= 2).then_some((gap, share))
+        })
+        .min_by_key(|(gap, _)| *gap)
+        .map(|(_, share)| share)
+}
+
+/// The colour of the pixel at (x, y) in a render of `scene`.
+fn pixel(scene: &Pipes, area: Rect, (x, y): (usize, usize)) -> Color {
+    let rows = pixels::grid(&render(scene, area), area, |_, cell| {
+        pixels::shown(cell).unwrap_or_else(|| panic!("{:?} is not an octant glyph", cell.symbol()))
+    });
+    rows[y][x]
+}
+
 /// Given: a pipe at pixel (4, 9) that arrived moving right.
 /// When: it moves right, then down, then down.
-/// Then: one line of pixels in one colour runs two pixels right from
-/// (4, 9), then turns at (6, 9) and runs down to (6, 16), and no other
-/// pixel is lit.
+/// Then: the pixels in the pipe's own colour run two pixels right from
+/// (4, 9), then turn at (6, 9) and run down to (6, 16), all in one colour,
+/// and every other lit pixel lies next to that path.
 ///
 /// Why it matters: a step spans one cell, two pixels across or four down,
 /// so the pipe grows as fast on screen in cells as it did in runes. A gap
-/// or a stray pixel at the turn shows as a pipe that breaks at every
-/// corner.
+/// at the turn shows as a pipe that breaks at every corner, and a pixel
+/// away from the path shows as a stray. The soft edges and the round
+/// corner lie next to the path.
 #[test]
 fn a_turn_from_right_to_down_draws_a_joined_line_of_pixels() {
     // Given, when:
     let area = Rect::new(0, 0, 10, 6);
+    let palette = &theme::ROSE_PINE;
     let scene = Pipes::trace(
         Rng::seed_from_u64(7),
-        &theme::ROSE_PINE,
+        palette,
         area,
         (4, 9),
         Direction::Right,
@@ -71,27 +148,36 @@ fn a_turn_from_right_to_down_draws_a_joined_line_of_pixels() {
     );
 
     // Then:
-    let lit = lit(&render(&scene, area), theme::ROSE_PINE.base);
+    let lit = lit(&render(&scene, area), palette.base);
     let line: BTreeSet<(usize, usize)> = [(4, 9), (5, 9)]
         .into_iter()
         .chain((9..=16).map(|y| (6, y)))
         .collect();
-    assert_eq!(places(&lit), line);
-    let colours: BTreeSet<String> = lit.iter().map(|(_, c)| format!("{c:?}")).collect();
-    assert_eq!(colours.len(), 1, "the line shows {colours:?}");
+    let path = paths(&lit, palette);
+    let shown = places(&path);
+    assert!(shown.is_superset(&line), "the path shows {shown:?}");
+    let near = round(&line);
+    assert!(
+        places(&lit).is_subset(&near),
+        "a pixel lies away from the path: {:?}",
+        places(&lit).difference(&near).collect::<Vec<_>>()
+    );
+    let colours: BTreeSet<String> = path.iter().map(|(_, c)| format!("{c:?}")).collect();
+    assert_eq!(colours.len(), 1, "the path shows {colours:?}");
 }
 
 /// Given: a pipe at pixel (18, 9), in the last column, moving right.
 /// When: it moves right twice.
-/// Then: the second step lights the first two pixels of the same pixel
-/// row, and only the two cells at either edge show the pipe.
+/// Then: the second step draws its path in the first two pixels of the
+/// same pixel row, and only the two cells at either edge show the pipe.
 #[test]
 fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
     // Given, when:
     let area = Rect::new(0, 0, 10, 6);
+    let palette = &theme::ROSE_PINE;
     let scene = Pipes::trace(
         Rng::seed_from_u64(7),
-        &theme::ROSE_PINE,
+        palette,
         area,
         (18, 9),
         Direction::Right,
@@ -100,9 +186,9 @@ fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
 
     // Then:
     let buffer = render(&scene, area);
-    let lit = lit(&buffer, theme::ROSE_PINE.base);
+    let lit = lit(&buffer, palette.base);
     let line = BTreeSet::from([(18, 9), (19, 9), (0, 9), (1, 9)]);
-    assert_eq!(places(&lit), line);
+    assert_eq!(places(&paths(&lit, palette)), line);
     assert_eq!(drawn(&buffer), 2);
 }
 
@@ -170,14 +256,22 @@ fn no_pipe_is_in_the_marker_colour() {
     }
 }
 
-/// Each colour drawn, with the number of separate pipes in it: groups of
-/// drawn cells of that colour that touch, diagonals included.
-fn pipes_by_colour(buffer: &Buffer) -> Vec<(String, usize)> {
+/// Each pipe colour drawn, with the number of separate pipes in it:
+/// groups of cells that show that colour and touch, diagonals included. A
+/// cell that shows only the soft edge of a pipe names no pipe.
+fn pipes_by_colour(buffer: &Buffer, palette: &Palette) -> Vec<(String, usize)> {
+    let colours = pipe_colours(palette);
     let mut left: Vec<(u16, u16, String)> = buffer
         .area
         .positions()
         .filter(|&p| buffer[p].symbol() != " ")
-        .map(|p| (p.x, p.y, format!("{:?}", buffer[p].fg)))
+        .filter_map(|p| {
+            let cell = &buffer[p];
+            [cell.fg, cell.bg]
+                .into_iter()
+                .find(|colour| colours.contains(colour))
+                .map(|colour| (p.x, p.y, format!("{colour:?}")))
+        })
         .collect();
     let mut groups: Vec<String> = Vec::new();
     while let Some(start) = left.pop() {
@@ -237,7 +331,7 @@ fn each_live_pipe_shows_its_own_colour() {
 
                 // Then:
                 let buffer = render(&scene, area);
-                let pipes = pipes_by_colour(&buffer);
+                let pipes = pipes_by_colour(&buffer, palette);
                 let count: usize = pipes.iter().map(|(_, groups)| groups).sum();
                 if count <= colours.len() {
                     assert!(
@@ -324,4 +418,77 @@ fn the_same_seed_lays_the_same_pipes() {
 
     // Then:
     assert_eq!(render(&first, area), render(&second, area));
+}
+
+/// A pipe down has soft edges: the pixels beside its path are partly
+/// covered.
+/// Given: a pipe at pixel (5, 4) that arrived moving down.
+/// When: it moves down twice.
+/// Then: each pixel right of the path is a mix of the base and the pipe's
+/// colour, partway between the two.
+///
+/// Why it matters: a line of whole pixels steps from the pipe to the base
+/// in one jump, and reads as blocky. A partly covered edge reads as a
+/// smooth line.
+#[test]
+fn a_pipe_down_has_soft_edges() {
+    // Given, when:
+    let area = Rect::new(0, 0, 10, 6);
+    let palette = &theme::ROSE_PINE;
+    let scene = Pipes::trace(
+        Rng::seed_from_u64(7),
+        palette,
+        area,
+        (5, 4),
+        Direction::Down,
+        &[Direction::Down, Direction::Down],
+    );
+
+    // Then:
+    let colour = pixel(&scene, area, (5, 8));
+    for y in 5..=10 {
+        let edge = pixel(&scene, area, (6, y));
+        let share = share(edge, palette.base, colour)
+            .unwrap_or_else(|| panic!("{edge:?} at (6, {y}) is no mix of the base and {colour:?}"));
+        assert!(
+            0.0 < share && share < 1.0,
+            "the edge at (6, {y}) is at {share}"
+        );
+    }
+}
+
+/// A pipe down has a highlight on one side.
+/// Given: a pipe at pixel (5, 4) that arrived moving down.
+/// When: it moves down twice.
+/// Then: beside the path, the pixel on the left is lighter than the pixel
+/// on the right, and each is lighter than the base and is not the pipe's
+/// colour.
+///
+/// Why it matters: a pipe in one flat colour reads as a line. A lighter
+/// side and a darker side read as a round tube in the light.
+#[test]
+fn a_pipe_down_is_lighter_on_one_side() {
+    // Given, when:
+    let area = Rect::new(0, 0, 10, 6);
+    let palette = &theme::ROSE_PINE;
+    let scene = Pipes::trace(
+        Rng::seed_from_u64(7),
+        palette,
+        area,
+        (5, 4),
+        Direction::Down,
+        &[Direction::Down, Direction::Down],
+    );
+
+    // Then:
+    let colour = pixel(&scene, area, (5, 8));
+    let (left, right) = (pixel(&scene, area, (4, 8)), pixel(&scene, area, (6, 8)));
+    assert!(
+        theme::luma(left) > theme::luma(right) && theme::luma(right) > theme::luma(palette.base),
+        "left {left:?}, right {right:?}"
+    );
+    assert!(
+        left != colour && right != colour,
+        "an edge is the pipe's colour"
+    );
 }
