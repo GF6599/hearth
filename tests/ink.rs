@@ -44,6 +44,11 @@ fn inked_pixels(buffer: &Buffer, area: Rect, base: Color) -> Vec<(usize, usize)>
         .collect()
 }
 
+/// The mean pixel row of `pixels`.
+fn mean_row(pixels: &[(usize, usize)]) -> f32 {
+    pixels.iter().map(|(_, row)| *row as f32).sum::<f32>() / pixels.len() as f32
+}
+
 fn tile() -> impl Iterator<Item = (usize, usize)> {
     (0..TILE).flat_map(|row| (0..TILE).map(move |x| (x, row)))
 }
@@ -206,9 +211,6 @@ fn two_inks_in_one_pixel_mix_by_dither() {
 #[test]
 fn a_drop_opens_out_as_it_sinks() {
     let base = theme::ROSE_PINE.base;
-    let mean_row = |pixels: &[(usize, usize)]| {
-        pixels.iter().map(|(_, row)| *row as f32).sum::<f32>() / pixels.len() as f32
-    };
     for seed in [1, 7, 42] {
         // When:
         let early = ticked(seed, &theme::ROSE_PINE, AREA, 3);
@@ -536,6 +538,50 @@ fn the_current_carries_a_cloud_sideways() {
         assert!(
             (after - before).abs() >= 1.5,
             "seed {seed}: {before} then {after}"
+        );
+    }
+}
+
+/// A sinking cloud glides down between two ticks.
+/// Given: the scene on a hundred by thirty area, in three seeds, after four
+/// ticks, while the ink of the first drop still sinks fast.
+/// When: it renders a quarter, a half and three quarters of the way to the
+/// next tick, and again at no progress.
+/// Then: at no progress the frame is the frame of a scene that was never
+/// given progress. The mean row of the inked pixels at each progress lies
+/// strictly between its rows at the two ticks, in the order of the
+/// progress.
+///
+/// Why it matters: at a slow rate a scene ticks once in eight or sixteen
+/// frames, and ink that waits for the tick moves in jumps.
+#[test]
+fn a_cloud_glides_between_two_ticks() {
+    let base = theme::ROSE_PINE.base;
+    for seed in [1, 7, 42] {
+        // Given:
+        let mut scene = ticked(seed, &theme::ROSE_PINE, AREA, 4);
+        let next = ticked(seed, &theme::ROSE_PINE, AREA, 5);
+        let row = |scene: &Ink| mean_row(&inked_pixels(&render(scene, AREA, AREA), AREA, base));
+        let still = render(&scene, AREA, AREA);
+
+        // When:
+        let mut path = vec![row(&scene)];
+        for progress in [0.25, 0.5, 0.75] {
+            scene.set_progress(progress);
+            path.push(row(&scene));
+        }
+        path.push(row(&next));
+        scene.set_progress(0.0);
+
+        // Then:
+        assert_eq!(
+            render(&scene, AREA, AREA),
+            still,
+            "seed {seed}: the frame at no progress"
+        );
+        assert!(
+            path.windows(2).all(|pair| pair[0] < pair[1]),
+            "seed {seed}: mean row {path:?} from one tick to the next"
         );
     }
 }
