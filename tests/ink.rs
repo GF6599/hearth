@@ -604,15 +604,28 @@ fn the_current_carries_a_cloud_sideways() {
     }
 }
 
+/// The mean pixel row of a render, each pixel weighed by how far its
+/// brightness lies from the water's, so a pixel with more ink counts more.
+fn ink_row(buffer: &Buffer, area: Rect, base: Color) -> f32 {
+    let water = theme::luma(base);
+    let (sum, weight) = pixels::showing(buffer, area, |colour| colour != base)
+        .into_iter()
+        .fold((0.0, 0.0), |(sum, weight), ((_, row), colour)| {
+            let ink = theme::luma(colour).abs_diff(water) as f32;
+            (sum + row as f32 * ink, weight + ink)
+        });
+    sum / weight
+}
+
 /// A sinking cloud glides down between two ticks.
 /// Given: the scene on a hundred by thirty area, in three seeds, after four
 /// ticks, while the ink of the first drop still sinks fast.
 /// When: it renders a quarter, a half and three quarters of the way to the
 /// next tick, and again at no progress.
 /// Then: at no progress the frame is the frame of a scene that was never
-/// given progress. The mean row of the inked pixels at each progress lies
-/// strictly between its rows at the two ticks, in the order of the
-/// progress.
+/// given progress. The mean row of the ink, each pixel weighed by its ink,
+/// at each progress lies strictly between its rows at the two ticks, in
+/// the order of the progress.
 ///
 /// Why it matters: at a slow rate a scene ticks once in eight or sixteen
 /// frames, and ink that waits for the tick moves in jumps.
@@ -623,7 +636,7 @@ fn a_cloud_glides_between_two_ticks() {
         // Given:
         let mut scene = ticked(seed, &theme::ROSE_PINE, AREA, 4);
         let next = ticked(seed, &theme::ROSE_PINE, AREA, 5);
-        let row = |scene: &Ink| mean_row(&inked_pixels(&render(scene, AREA, AREA), AREA, base));
+        let row = |scene: &Ink| ink_row(&render(scene, AREA, AREA), AREA, base);
         let still = render(&scene, AREA, AREA);
 
         // When:
