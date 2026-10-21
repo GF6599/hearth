@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -17,7 +19,7 @@ use hearth::scenes::river::{NOTICE, READING, River};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
@@ -128,26 +130,32 @@ fn rows(buffer: &Buffer, area: Rect) -> Vec<String> {
 
 type Cells = Vec<(u16, u16)>;
 
+/// How many pixels of a cell show one of `colours`, and none for a cell
+/// that holds no octant glyph, such as a letter of a subject.
+fn count(cell: &Cell, colours: &[Color]) -> usize {
+    pixels::shown(cell).map_or(0, |shown| {
+        shown
+            .iter()
+            .filter(|colour| colours.contains(colour))
+            .count()
+    })
+}
+
 /// The cells of the area that draw something in one of `colours`.
 fn cells(buffer: &Buffer, area: Rect, colours: &[Color]) -> Cells {
     area.positions()
-        .filter(|position| {
-            let cell = &buffer[*position];
-            cell.symbol() != " " && cell.symbol() != "\u{2800}" && colours.contains(&cell.fg)
-        })
+        .filter(|position| count(&buffer[*position], colours) > 0)
         .map(|position| (position.x, position.y))
         .collect()
 }
 
-/// The cells of the lanes: pine or foam with five dots or more. A ripple on
-/// the open water is pine too, but it holds four dots at the most.
+/// The cells of the lanes: pine or foam in five pixels or more. A ripple on
+/// the open water is pine too, but it lies on one row of pixels, two at the
+/// most in a cell.
 fn lanes(buffer: &Buffer, area: Rect) -> Cells {
-    cells(buffer, area, &[PALETTE.pine, PALETTE.foam])
-        .into_iter()
-        .filter(|position| {
-            let glyph = buffer[*position].symbol().chars().next().unwrap_or(' ');
-            (glyph as u32).wrapping_sub(0x2800).count_ones() >= 5
-        })
+    area.positions()
+        .filter(|position| count(&buffer[*position], &[PALETTE.pine, PALETTE.foam]) >= 5)
+        .map(|position| (position.x, position.y))
         .collect()
 }
 
@@ -540,11 +548,12 @@ fn river_is_a_scene_by_name() {
 }
 
 /// The subject at the pane's middle row, if one shows there: the piece of
-/// the row between braille glyphs that holds a letter or a digit, because
-/// water and sand lie on both sides of it.
+/// the row between octant glyphs that holds a letter or a digit, because
+/// water and sand lie on both sides of it. A space is an octant glyph too,
+/// and the subject holds spaces, so a space does not split it.
 fn middle_subject(buffer: &Buffer, area: Rect) -> Option<String> {
     let row = &rows(buffer, area)[usize::from(area.height / 2)];
-    row.split(|c: char| ('\u{2800}'..='\u{28ff}').contains(&c))
+    row.split(|c: char| c != ' ' && pixels::shown(Cell::default().set_char(c)).is_some())
         .map(str::trim)
         .find(|piece| piece.chars().any(|c| c.is_ascii_alphanumeric()))
         .map(str::to_string)
@@ -770,10 +779,10 @@ fn no_scene_but_the_river_runs_git() {
 /// The river fills the middle of the pane between two banks.
 /// Given: the river of a linear history and of one that splits and merges.
 /// When: it renders.
-/// Then: in every row but the subject's, the water is one run of cells at
-/// least two fifths of the pane wide, with its middle within a tenth of
-/// the pane of the pane's middle and a bank cell beside it on each side,
-/// and every lane and stone lies in the water.
+/// Then: in every row but the subject's, the river, its bed and all that
+/// lies in it, is one run of cells at least two fifths of the pane wide,
+/// with its middle within a tenth of the pane of the pane's middle and a
+/// bank cell beside it on each side, and every lane and stone lies in it.
 ///
 /// Why it matters: lanes in a corner of an empty pane read as a diagram,
 /// and a history of one lane must still read as a river.
@@ -788,6 +797,14 @@ fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
         let buffer = render(&scene, AREA, AREA);
 
         // Then:
+        let river = [
+            PALETTE.overlay,
+            PALETTE.pine,
+            PALETTE.foam,
+            PALETTE.subtle,
+            PALETTE.iris,
+        ];
+        let mut rivers = Vec::new();
         let rows_text = rows(&buffer, AREA);
         for y in AREA.top()..AREA.bottom() {
             if rows_text[usize::from(y)]
@@ -797,7 +814,7 @@ fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
                 continue;
             }
             let water: Vec<u16> = (AREA.left()..AREA.right())
-                .filter(|x| buffer[(*x, y)].bg == PALETTE.overlay)
+                .filter(|x| count(&buffer[(*x, y)], &river) > 0)
                 .collect();
             let (first, last) = (water[0], water[water.len() - 1]);
             assert_eq!(
@@ -817,25 +834,61 @@ fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
             );
             for bank in [first.checked_sub(1), Some(last + 1)] {
                 let bank = bank.expect("a bank inside the pane");
-                assert_eq!(
-                    buffer[(bank, y)].fg,
-                    PALETTE.gold,
+                assert!(
+                    count(&buffer[(bank, y)], &[PALETTE.gold]) > 0,
                     "row {y}: no bank at {bank}"
                 );
             }
+            rivers.push((y, first, last));
         }
         for (x, y) in cells(
             &buffer,
             AREA,
             &[PALETTE.pine, PALETTE.foam, PALETTE.subtle, PALETTE.iris],
         ) {
-            assert_eq!(
-                buffer[(x, y)].bg,
-                PALETTE.overlay,
+            assert!(
+                rivers
+                    .iter()
+                    .all(|(row, first, last)| *row != y || (first..=last).contains(&&x)),
                 "{:?} out of the water",
                 (x, y)
             );
         }
         let _ = fs::remove_dir_all(&repo);
     }
+}
+
+/// A stone sits in the water of its lane.
+/// Given: the river of a repository whose history splits and merges.
+/// When: it ticks and renders for a while.
+/// Then: in some frames a cell shows a stone and the water of its lane
+/// together.
+///
+/// Why it matters: a cell that drops the water where a stone is cuts the
+/// lane into a square round the stone, and the stone reads as a block in
+/// a gap and not as a stone in the water.
+#[test]
+fn a_stone_sits_in_the_water_of_its_lane() {
+    // Given:
+    let repo = branched("stone");
+    let mut scene = river(&repo);
+    let mut shared = 0;
+
+    for _ in 0..200 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        shared += AREA
+            .positions()
+            .filter(|position| {
+                let cell = &buffer[*position];
+                count(cell, &[PALETTE.subtle, PALETTE.iris]) > 0
+                    && count(cell, &[PALETTE.pine, PALETTE.foam]) > 0
+            })
+            .count();
+    }
+    assert!(shared > 0, "no cell shows a stone and water together");
+    let _ = fs::remove_dir_all(&repo);
 }
