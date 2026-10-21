@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -8,7 +10,7 @@ use hearth::corpus::Corpus;
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration};
 use hearth::scenes::typing::Speed;
-use hearth::theme;
+use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -16,13 +18,15 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 
-/// A braille cell is two dots wide and four tall.
+/// An octant cell is two dots wide and four tall.
 const CELL_DOTS: (usize, usize) = (2, 4);
 
-const BLANK_BRAILLE: u32 = 0x2800;
-
-/// The trees are drawn in half blocks, an upper and a lower pixel a cell.
-const HALF_BLOCK: &str = "▀";
+/// The colours a bird draws in, faint and bright, and the hawk's.
+const FLIGHT: [Color; 3] = [
+    theme::ROSE_PINE.subtle,
+    theme::ROSE_PINE.text,
+    theme::ROSE_PINE.love,
+];
 
 fn ticked(seed: u64, area: Rect, ticks: usize) -> Murmuration {
     let mut scene = Murmuration::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
@@ -38,39 +42,29 @@ fn render(scene: &Murmuration, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The dots a braille glyph lights, as (column, row) inside its cell, by
-/// the Unicode table: bits 0 to 2 run down the left column, bits 3 to 5
-/// down the right, and bits 6 and 7 are the bottom row.
-fn braille_dots(symbol: &str) -> Option<Vec<(usize, usize)>> {
-    let glyph = u32::from(symbol.chars().next()?);
-    let bits = glyph
-        .checked_sub(BLANK_BRAILLE)
-        .filter(|bits| *bits <= 0xFF)?;
-    Some(
-        (0..8)
-            .filter(|bit| bits & (1 << bit) != 0)
-            .map(|bit| match bit {
-                0..=2 => (0, bit),
-                3..=5 => (1, bit - 3),
-                6 => (0, 3),
-                _ => (1, 3),
-            })
-            .collect(),
-    )
-}
-
-/// Every lit dot of a render, in dots from the top left of the area.
-fn lit_dots(buffer: &Buffer, area: Rect) -> BTreeSet<(usize, usize)> {
+/// Each pixel of a render in one of `colours`, in dots from the top left
+/// of the area.
+fn dots_in(buffer: &Buffer, area: Rect, colours: &[Color]) -> BTreeSet<(usize, usize)> {
     let mut lit = BTreeSet::new();
     for position in area.positions() {
-        let Some(dots) = braille_dots(buffer[position].symbol()) else {
+        let Some(shown) = pixels::shown(&buffer[position]) else {
             continue;
         };
         let column = usize::from(position.x - area.x) * CELL_DOTS.0;
         let row = usize::from(position.y - area.y) * CELL_DOTS.1;
-        lit.extend(dots.into_iter().map(|(x, y)| (column + x, row + y)));
+        lit.extend(
+            (0..8)
+                .filter(|pixel| colours.contains(&shown[*pixel]))
+                .map(|pixel| (column + pixel % CELL_DOTS.0, row + pixel / CELL_DOTS.0)),
+        );
     }
     lit
+}
+
+/// Every lit dot of a render, a bird or the hawk, in dots from the top left
+/// of the area.
+fn lit_dots(buffer: &Buffer, area: Rect) -> BTreeSet<(usize, usize)> {
+    dots_in(buffer, area, &FLIGHT)
 }
 
 fn dots_of(area: Rect) -> (f32, f32) {
@@ -112,10 +106,10 @@ fn the_flock_grows_with_the_pane_within_its_bounds() {
 
 /// Given: the scene on a hundred by thirty area, fifty ticks in.
 /// When: it renders.
-/// Then: the dots the braille glyphs light are the dots the birds sit on,
+/// Then: the pixels lit in a bird's colour are the dots the birds sit on,
 /// no more and no fewer.
 ///
-/// Why it matters: a wrong bit in the braille table draws a bird one dot
+/// Why it matters: a wrong bit in the octant table draws a bird one dot
 /// off, and the folds of the flock smear.
 #[test]
 fn every_bird_shows_as_a_dot_and_every_dot_is_a_bird() {
@@ -135,10 +129,11 @@ fn every_bird_shows_as_a_dot_and_every_dot_is_a_bird() {
 
 /// Given: the scene on a hundred by thirty area, a hundred ticks in.
 /// When: it renders.
-/// Then: every cell above the trees is blank or braille, a cell with one
-/// or two dots is subtle, and a cell with three or more is text.
+/// Then: every cell above the trees is octant pixels, with the birds of a
+/// cell in one shade over the sky: subtle for one or two birds, and text
+/// for three or more.
 ///
-/// Why it matters: one braille cell takes one colour, so the dots in it
+/// Why it matters: a cell holds the sky and one shade, so the birds in it
 /// are what shades the flock from a faint edge to a bright core.
 #[test]
 fn a_cell_with_more_birds_is_brighter() {
@@ -147,20 +142,25 @@ fn a_cell_with_more_birds_is_brighter() {
 
     // Then:
     let mut shades = BTreeSet::new();
-    for position in AREA.positions() {
-        let cell = &buffer[position];
-        if cell.symbol() == " " || cell.symbol() == HALF_BLOCK {
-            continue;
-        }
-        let dots = braille_dots(cell.symbol())
-            .unwrap_or_else(|| panic!("{:?} at {position:?}", cell.symbol()));
-        let expected: Color = match dots.len() {
+    let first_tree = tree_rows(&buffer, &theme::ROSE_PINE)[0];
+    for position in AREA.positions().filter(|position| position.y < first_tree) {
+        let shown = pixels::shown(&buffer[position])
+            .unwrap_or_else(|| panic!("{:?} at {position:?}", buffer[position].symbol()));
+        let birds: Vec<Color> = shown
+            .into_iter()
+            .filter(|colour| FLIGHT.contains(colour))
+            .collect();
+        let expected: Color = match birds.len() {
             0 => continue,
             1 | 2 => theme::ROSE_PINE.subtle,
             _ => theme::ROSE_PINE.text,
         };
-        assert_eq!(cell.fg, expected, "{} dots at {position:?}", dots.len());
-        shades.insert(dots.len() > 2);
+        assert!(
+            birds.iter().all(|colour| *colour == expected),
+            "{} birds in {birds:?} at {position:?}",
+            birds.len()
+        );
+        shades.insert(birds.len() > 2);
     }
     assert_eq!(shades.len(), 2, "the frame shows only one shade");
 }
@@ -257,7 +257,7 @@ fn a_smaller_area_drops_the_old_flock() {
 
 /// Given: the scene name `murmuration`.
 /// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its frame shows braille dots.
+/// Then: the name finds a scene, and its frame shows birds.
 ///
 /// Why it matters: a scene that is built but not listed cannot be chosen
 /// from the command line, the picker or Tab.
@@ -281,12 +281,14 @@ fn murmuration_is_a_scene_by_name() {
     assert!(!lit_dots(&buffer, AREA).is_empty());
 }
 
-/// The rows of a render that hold the trees, top first.
-fn tree_rows(buffer: &Buffer) -> Vec<u16> {
+/// The rows of a render that hold the trees, top first: from the first row
+/// with a pixel of tree to the bottom. The sky between the trees draws as
+/// the sky does, so a row is known by its trees.
+fn tree_rows(buffer: &Buffer, palette: &Palette) -> Vec<u16> {
     let area = buffer.area;
-    (area.top()..area.bottom())
-        .filter(|&y| (area.left()..area.right()).any(|x| buffer[(x, y)].symbol() == HALF_BLOCK))
-        .collect()
+    let trees = dots_in(buffer, area, &[palette.muted]);
+    let first = trees.iter().map(|(_, y)| *y).min().expect("no trees") / CELL_DOTS.1;
+    (u16::try_from(first).unwrap()..area.bottom()).collect()
 }
 
 /// Given: the scene on a hundred by thirty area.
@@ -307,7 +309,7 @@ fn the_sky_lightens_in_dithered_bands_toward_the_trees() {
     // Then:
     let palette = &theme::ROSE_PINE;
     let bands = [palette.base, palette.surface, palette.overlay];
-    let trees = tree_rows(&buffer);
+    let trees = tree_rows(&buffer, palette);
     let sky = 0..*trees.first().expect("no trees");
     let mut rows = Vec::new();
     for y in sky {
@@ -332,10 +334,10 @@ fn the_sky_lightens_in_dithered_bands_toward_the_trees() {
 
 /// Given: the scene on a hundred by thirty area.
 /// When: it ticks once and renders.
-/// Then: the tree rows hold half blocks whose pixels are muted trees or
-/// overlay sky, each pixel column is sky above and tree below, the lowest
-/// pixel row is all tree, and the trees stand at three or more heights,
-/// none of them filling every tree row.
+/// Then: the tree rows hold pixels of muted trees or overlay sky, each
+/// column of pixels is sky above and tree below, the lowest row of pixels
+/// is all tree, and the trees stand at three or more heights, none of them
+/// filling every tree row.
 ///
 /// Why it matters: a pixel of tree with sky under it floats, and a tree
 /// line of one height reads as a wall, not as woods at dusk.
@@ -346,15 +348,16 @@ fn trees_rise_from_the_ground_in_muted() {
 
     // Then:
     let palette = &theme::ROSE_PINE;
-    let trees = tree_rows(&buffer);
+    let trees = tree_rows(&buffer, palette);
     let mut heights = BTreeSet::new();
-    for x in 0..AREA.width {
+    for x in 0..usize::from(AREA.width) * CELL_DOTS.0 {
         let pixels: Vec<Color> = trees
             .iter()
             .flat_map(|&y| {
-                let cell = &buffer[(x, y)];
-                assert_eq!(cell.symbol(), HALF_BLOCK, "({x}, {y})");
-                [cell.fg, cell.bg]
+                let position = ((x / CELL_DOTS.0) as u16, y);
+                let shown = pixels::shown(&buffer[position])
+                    .unwrap_or_else(|| panic!("{:?} at {position:?}", buffer[position].symbol()));
+                (0..CELL_DOTS.1).map(move |row| shown[row * CELL_DOTS.0 + x % CELL_DOTS.0])
             })
             .collect();
         let sky = pixels.iter().take_while(|p| **p == palette.overlay).count();
@@ -367,7 +370,7 @@ fn trees_rise_from_the_ground_in_muted() {
     }
     assert!(heights.len() >= 3, "{heights:?}");
     assert!(
-        heights.iter().all(|h| *h < trees.len() * 2),
+        heights.iter().all(|h| *h < trees.len() * CELL_DOTS.1),
         "a tree fills every row: {heights:?}"
     );
 }
@@ -376,13 +379,14 @@ fn trees_rise_from_the_ground_in_muted() {
 /// When: it ticks a thousand times.
 /// Then: after every tick every bird is in a row above the trees.
 ///
-/// Why it matters: a braille cell has one background, so a bird over the
-/// trees would cut a hole of sky into them.
+/// Why it matters: a cell holds two colours, so a bird in a cell of tree
+/// and sky would take the place of one of them and cut a hole into the
+/// trees.
 #[test]
 fn the_flock_stays_above_the_trees() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
-    let first_tree = *tree_rows(&render(&scene, AREA, AREA))
+    let first_tree = *tree_rows(&render(&scene, AREA, AREA), &theme::ROSE_PINE)
         .first()
         .expect("no trees");
 
@@ -426,7 +430,7 @@ fn every_theme_lights_the_sky_low_over_the_trees() {
         let roles = [palette.base, palette.surface, palette.overlay];
         let darkest = roles.iter().copied().min_by_key(|c| luma(*c)).unwrap();
         let lightest = roles.iter().copied().max_by_key(|c| luma(*c)).unwrap();
-        let low = tree_rows(&buffer)[0] - 1;
+        let low = tree_rows(&buffer, palette)[0] - 1;
         for x in 0..AREA.width {
             assert_eq!(buffer[(x, 0)].bg, darkest, "{name}: top at {x}");
             assert_eq!(buffer[(x, low)].bg, lightest, "{name}: low at {x}");
@@ -527,11 +531,11 @@ fn the_flock_opens_around_the_hawk() {
 /// Given: the scene on a hundred by thirty area, ticked until the hawk is
 /// in the middle third of the pane.
 /// When: it renders.
-/// Then: some cells are in love, and every lit dot of a love cell is
-/// within four dots across and two up or down of the hawk.
+/// Then: some pixels are in love, and every one of them is within four
+/// dots across and two up or down of the hawk.
 ///
-/// Why it matters: one braille cell has one colour, so a cell that holds
-/// the hawk shows only the hawk, and a bird dot in it would turn red.
+/// Why it matters: a pixel in love away from the hawk reads as a smear of
+/// it or as a second hawk.
 #[test]
 fn the_hawk_draws_in_love_over_the_flock() {
     // Given:
@@ -550,22 +554,13 @@ fn the_hawk_draws_in_love_over_the_flock() {
     let buffer = render(&scene, AREA, AREA);
 
     // Then:
-    let mut love = 0;
-    for position in AREA.positions() {
-        let cell = &buffer[position];
-        if cell.fg != theme::ROSE_PINE.love {
-            continue;
-        }
-        love += 1;
-        let dots = braille_dots(cell.symbol()).unwrap_or_else(|| panic!("{position:?}"));
-        for (dx, dy) in dots {
-            let x = (usize::from(position.x) * CELL_DOTS.0 + dx) as f32;
-            let y = (usize::from(position.y) * CELL_DOTS.1 + dy) as f32;
-            assert!(
-                (x - hx).abs() <= 4.0 && (y - hy).abs() <= 2.0,
-                "dot ({x}, {y}) in love, the hawk at ({hx}, {hy})"
-            );
-        }
+    let love = dots_in(&buffer, AREA, &[theme::ROSE_PINE.love]);
+    for (x, y) in &love {
+        let (x, y) = (*x as f32, *y as f32);
+        assert!(
+            (x - hx).abs() <= 4.0 && (y - hy).abs() <= 2.0,
+            "dot ({x}, {y}) in love, the hawk at ({hx}, {hy})"
+        );
     }
-    assert!(love > 0, "the hawk is not drawn");
+    assert!(!love.is_empty(), "the hawk is not drawn");
 }
