@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::drive::Drive;
 use hearth::scenes::typing::Speed;
@@ -17,11 +18,6 @@ const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
 /// Ticks enough for the track to run straights and curves both ways.
 const RUN: u32 = 3000;
-/// The quadrant glyphs, in the order of the quarters they set: upper left,
-/// upper right, lower left and lower right from the lowest bit.
-const QUADRANTS: [char; 16] = [
-    ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
-];
 
 fn render(scene: &Drive, area: Rect, canvas: Rect) -> Buffer {
     let mut buffer = Buffer::empty(canvas);
@@ -29,21 +25,22 @@ fn render(scene: &Drive, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The colour of each pixel of the area, two by two to a cell, row by row.
+/// The colour of each pixel of the area, two across and four down to a
+/// cell, row by row.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    let mut rows =
-        vec![vec![Color::Reset; usize::from(area.width) * 2]; usize::from(area.height) * 2];
+    let mut rows = vec![
+        vec![Color::Reset; usize::from(area.width) * CELL_WIDTH];
+        usize::from(area.height) * CELL_HEIGHT
+    ];
     for position in area.positions() {
         let cell = &buffer[position];
-        let glyph = cell.symbol().chars().next().unwrap_or(' ');
-        let bits = QUADRANTS
-            .iter()
-            .position(|each| *each == glyph)
+        let bits = (0..=u8::MAX)
+            .find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
             .unwrap_or(0);
-        for quarter in 0..4 {
-            let x = usize::from(position.x - area.x) * 2 + quarter % 2;
-            let y = usize::from(position.y - area.y) * 2 + quarter / 2;
-            rows[y][x] = if bits & 1 << quarter != 0 {
+        for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
+            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
+            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
+            rows[y][x] = if bits & 1 << pixel != 0 {
                 cell.fg
             } else {
                 cell.bg
@@ -66,6 +63,45 @@ fn road(rows: &[Vec<Color>]) -> Vec<(usize, usize, usize)> {
             Some((y, left, right))
         })
         .collect()
+}
+
+/// The edges of the road step every quarter of a cell.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders over straights and curves.
+/// Then: in most sampled frames, some pixel row of the road has its left
+/// or its right edge in another column than the row above it, inside the
+/// upper or the lower half of a cell.
+///
+/// Why it matters: road edges in steps of half a cell draw the bends and
+/// the slopes in coarse stairs.
+#[test]
+fn the_road_edges_step_every_quarter_of_a_cell() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let (mut sampled, mut fine) = (0, 0);
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA));
+
+        // Then:
+        sampled += 1;
+        fine += usize::from(rows.windows(2).any(|pair| {
+            let ((upper, upper_left, upper_right), (lower, lower_left, lower_right)) =
+                (pair[0], pair[1]);
+            lower == upper + 1
+                && upper % 2 == 0
+                && (upper_left != lower_left || upper_right != lower_right)
+        }));
+    }
+    assert!(
+        fine * 2 > sampled,
+        "the road edges stepped inside a half cell in {fine} of {sampled} frames"
+    );
 }
 
 /// The road narrows from the bottom of the pane toward the horizon.
@@ -170,8 +206,9 @@ fn the_road_bends_with_the_track_both_ways() {
 /// changes, the ends of the stripes, are read in the lower half of the road
 /// in each frame.
 /// Then: three ends in four are at the same row or lower in the next frame,
-/// and on average an end moves down. Where two ends are as near, the
-/// nearer one is taken, which can pair an end with the one above it.
+/// and on average an end moves down by over a sixth of a cell. Where two
+/// ends are as near, the nearer one is taken, which can pair an end with
+/// the one above it.
 ///
 /// Why it matters: stripes that run up the screen show the car reversing.
 #[test]
@@ -192,7 +229,7 @@ fn the_stripes_move_toward_the_car() {
             .map(|pair| pair[1].0)
             .collect()
     };
-    let bottom = usize::from(AREA.height) * 2 - 1;
+    let bottom = usize::from(AREA.height) * CELL_HEIGHT - 1;
     scene.tick(AREA);
     let mut before = ends(&scene);
     let mut moves: Vec<isize> = Vec::new();
@@ -201,7 +238,10 @@ fn the_stripes_move_toward_the_car() {
     for _ in 0..400 {
         scene.tick(AREA);
         let after = ends(&scene);
-        for end in before.iter().filter(|end| bottom - **end > 3) {
+        for end in before
+            .iter()
+            .filter(|end| bottom - **end >= 2 * CELL_HEIGHT)
+        {
             if let Some(next) = after.iter().min_by_key(|next| next.abs_diff(*end)) {
                 moves.push(*next as isize - *end as isize);
             }
@@ -213,7 +253,7 @@ fn the_stripes_move_toward_the_car() {
     let down = moves.iter().filter(|step| **step >= 0).count();
     let mean = moves.iter().sum::<isize>() as f32 / moves.len() as f32;
     assert!(
-        down * 4 >= moves.len() * 3 && mean > 0.3,
+        down * 4 >= moves.len() * 3 && mean > 0.15 * CELL_HEIGHT as f32,
         "{down} of {} ends at the same row or lower, {mean} rows on average",
         moves.len()
     );
@@ -300,8 +340,8 @@ fn road_top(rows: &[Vec<Color>]) -> usize {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over straights and curves both ways.
 /// Then: every star, and every pixel of the moon, lies above the road's top
-/// row, the moon shows in some frames, and the moon moves left in a right
-/// bend and right in a left bend.
+/// row, the moon shows in some frames with over five cells of pixels, and
+/// the moon moves left in a right bend and right in a left bend.
 ///
 /// Why it matters: a moon on the land reads as a fault, and a sky that
 /// stays put in a curve takes away the turn.
@@ -341,7 +381,8 @@ fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
                 }
             }
         }
-        let centre = (moon.len() > 20).then(|| moon.iter().sum::<f32>() / moon.len() as f32);
+        let centre = (moon.len() > 5 * CELL_WIDTH * CELL_HEIGHT)
+            .then(|| moon.iter().sum::<f32>() / moon.len() as f32);
         let bend = bend(&rows);
         if let (Some(now), Some(before)) = (centre, last) {
             shown += 1;
@@ -366,8 +407,8 @@ fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
 /// The road rises and falls over hills.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over the track.
-/// Then: the road's top row moves over at least four pixel rows, and the
-/// road always reaches the bottom row.
+/// Then: the road's top row moves over at least two cells, and the road
+/// always reaches the bottom row.
 ///
 /// Why it matters: a road that never leaves the flat reads as a picture
 /// slid down the screen, and a gap under the road reads as a fault.
@@ -375,7 +416,7 @@ fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
 fn the_road_rises_and_falls_over_hills() {
     // Given:
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
-    let bottom = usize::from(AREA.height) * 2 - 1;
+    let bottom = usize::from(AREA.height) * CELL_HEIGHT - 1;
     let (mut highest, mut lowest) = (usize::MAX, 0);
 
     for tick in 0..RUN {
@@ -390,7 +431,7 @@ fn the_road_rises_and_falls_over_hills() {
         assert_eq!(road(&rows).last().unwrap().0, bottom, "tick {tick}");
     }
     assert!(
-        lowest - highest >= 4,
+        lowest - highest >= 2 * CELL_HEIGHT,
         "the road's top only moved from {highest} to {lowest}"
     );
 }
@@ -417,7 +458,7 @@ fn bend(rows: &[Vec<Color>]) -> f32 {
 fn the_car_keeps_its_lane_and_leans_into_a_curve() {
     // Given:
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
-    let height = usize::from(AREA.height) * 2;
+    let height = usize::from(AREA.height) * CELL_HEIGHT;
     let (mut right, mut left) = (Vec::new(), Vec::new());
 
     for tick in 0..RUN * 2 {
@@ -497,12 +538,12 @@ fn the_car_keeps_its_lane_and_leans_into_a_curve() {
 /// Then: posts, upright runs of muted pixels, stand in every frame on both
 /// sides of the road. A post's height is the shorter of the pair at its
 /// row, because in a sharp bend a post can touch a farther one in its
-/// column. On each side a post four rows or more lower on the
-/// screen is no shorter and no nearer the road's middle than one above it,
-/// and the lowest is taller and further out than the highest. The lowest
-/// post on the right moves in most sampled frames. Posts nearer than four
-/// rows are at about one distance, and whole pixels can order them either
-/// way.
+/// column. On each side a post two cells or more lower on the screen is no
+/// shorter by over half a cell and no nearer the road's middle than one
+/// above it, and when four cells or more lie between the lowest and the
+/// highest, the lowest is taller and further out. The lowest post on the
+/// right moves in most sampled frames. Posts nearer than two cells are at
+/// about one distance, and whole pixels can order them either way.
 ///
 /// Why it matters: posts that do not grow and spread as they come near
 /// stop reading as passing by, and the speed goes with them.
@@ -567,9 +608,10 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
             for pair in side.windows(2) {
                 let ((upper, upper_height, upper_out), (lower, lower_height, lower_out)) =
                     (pair[0], pair[1]);
-                if lower >= upper + 4 {
+                if lower >= upper + 2 * CELL_HEIGHT {
                     assert!(
-                        lower_height + 1 >= upper_height && lower_out + 1.0 >= upper_out,
+                        lower_height + CELL_HEIGHT / 2 >= upper_height
+                            && lower_out + 1.0 >= upper_out,
                         "tick {tick}: a post at row {lower} is smaller or nearer the middle than one at row {upper}"
                     );
                 }
@@ -577,7 +619,7 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
         }
         for side in &sides {
             let (high, low) = (side[0], side[side.len() - 1]);
-            if low.0 >= high.0 + 8 {
+            if low.0 >= high.0 + 4 * CELL_HEIGHT {
                 assert!(
                     low.1 > high.1 && low.2 > high.2 + 4.0,
                     "tick {tick}: the post at row {} is no taller or no further out than the one at row {}",
@@ -642,12 +684,12 @@ fn cars_ahead(rows: &[Vec<Color>]) -> Vec<CarAhead> {
 /// from frame to frame.
 /// Then: every pixel of a car two cells wide or more lies on the road and
 /// left of its middle, at one row of the car's lowest cell. A car covers
-/// whole cells, so its lowest cell can reach one row past its own stretch
-/// of road, and at a crest that row is a nearer stretch with another
+/// whole cells, so its lowest cell can reach rows past its own stretch of
+/// road, and at a crest those rows are a nearer stretch with another
 /// middle. A car one cell wide is far off, where many stretches share a
 /// row, and the row shows only the nearest. While a car is all in view it
 /// never narrows by more than a cell from one frame to the next. Several
-/// cars come from the far road at a cell or two wide, more than ten rows
+/// cars come from the far road at a cell or two wide, more than five cells
 /// above the bottom, and leave through the bottom row, wider than they
 /// came.
 ///
@@ -657,7 +699,7 @@ fn cars_ahead(rows: &[Vec<Color>]) -> Vec<CarAhead> {
 fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
     // Given:
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
-    let bottom = usize::from(AREA.height) * 2 - 1;
+    let bottom = usize::from(AREA.height) * CELL_HEIGHT - 1;
     let width = |car: CarAhead| car.3 - car.2 + 1;
     // The first and the last sighting of each car followed so far.
     let mut followed: Vec<(CarAhead, CarAhead)> = Vec::new();
@@ -678,7 +720,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
                 .collect();
             let lanes: Vec<(usize, usize)> = road
                 .iter()
-                .filter(|(row, _, _)| *row | 1 == lowest | 1)
+                .filter(|(row, _, _)| *row / CELL_HEIGHT == lowest / CELL_HEIGHT)
                 .map(|(_, left_edge, right_edge)| (*left_edge, *right_edge))
                 .collect();
             assert!(
@@ -691,17 +733,18 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
             );
         }
         // Each car takes the nearest one followed from the frame before,
-        // closest pairs first, within six pixels each way.
+        // closest pairs first, within three cells each way.
         let gap = |a: CarAhead, b: CarAhead| {
             a.0.abs_diff(b.0) + a.1.abs_diff(b.1) + a.2.abs_diff(b.2) + a.3.abs_diff(b.3)
         };
         let mut pairs: Vec<(usize, usize, usize)> = Vec::new();
         for (index, car) in cars.iter().enumerate() {
             for (before, (_, last)) in followed.iter().enumerate() {
-                if car.0 <= last.1 + 6
-                    && last.0 <= car.1 + 6
-                    && car.2 <= last.3 + 6
-                    && last.2 <= car.3 + 6
+                let (down, across) = (3 * CELL_HEIGHT, 3 * CELL_WIDTH);
+                if car.0 <= last.1 + down
+                    && last.0 <= car.1 + down
+                    && car.2 <= last.3 + across
+                    && last.2 <= car.3 + across
                 {
                     pairs.push((gap(*car, *last), index, before));
                 }
@@ -721,7 +764,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
             match before {
                 Some(before) => {
                     let (first, last) = followed[before];
-                    if last.1 + 4 < bottom && car.1 + 4 < bottom {
+                    if last.1 + 2 * CELL_HEIGHT < bottom && car.1 + 2 * CELL_HEIGHT < bottom {
                         assert!(
                             width(car) + 2 >= width(last),
                             "tick {tick}: a car ahead narrowed from {last:?} to {car:?}"
@@ -737,7 +780,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
             .zip(ended)
             .filter_map(|(track, ended)| ended.then_some(*track));
         for (first, last) in gone {
-            if last.1 == bottom && first.1 + 10 < bottom && width(first) <= 4 {
+            if last.1 == bottom && first.1 + 5 * CELL_HEIGHT < bottom && width(first) <= 4 {
                 assert!(
                     width(last) > width(first) + 8,
                     "tick {tick}: a car ahead left at {last:?} no wider than it came at {first:?}"
