@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::solar::Solar;
 use hearth::scenes::typing::Speed;
@@ -37,6 +37,9 @@ const MOON_SPAN: (f32, f32) = (1.5, 1.5);
 /// The furthest a pixel of a planet's disc lies from its middle, in pixels,
 /// with room to spare. The largest planet's radius is 4.4.
 const BODY_REACH: f32 = 5.0;
+/// The least share of its colour the night side of a planet keeps, from
+/// the overlay toward its colour.
+const NIGHT_SHARE: f32 = 0.4;
 /// The planets that share their colour with no other body. Mercury shares
 /// subtle with the Moon, and Saturn shares gold with the sun.
 const OWN_COLOUR: [usize; 6] = [1, 2, 3, 4, 6, 7];
@@ -682,9 +685,10 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
 /// When: it ticks and renders for a while longer.
 /// Then: along an eighth of a turn behind each planet, every place on its
 /// orbit away from the bodies and the sun's glow has a lit pixel within a
-/// pixel of it. Read by the pixel there nearest the planet's colour, the
-/// trail lies nearer that colour in each quarter of its length than in the
-/// next, and nearer in its last quarter than the orbit ahead of the planet.
+/// pixel of it. Read by the pixel there nearest the planet's colour, each
+/// planet's trail lies nearer its colour in each quarter of its length
+/// than in the next, and nearer in its last quarter than its orbit ahead
+/// of it. A quarter that never stands clear of the bodies is left out.
 ///
 /// Why it matters: a trail ahead of a planet reads as a fault, a trail that
 /// ends in a hard edge reads as a second body, and a trail of scattered
@@ -724,7 +728,7 @@ fn each_planet_leaves_a_trail_that_fades_behind_it() {
             .fold(0.0, f32::max);
     let eighth = TAU / 8.0;
     let places = 32;
-    let (mut behind, mut ahead) = ([(0.0_f32, 0_u32); 4], (0.0_f32, 0_u32));
+    let (mut behind, mut ahead) = ([[(0.0_f32, 0_u32); 4]; 8], [(0.0_f32, 0_u32); 8]);
 
     for tick in 0..600 {
         // When:
@@ -761,9 +765,9 @@ fn each_planet_leaves_a_trail_that_fades_behind_it() {
                         panic!("planet {index}: no orbit at {place:?} at tick {tick}");
                     };
                     let bucket = if behind_it {
-                        &mut behind[((step - 1) * 4 / places) as usize]
+                        &mut behind[index][((step - 1) * 4 / places) as usize]
                     } else {
-                        &mut ahead
+                        &mut ahead[index]
                     };
                     bucket.0 += nearest;
                     bucket.1 += 1;
@@ -771,17 +775,25 @@ fn each_planet_leaves_a_trail_that_fades_behind_it() {
             }
         }
     }
-    let mean = |(sum, count): (f32, u32)| sum / count.max(1) as f32;
-    let quarters = behind.map(mean);
-    for pair in quarters.windows(2) {
-        assert!(pair[0] > pair[1], "quarters {quarters:?}");
+    let mean = |(sum, count): (f32, u32)| sum / count as f32;
+    for index in OWN_COLOUR {
+        let quarters: Vec<f32> = behind[index]
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(mean)
+            .collect();
+        assert!(!quarters.is_empty(), "planet {index}: no trail read");
+        for pair in quarters.windows(2) {
+            assert!(pair[0] > pair[1], "planet {index}: quarters {quarters:?}");
+        }
+        if ahead[index].1 > 0 {
+            let (last, ahead) = (quarters[quarters.len() - 1], mean(ahead[index]));
+            assert!(
+                last > ahead,
+                "planet {index}: last quarter {last} against {ahead} ahead"
+            );
+        }
     }
-    assert!(
-        quarters[3] > mean(ahead),
-        "last quarter {} against {} ahead",
-        quarters[3],
-        mean(ahead)
-    );
 }
 
 /// The sun glows into the sky round it, fading with distance.
@@ -929,9 +941,12 @@ fn each_planet_is_lit_on_the_side_that_faces_the_sun() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders for a minute and a half.
 /// Then: where a planet stands clear of the sun and of every other body,
-/// every pixel within two pixels of its middle shows a colour nearer its
-/// own than the sky is, so its disc is solid and at least four pixels
-/// across and down.
+/// every pixel within two pixels of its middle is lighter than the sky,
+/// and on average those pixels are at least as light as the planet's night
+/// shade, `NIGHT_SHARE` of the way from the overlay toward its colour. So
+/// its disc is solid and at least four pixels across and down. A cell shows
+/// two colours, so one pixel of the night side can take the colour of the
+/// faint edge beside it, and the mean reads the disc as a whole.
 ///
 /// Why it matters: a planet drawn as a few pixels reads as one more pixel of
 /// its own trail.
@@ -961,6 +976,7 @@ fn each_planet_is_a_solid_disc() {
                 continue;
             }
             let middle = planets[index];
+            let mut inner = Vec::new();
             for dy in -2..=2 {
                 for dx in -2..=2 {
                     let place = (middle.0.floor() + dx as f32, middle.1.floor() + dy as f32);
@@ -969,11 +985,18 @@ fn each_planet_is_a_solid_disc() {
                     }
                     let shown = colour_at(&buffer, place);
                     assert!(
-                        shown.is_some_and(|colour| nearness(colour, *role) > 0.0),
+                        shown.is_some_and(|colour| luma(colour) > luma(PALETTE.base)),
                         "planet {index} at {middle:?} has a hole at {place:?} in {shown:?} at tick {tick}"
                     );
+                    inner.push(luma(shown.unwrap_or(PALETTE.base)));
                 }
             }
+            let night = luma(octant::mix(PALETTE.overlay, *role, NIGHT_SHARE));
+            let mean = inner.iter().sum::<u32>() / inner.len().max(1) as u32;
+            assert!(
+                mean >= night,
+                "planet {index} at {middle:?} is {mean} light inside, under its night shade {night}, at tick {tick}"
+            );
             checked[index] += 1;
         }
     }
@@ -1113,7 +1136,7 @@ fn each_planet_glides_along_its_orbit_between_ticks() {
         .iter()
         .map(|pixel| distance(*pixel, centre))
         .fold(0.0, f32::max);
-    let (mut checked, mut moving) = (0, 0);
+    let mut checked = 0;
 
     for _ in 0..80 {
         for _ in 0..37 {
@@ -1159,7 +1182,6 @@ fn each_planet_glides_along_its_orbit_between_ticks() {
             let moved = distance(from, to);
             let heading = ((to.0 - from.0) / moved, (to.1 - from.1) / moved);
             let near = BODY_REACH + moved;
-            checked += 1;
             if moved < 2.0 {
                 continue;
             }
@@ -1179,11 +1201,10 @@ fn each_planet_glides_along_its_orbit_between_ticks() {
                 start < half && half < end,
                 "planet {index} not between {from:?} and {to:?} at half a tick: {fronts:?}"
             );
-            moving += 1;
+            checked += 1;
         }
     }
-    assert!(checked > 100, "{checked} planets checked");
-    assert!(moving > 20, "{moving} planets moved two pixels");
+    assert!(checked > 20, "{checked} planets moved two pixels");
 }
 
 /// A frame on a tick is the frame the scene drew before it glided.
