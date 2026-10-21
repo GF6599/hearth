@@ -87,6 +87,15 @@ struct Hawk {
     vx: f32,
 }
 
+/// The flock, the hawk and the random source as they stand on one tick.
+#[derive(Debug, Clone)]
+struct Flight {
+    rng: Rng,
+    birds: Vec<Bird>,
+    hawk: Option<Hawk>,
+    hawk_wait: u32,
+}
+
 #[derive(Debug)]
 pub struct Murmuration {
     rng: Rng,
@@ -103,6 +112,13 @@ pub struct Murmuration {
     hawk: Option<Hawk>,
     /// Ticks until the next hawk.
     hawk_wait: u32,
+    /// The flight one tick ahead, so a frame between two ticks draws each
+    /// bird and the hawk on the line between their two places. A bird
+    /// steers by the whole flock, so its next place is known only once the
+    /// next tick has run.
+    next: Option<Flight>,
+    /// The share of a tick since the last.
+    progress: f64,
     background: Background,
 }
 
@@ -119,6 +135,8 @@ impl Murmuration {
             birds: Vec::new(),
             hawk: None,
             hawk_wait: 0,
+            next: None,
+            progress: 0.0,
             background: Background::Theme,
         }
     }
@@ -138,6 +156,41 @@ impl Murmuration {
     /// Every bird's place, in pixels from the top left of the pane.
     pub fn birds(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
         self.birds.iter().map(|bird| (bird.x, bird.y))
+    }
+
+    /// Puts `flight` in place of the flight on show, and gives back the one
+    /// it replaces.
+    fn swap(&mut self, mut flight: Flight) -> Flight {
+        std::mem::swap(&mut self.rng, &mut flight.rng);
+        std::mem::swap(&mut self.birds, &mut flight.birds);
+        std::mem::swap(&mut self.hawk, &mut flight.hawk);
+        std::mem::swap(&mut self.hawk_wait, &mut flight.hawk_wait);
+        flight
+    }
+
+    /// The place a share `progress` of the way from `from` on this tick to
+    /// `to` on the next.
+    fn between(&self, from: f32, to: f32) -> f32 {
+        from + (to - from) * self.progress as f32
+    }
+
+    /// Each bird's place between this tick and the next. With no flight
+    /// ahead, each bird keeps its place.
+    fn birds_between(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        let next = self.next.as_ref().map_or(&self.birds, |next| &next.birds);
+        self.birds
+            .iter()
+            .zip(next)
+            .map(|(from, to)| (self.between(from.x, to.x), self.between(from.y, to.y)))
+    }
+
+    /// The hawk's place between this tick and the next. A hawk that leaves
+    /// on the next tick is past the edge already, so it keeps its place.
+    fn hawk_between(&self) -> Option<(f32, f32)> {
+        let from = self.hawk?;
+        let to = self.next.as_ref().and_then(|next| next.hawk);
+        let x = to.map_or(from.x, |to| self.between(from.x, to.x));
+        Some((x, from.y))
     }
 
     fn spawn(&mut self) {
@@ -381,10 +434,29 @@ impl Scene for Murmuration {
             self.sky = (rows - self.tree_rows) * CELL_HEIGHT;
             self.grow_trees(usize::from(area.width));
             self.spawn();
+            self.next = None;
         }
-        if !self.birds.is_empty() {
-            self.step();
+        if self.birds.is_empty() {
+            return;
         }
+        // The flight ahead is what a step from here gives, so it stands in
+        // for the step and the flock steers once a tick.
+        match self.next.take() {
+            Some(next) => drop(self.swap(next)),
+            None => self.step(),
+        }
+        let now = Flight {
+            rng: self.rng.clone(),
+            birds: self.birds.clone(),
+            hawk: self.hawk,
+            hawk_wait: self.hawk_wait,
+        };
+        self.step();
+        self.next = Some(self.swap(now));
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -416,8 +488,8 @@ impl Scene for Murmuration {
         // The pixels of the birds in each cell, so the birds of a cell take
         // one shade.
         let mut cells = vec![0_u8; columns * sky_rows];
-        for bird in &self.birds {
-            let (x, y) = (bird.x as usize, bird.y as usize);
+        for (x, y) in self.birds_between() {
+            let (x, y) = (x as usize, y as usize);
             let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
             if column < columns && row < sky_rows {
                 cells[row * columns + column] |=
@@ -441,8 +513,8 @@ impl Scene for Murmuration {
         }
         // The flock keeps clear of the hawk, so a cell of the hawk holds the
         // sky and the hawk.
-        if let Some(hawk) = self.hawk {
-            let centre = (hawk.x.floor() as isize, hawk.y.floor() as isize);
+        if let Some(hawk) = self.hawk_between() {
+            let centre = (hawk.0.floor() as isize, hawk.1.floor() as isize);
             for (dx, dy) in HAWK_SHAPE {
                 if let (Ok(x), Ok(y)) = (
                     usize::try_from(centre.0 + dx),
