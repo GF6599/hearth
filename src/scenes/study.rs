@@ -1,17 +1,24 @@
 //! A study desk by a window on a rainy night: a town behind the glass, a
 //! cat on the sill, books, a lamp, a computer and a mug. One picture drawn
-//! by hand, a letter to a pixel, in half blocks, so a pixel is as wide as
-//! it is tall.
+//! by hand, a letter to a square of octant pixels, so a letter is as wide
+//! as it is tall. The rain and the steam move a pixel at a time.
+
+use std::ops::Range;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use crate::octant::Canvas;
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
-/// The room, a letter to a pixel. Each letter is a role of the theme:
+/// The pixels across and down in each letter of the picture: a cell across
+/// and half a cell down, so a letter is as wide as it is tall.
+const LETTER: usize = 2;
+
+/// The room, letter by letter. Each letter is a role of the theme:
 /// `w` wall, `f` window frame, `s` night sky, `v` stars, `b` town, `y` and
 /// `r` lit town windows, `T` moon, pages and the lamp's bulb, `l` sill, `c`
 /// cat, `d` desk top, `n` desk front, `m` metal and the monitor, `k`
@@ -60,16 +67,16 @@ const ART: [&str; 40] = [
     "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
 ];
 
-/// The picture's width and height, in pixels.
+/// The picture's width and height, in letters.
 pub const PICTURE: (usize, usize) = (72, 40);
 /// The part of the picture that a pane under `LEAST` shows: the window,
-/// the cat and the sill, with a pixel of wall on each side of the frame,
+/// the cat and the sill, with a letter of wall on each side of the frame,
 /// so the window is in its middle.
 pub const WINDOW: Area = (2, 1, 30, 24);
 /// The fewest cells across and down at which the whole room shows. A pane
 /// cut further shows a strip of desk that reads as nothing.
 pub const LEAST: (u16, u16) = (48, 16);
-/// A part of the picture: left, top, width and height, in pixels.
+/// A part of the picture: left, top, width and height, in letters.
 pub type Area = (usize, usize, usize, usize);
 
 const SCREEN: Area = (42, 10, 20, 16);
@@ -86,7 +93,7 @@ const BULB: usize = 35;
 const LIT_WALL: (usize, usize) = (19, 22);
 const LIT_DESK: usize = 30;
 /// The light on the wall under the shade, a row of it for each row down:
-/// the pixels from the bulb that take gold, those that take rose, and how
+/// the letters from the bulb that take gold, those that take rose, and how
 /// many in turn are lit, so the light thins out as it falls. The pole and
 /// the base stay in front of it.
 const HALO: [(usize, usize, usize); 3] = [(1, 3, 2), (0, 2, 2), (0, 3, 4)];
@@ -104,14 +111,14 @@ const SYNTAX: [fn(&Palette) -> Color; 4] = [|p| p.iris, |p| p.foam, |p| p.gold, 
 /// only, because the frame and the cat are inside the room.
 const OUTSIDE: &[u8] = b"sbyrTv";
 const DROPS: usize = 14;
-/// The ticks from one pixel typed on the screen to the next, half a
+/// The ticks from one letter typed on the screen to the next, half a
 /// second. The cursor blinks at twice this.
 const TYPING: u64 = 8;
-/// The pixels a finished line waits, counted in typed pixels, before the
+/// The letters a finished line waits, counted in typed letters, before the
 /// screen scrolls up.
 const LINE_PAUSE: usize = 3;
-/// Where the steam leaves the mug, how fast it rises in pixels a tick, and
-/// how far it sways to each side.
+/// Where the steam leaves the mug, how fast it rises in letters a tick,
+/// and how far it sways to each side.
 const SPOUT: (f64, f64) = (65.5, 25.0);
 const RISE: f64 = 0.1;
 const SWAY: f64 = 1.5;
@@ -169,8 +176,8 @@ impl Code {
     }
 }
 
-/// A streak of rain on the glass: its column, the row of its lowest pixel,
-/// its speed in pixels a tick and its length.
+/// A streak of rain on the glass: its column, the row of its lowest point,
+/// its speed in a tick and its length, all in letters.
 #[derive(Debug, Clone, Copy)]
 struct Streak {
     x: usize,
@@ -185,7 +192,7 @@ pub struct Study {
     rng: Rng,
     ticks: u64,
     screen: Vec<Code>,
-    /// The pixels typed on the last line of the screen.
+    /// The letters typed on the last line of the screen.
     typed: usize,
     rain: Vec<Streak>,
     /// The age of each wisp of steam in ticks, and where its sway starts.
@@ -282,19 +289,35 @@ impl Study {
         }
     }
 
-    fn pixels(&self) -> Vec<Vec<Color>> {
+    /// The colour of each letter of the picture, with the layers that move
+    /// a letter at a time.
+    fn letters(&self) -> Vec<Vec<Color>> {
         let mut rows: Vec<Vec<Color>> = ART
             .iter()
             .map(|line| line.bytes().map(|letter| self.colour(letter)).collect())
             .collect();
         self.draw_screen(&mut rows);
-        self.draw_rain(&mut rows);
-        self.draw_steam(&mut rows);
         self.draw_lamp(&mut rows);
         let pose = self.flick.map_or(0, |tick| FLICK[tick / FLICK_TICKS]);
         for &(x, y) in &TAILS[pose] {
             rows[y][x] = self.palette.text;
         }
+        rows
+    }
+
+    /// The colour of each pixel of the picture, with the layers that move
+    /// a pixel at a time.
+    fn pixels(&self) -> Vec<Vec<Color>> {
+        let mut rows: Vec<Vec<Color>> = self
+            .letters()
+            .iter()
+            .flat_map(|line| {
+                let row: Vec<Color> = line.iter().flat_map(|colour| [*colour; LETTER]).collect();
+                vec![row; LETTER]
+            })
+            .collect();
+        self.draw_rain(&mut rows);
+        self.draw_steam(&mut rows);
         rows
     }
 
@@ -307,9 +330,9 @@ impl Study {
             let shown = if line == last { self.typed } else { usize::MAX };
             let mut x = start;
             for &(length, colour) in &code.words {
-                for (offset, pixel) in rows[y][x..x + length].iter_mut().enumerate() {
+                for (offset, typed) in rows[y][x..x + length].iter_mut().enumerate() {
                     if x - start + offset < shown {
-                        *pixel = colour;
+                        *typed = colour;
                     }
                 }
                 x += length + 1;
@@ -323,32 +346,43 @@ impl Study {
     fn draw_rain(&self, rows: &mut [Vec<Color>]) {
         let (_, top, _, tall) = RAIN;
         for streak in &self.rain {
-            let lowest = streak.y.floor() as isize;
-            for row in lowest + 1 - streak.length as isize..=lowest {
+            let lowest = (streak.y * LETTER as f64).floor() as isize;
+            let length = (streak.length * LETTER) as isize;
+            for row in lowest + 1 - length..=lowest {
                 let Ok(row) = usize::try_from(row) else {
                     continue;
                 };
-                if (top..top + tall).contains(&row)
-                    && OUTSIDE.contains(&ART[row].as_bytes()[streak.x])
+                let letter = row / LETTER;
+                if (top..top + tall).contains(&letter)
+                    && OUTSIDE.contains(&ART[letter].as_bytes()[streak.x])
                 {
-                    rows[row][streak.x] = self.palette.foam;
+                    let left = streak.x * LETTER;
+                    rows[row][left..left + LETTER].fill(self.palette.foam);
                 }
             }
         }
     }
 
+    /// Each puff of steam is a letter in size, placed to the pixel.
     fn draw_steam(&self, rows: &mut [Vec<Color>]) {
         let (left, top, wide, tall) = STEAM;
+        let across = left * LETTER..(left + wide) * LETTER;
+        let down = top * LETTER..(top + tall) * LETTER;
+        let inside = |at: usize, within: &Range<usize>| {
+            at.clamp(within.start, within.end)..(at + LETTER).clamp(within.start, within.end)
+        };
+        let scale = LETTER as f64;
         for &(age, sway) in &self.steam {
             for behind in [0.0, 8.0, 16.0] {
                 let age = age - behind;
                 if age < 0.0 {
                     continue;
                 }
-                let x = (SPOUT.0 + (age * 0.12 + sway).sin() * SWAY).round() as usize;
-                let y = (SPOUT.1 - age * RISE).round() as usize;
-                if (left..left + wide).contains(&x) && (top..top + tall).contains(&y) {
-                    rows[y][x] = self.palette.subtle;
+                let x = (SPOUT.0 + (age * 0.12 + sway).sin() * SWAY) * scale;
+                let y = (SPOUT.1 - age * RISE) * scale;
+                let columns = inside(x.round() as usize, &across);
+                for row in &mut rows[inside(y.round() as usize, &down)] {
+                    row[columns.clone()].fill(self.palette.subtle);
                 }
             }
         }
@@ -360,23 +394,23 @@ impl Study {
         let palette = self.palette;
         for (y, (row, line)) in rows.iter_mut().zip(ART).enumerate().skip(top).take(tall) {
             let cells = row.iter_mut().zip(line.bytes()).enumerate();
-            for (x, (pixel, letter)) in cells.skip(left).take(wide) {
+            for (x, (lit, letter)) in cells.skip(left).take(wide) {
                 let off = x.abs_diff(BULB);
                 if dim {
                     match letter {
-                        b'T' => *pixel = palette.gold,
-                        b'G' => *pixel = palette.rose,
+                        b'T' => *lit = palette.gold,
+                        b'G' => *lit = palette.rose,
                         _ => {}
                     }
                 } else if (LIT_WALL.0..LIT_WALL.1).contains(&y) && letter == b'w' {
                     let (gold, rose, every) = HALO[y - LIT_WALL.0];
                     if off <= gold {
-                        *pixel = palette.gold;
+                        *lit = palette.gold;
                     } else if off <= rose && (x + y).is_multiple_of(every) {
-                        *pixel = palette.rose;
+                        *lit = palette.rose;
                     }
                 } else if y == LIT_DESK && letter == b'd' && off <= 3 {
-                    *pixel = if off <= 2 { palette.gold } else { palette.rose };
+                    *lit = if off <= 2 { palette.gold } else { palette.rose };
                 }
             }
         }
@@ -412,8 +446,8 @@ impl Scene for Study {
         for wisp in &mut self.steam {
             wisp.0 += 1.0;
         }
-        // A wisp goes once the last pixel that follows it has risen out of
-        // the steam's area.
+        // A wisp goes once the last letter of steam that follows it has
+        // risen out of the steam's area.
         let gone = SPOUT.1 - STEAM.1 as f64 + 1.0 + 16.0 * RISE;
         self.steam.retain(|(age, _)| age * RISE < gone);
         if self.next_wisp == 0 {
@@ -452,25 +486,25 @@ impl Scene for Study {
         } else {
             WINDOW
         };
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
         // The view is centred, so a pane too small for it cuts it evenly.
-        // Past the view the room around it shows, and a pixel past the
-        // picture's edge takes the edge's colour, so the wall, the sill and
-        // the desk run on to the pane's edges.
-        let left = from_x as isize - (area.width as isize - wide as isize) / 2;
-        let top = from_y as isize - (area.height as isize * 2 - tall as isize) / 2;
-        let at = |x: isize, y: isize| {
-            let x = (x + left).clamp(0, PICTURE.0 as isize - 1) as usize;
-            let y = (y + top).clamp(0, PICTURE.1 as isize - 1) as usize;
-            pixels[y][x]
-        };
-        for row in 0..area.height {
-            for column in 0..area.width {
-                let (x, y) = (column as isize, row as isize * 2);
-                buf[Position::new(area.x + column, area.y + row)]
-                    .set_char('▀')
-                    .set_fg(at(x, y))
-                    .set_bg(at(x, y + 1));
+        // It starts on a whole letter, so each letter fills a half of a
+        // cell and no cell holds parts of three. Past the view the room
+        // around it shows, and a pixel past the picture's edge takes the
+        // edge's colour, so the wall, the sill and the desk run on to the
+        // pane's edges.
+        let room = (canvas.width() / LETTER, canvas.height() / LETTER);
+        let left = from_x as isize - (room.0 as isize - wide as isize) / 2;
+        let top = from_y as isize - (room.1 as isize - tall as isize) / 2;
+        let (left, top) = (left * LETTER as isize, top * LETTER as isize);
+        let (right, bottom) = (pixels[0].len() as isize - 1, pixels.len() as isize - 1);
+        for y in 0..canvas.height() {
+            for x in 0..canvas.width() {
+                let from_x = (x as isize + left).clamp(0, right) as usize;
+                let from_y = (y as isize + top).clamp(0, bottom) as usize;
+                canvas.set(x, y, pixels[from_y][from_x]);
             }
         }
+        canvas.render(area, buf);
     }
 }
