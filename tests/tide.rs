@@ -89,15 +89,33 @@ fn is_shell(colour: Color) -> bool {
     r > b && b > g
 }
 
-/// A pebble is grey: blue over red, and red over green, as subtle is.
+/// The farthest a pebble lies from subtle, as a distance between red,
+/// green and blue. The greys of Rose Pine share one hue, so a pebble is
+/// read by its distance to its own role and not by its hue alone.
+const PEBBLE_REACH: u32 = 45;
+
+/// A pebble is grey: blue over red, and red over green, as subtle is, and
+/// within `PEBBLE_REACH` of subtle.
 fn is_pebble(colour: Color) -> bool {
     let (r, g, b) = channels(colour);
-    b > r && r >= g
+    b > r && r >= g && distance(colour, PALETTE.subtle) <= PEBBLE_REACH
 }
 
-/// Given: the Rose Pine roles of each part of the beach.
-/// When: each is read by the hue tests above.
-/// Then: each role reads as its part and as no other.
+/// The distance between two colours as points of red, green and blue.
+fn distance(one: Color, other: Color) -> u32 {
+    let ((r, g, b), (r2, g2, b2)) = (channels(one), channels(other));
+    let squares: u32 = [(r, r2), (g, g2), (b, b2)]
+        .iter()
+        .map(|(a, b)| u32::from(a.abs_diff(*b)).pow(2))
+        .sum();
+    f64::from(squares).sqrt() as u32
+}
+
+/// Given: the Rose Pine roles of each part of the beach, and the roles the
+/// beach does not draw as a part.
+/// When: each is read by the tests above.
+/// Then: each role of a part reads as its part and as no other, and each
+/// other role reads as no part.
 ///
 /// Why it matters: the other tests read the beach by these hue tests, and a
 /// hue test that reads a role wrong would pass a broken picture.
@@ -112,6 +130,12 @@ fn each_role_reads_as_its_part_of_the_beach() {
         (PALETTE.rose, 1),
         (PALETTE.love, 2),
         (PALETTE.subtle, 3),
+        (PALETTE.base, usize::MAX),
+        (PALETTE.surface, usize::MAX),
+        (PALETTE.overlay, usize::MAX),
+        (PALETTE.muted, usize::MAX),
+        (PALETTE.text, usize::MAX),
+        (PALETTE.iris, usize::MAX),
     ] {
         // When, then:
         for (index, reads) in parts.iter().enumerate() {
@@ -357,14 +381,17 @@ fn wet_sand_is_darker_and_lightens_as_it_dries() {
     );
 }
 
-/// The whole beach is sand, and none of it is the background.
+/// The whole beach is sand, shells and pebbles, and none of it is the
+/// background.
 /// Given: the scene at a hundred by thirty, over two minutes.
 /// When: every pixel above the sea is read, at the shore, around a shell
 /// or a pebble, and on wet and dry sand.
-/// Then: no pixel above the sea is the base colour.
+/// Then: every pixel above the sea reads as sand, a shell or a pebble, so
+/// none is the base colour.
 ///
 /// Why it matters: a beach in the background colour reads as a night sky,
-/// and a strip of it at the shore reads as a gap between sand and sea.
+/// a strip of it at the shore reads as a gap between sand and sea, and a
+/// colour of no part reads as a stain.
 #[test]
 fn no_part_of_the_beach_is_the_background() {
     let mut scene = ticked(7, AREA, 0);
@@ -382,9 +409,9 @@ fn no_part_of_the_beach_is_the_background() {
         for (row, line) in grid.iter().enumerate() {
             for (x, colour) in line.iter().enumerate() {
                 if grid.len() - row > waterlines[x] {
-                    assert_ne!(
-                        *colour, PALETTE.base,
-                        "tick {tick}: background on the beach at ({x}, {row})"
+                    assert!(
+                        is_sand(*colour) || is_shell_or_pebble(*colour),
+                        "tick {tick}: {colour:?} on the beach at ({x}, {row}) is no part of it"
                     );
                 }
             }
