@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
@@ -33,11 +33,25 @@ fn render(scene: &Ink, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
+/// The bits of each octant glyph.
+fn octants() -> &'static HashMap<char, u8> {
+    static OCTANTS: OnceLock<HashMap<char, u8>> = OnceLock::new();
+    OCTANTS.get_or_init(|| {
+        (0..=u8::MAX)
+            .map(|bits| (octant::glyph(bits), bits))
+            .collect()
+    })
+}
+
 /// The colours of a cell's eight pixels, row by row from the top left, or
 /// nothing for a glyph that is not an octant cell.
 fn pixels(buffer: &Buffer, position: ratatui::layout::Position) -> Option<[Color; 8]> {
     let cell = &buffer[position];
-    let bits = (0..=u8::MAX).find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))?;
+    let mut glyphs = cell.symbol().chars();
+    let bits = *octants().get(&glyphs.next()?)?;
+    if glyphs.next().is_some() {
+        return None;
+    }
     Some(std::array::from_fn(|pixel| {
         if bits & (1 << pixel) != 0 {
             cell.fg

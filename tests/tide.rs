@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
@@ -31,6 +32,16 @@ fn render(scene: &Tide, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
+/// The bits of each octant glyph.
+fn octants() -> &'static HashMap<char, u8> {
+    static OCTANTS: OnceLock<HashMap<char, u8>> = OnceLock::new();
+    OCTANTS.get_or_init(|| {
+        (0..=u8::MAX)
+            .map(|bits| (octant::glyph(bits), bits))
+            .collect()
+    })
+}
+
 /// The pixels of a render, by pixel row from the top and then by pixel
 /// column from the left.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
@@ -41,8 +52,10 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
     let mut grid = vec![vec![Color::Reset; width]; rows];
     for position in area.positions() {
         let cell = &buffer[position];
-        let bits = (0..=u8::MAX)
-            .find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
+        let bits = Some(cell.symbol())
+            .filter(|symbol| symbol.chars().count() == 1)
+            .and_then(|symbol| symbol.chars().next())
+            .and_then(|glyph| octants().get(&glyph).copied())
             .unwrap_or_else(|| panic!("{:?} at {position:?}", cell.symbol()));
         for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
             let colour = if bits & (1 << pixel) != 0 {
