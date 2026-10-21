@@ -97,6 +97,9 @@ fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
 /// reaches under two pixels out, in a colour near the post's.
 const POST_CLEAR: usize = 3;
 
+/// How far beside the car a taillight's glow reaches, in pixels.
+const GLOW_REACH: usize = 4;
+
 /// Whether `colour` shows a post: at least half way from the land toward
 /// muted.
 fn in_a_post(colour: Color) -> bool {
@@ -1258,9 +1261,10 @@ fn the_sky_lightens_toward_the_horizon() {
 /// The moon has a soft edge and a halo.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders over straights and curves.
-/// Then: on every frame where the moon shows whole, its pixels lie at
-/// three or more places part way along the mix from the sky of their row
-/// toward text, neither of them.
+/// Then: on every frame where the moon shows whole, its disc is the pixels
+/// at least half way from the sky of their row toward text, and three or
+/// more pixels further than a pixel past the disc's radius, and within
+/// half of it again, lie part way along that mix and under half way.
 ///
 /// Why it matters: a moon of whole pixels in one colour reads as a
 /// stamped disc with a stair for an edge, and not as a light in the sky.
@@ -1283,20 +1287,38 @@ fn the_moon_has_a_soft_edge_and_a_halo() {
 
         // Then:
         let road = road_top(&rows);
-        let mut shares: Vec<u32> = rows[..road]
+        let lit: Vec<((f32, f32), f32)> = rows[..road]
             .iter()
-            .flat_map(|row| {
+            .enumerate()
+            .flat_map(|(y, row)| {
                 let sky = sky_of(row);
-                row.iter().filter_map(move |colour| {
+                row.iter().enumerate().filter_map(move |(x, colour)| {
                     let share = share_on(*colour, sky, PALETTE.text)?;
-                    (*colour != sky && *colour != PALETTE.text)
-                        .then_some((share * f32::from(SHARE_STEPS)) as u32)
+                    (*colour != sky).then_some(((x as f32, y as f32), share))
                 })
             })
             .collect();
-        shares.sort_unstable();
-        shares.dedup();
-        assert!(shares.len() >= 3, "tick {tick}: the moon shows {shares:?}");
+        let disc: Vec<(f32, f32)> = lit
+            .iter()
+            .filter(|(_, share)| *share >= 0.5)
+            .map(|(place, _)| *place)
+            .collect();
+        let count = disc.len() as f32;
+        let centre = disc.iter().fold((0.0, 0.0), |sum, place| {
+            (sum.0 + place.0 / count, sum.1 + place.1 / count)
+        });
+        let radius = (count / std::f32::consts::PI).sqrt();
+        let halo = lit
+            .iter()
+            .filter(|(place, share)| {
+                let out = (place.0 - centre.0).hypot(place.1 - centre.1);
+                *share < 0.5 && out > radius + 1.0 && out < radius * 1.5
+            })
+            .count();
+        assert!(
+            halo >= 3,
+            "tick {tick}: {halo} pixels of halo round the moon"
+        );
         shown += 1;
     }
     assert!(shown > 10, "the moon showed whole in {shown} frames");
@@ -1366,9 +1388,9 @@ fn the_car_is_drawn_a_pixel_row_at_a_time() {
 /// The car's taillights glow on the road beside its tail.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders.
-/// Then: in the rows of the car's pixels in iris, some pixel beside the
-/// car lies part way along the mix from the road toward love, neither of
-/// them.
+/// Then: in a row that shows a taillight, love inside the car's pixels in
+/// iris, some pixel within four pixels beside the car lies part way along
+/// the mix from the road toward love, neither of them.
 ///
 /// Why it matters: lights that cast no glow read as red paint, and the
 /// car as a sticker on the road.
@@ -1382,26 +1404,27 @@ fn the_taillights_glow_on_the_road() {
     let rows = pixels(&render(&scene, AREA, AREA), AREA);
 
     // Then:
-    let glow = rows
-        .iter()
-        .filter(|row| row.contains(&PALETTE.iris))
-        .any(|row| {
-            let (left, right) = (
-                row.iter()
-                    .position(|colour| *colour == PALETTE.iris)
-                    .unwrap(),
-                row.iter()
-                    .rposition(|colour| *colour == PALETTE.iris)
-                    .unwrap(),
-            );
-            row.iter().enumerate().any(|(x, colour)| {
-                (x < left || x > right)
-                    && *colour != PALETTE.overlay
-                    && *colour != PALETTE.love
-                    && share_on(*colour, PALETTE.overlay, PALETTE.love).is_some()
-            })
-        });
-    assert!(glow, "no glow beside the car");
+    let mut lights = 0;
+    let glow = rows.iter().any(|row| {
+        let (Some(left), Some(right)) = (
+            row.iter().position(|colour| *colour == PALETTE.iris),
+            row.iter().rposition(|colour| *colour == PALETTE.iris),
+        ) else {
+            return false;
+        };
+        if !row[left..=right].contains(&PALETTE.love) {
+            return false;
+        }
+        lights += 1;
+        let beside = (left.saturating_sub(GLOW_REACH)..left).chain(right + 1..=right + GLOW_REACH);
+        beside.filter_map(|x| row.get(x)).any(|colour| {
+            *colour != PALETTE.overlay
+                && *colour != PALETTE.love
+                && share_on(*colour, PALETTE.overlay, PALETTE.love).is_some()
+        })
+    });
+    assert!(lights > 0, "no taillight in view");
+    assert!(glow, "no glow beside the taillights");
 }
 
 /// The top of a post mixes into what stands behind it.
