@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::{Range, RangeInclusive};
 
 use rand::RngExt;
@@ -5,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -72,15 +73,36 @@ const DRIFT_STEP: f32 = 0.03 * ACROSS;
 const ACROSS: f32 = CELL_WIDTH as f32;
 const DOWN: f32 = CELL_HEIGHT as f32;
 
+/// The shades of wood from the shadow under a log to its lit top.
+const WOOD_SHADES: u8 = 10;
+/// Charred wood takes this many shades less light.
+const CHAR_SHADES: u8 = 3;
+/// A grain line is this many shades darker than the wood around it, and
+/// runs along every third row of a log, broken now and then.
+const GRAIN_SHADES: u8 = 2;
+const GRAIN_EVERY: usize = 3;
+/// The shades of the glow from its dull love to its bright gold.
+const GLOW_SHADES: usize = 12;
+/// How far the glow lights the air around the fire in pixels, and the
+/// share of its colour it gives the air beside it. The share stays under a
+/// half, so the air over a see-through base keeps the terminal's own.
+const HALO_REACH: f32 = 6.0;
+const HALO_SHARE: f32 = 0.45;
+/// The air takes no share under this, so the lit air ends at its edge and
+/// does not break up into specks a step from the base.
+const HALO_LEAST: f32 = 0.08;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pixel {
     Empty,
     Stone,
+    Mortar,
     Grate,
-    /// The lit top edge of a log, its body, and its shadowed underside.
-    Bark,
-    Heart,
-    Shadow,
+    /// Wood, from 0 in the shadow under a log to `WOOD_SHADES - 1` on its
+    /// lit top.
+    Wood {
+        light: u8,
+    },
     Ash,
     Glow {
         phase: u8,
@@ -88,14 +110,35 @@ enum Pixel {
     },
 }
 
-/// One pixel of a log at its full size: its wood, the share of the burn at
-/// which it starts to glow, and the pulse it glows with.
+/// One pixel of a log at its full size: the share of the burn at which it
+/// starts to glow, and the pulse it glows with.
 #[derive(Debug, Clone, Copy)]
 struct Grain {
-    wood: Pixel,
     ignite: f32,
     phase: u8,
     period: u8,
+}
+
+/// The light of a pixel of wood `up` rows over the underside of a log
+/// `depth` rows thick, `along` pixels from its start: lit on top, in shadow
+/// under, with a grain line along every third row and a little texture of
+/// bark, so the wood reads as round and rough.
+fn wood_light(up: usize, depth: usize, along: usize) -> u8 {
+    let top = f32::from(WOOD_SHADES - 1);
+    let light = (up as f32 / depth.saturating_sub(1).max(1) as f32 * top).round() as u8;
+    // A hash of the place, so the texture holds still from frame to frame.
+    let speck = (along.wrapping_mul(73) ^ up.wrapping_mul(151)) % 13;
+    let line = up % GRAIN_EVERY == 1 && up + 1 < depth && speck != 0;
+    let light = if line {
+        light.saturating_sub(GRAIN_SHADES)
+    } else {
+        light
+    };
+    match speck {
+        0 => light.saturating_add(1).min(WOOD_SHADES - 1),
+        1 => light.saturating_sub(1),
+        _ => light,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -154,10 +197,10 @@ impl Log {
                         phase: grain.phase,
                         period: grain.period,
                     }
-                } else if up + BAND >= depth {
-                    Pixel::Bark
                 } else {
-                    grain.wood
+                    Pixel::Wood {
+                        light: wood_light(up, depth, x - self.start),
+                    }
                 };
                 out.push((x, y, char_if(pixel, burnt)));
             }
@@ -166,11 +209,12 @@ impl Log {
     }
 }
 
-/// Past `CHARRED`, each wood pixel takes the next darker role.
+/// Past `CHARRED`, each wood pixel takes less light.
 fn char_if(pixel: Pixel, burnt: f32) -> Pixel {
     match pixel {
-        Pixel::Bark if burnt > CHARRED => Pixel::Heart,
-        Pixel::Heart if burnt > CHARRED => Pixel::Shadow,
+        Pixel::Wood { light } if burnt > CHARRED => Pixel::Wood {
+            light: light.saturating_sub(CHAR_SHADES),
+        },
         other => other,
     }
 }
@@ -282,6 +326,10 @@ pub struct Embers {
     /// The share of the way from the last tick to the next. A falling log
     /// and a spark draw on from their tick by it.
     progress: f64,
+    shades: Shades,
+    /// The air the glow lights on this tick, and the share of love each
+    /// pixel of it takes.
+    halo: Vec<(usize, usize, f32)>,
 }
 
 impl Embers {
@@ -307,6 +355,8 @@ impl Embers {
             ticks: 0,
             falls: Vec::new(),
             progress: 0.0,
+            shades: Shades::of(palette),
+            halo: Vec::new(),
         }
     }
 
@@ -380,7 +430,7 @@ impl Embers {
             for y in top..top + BAND {
                 for x in 0..width {
                     let stone = (x + offset) % (STONE + MORTAR) < STONE;
-                    set(x, y, if stone { Pixel::Stone } else { Pixel::Shadow });
+                    set(x, y, if stone { Pixel::Stone } else { Pixel::Mortar });
                 }
             }
         }
@@ -460,13 +510,7 @@ impl Embers {
                 } else {
                     self.rng.random_range(0.15..1.0)
                 };
-                let wood = if up < BAND {
-                    Pixel::Shadow
-                } else {
-                    Pixel::Heart
-                };
                 grain.push(Grain {
-                    wood,
                     ignite,
                     phase: self.rng.random(),
                     period: self.rng.random_range(GLOW_PERIODS),
@@ -598,11 +642,7 @@ impl Embers {
                 (0..above_grate).find(|&y| {
                     matches!(
                         self.pixel(x, y),
-                        Pixel::Bark
-                            | Pixel::Heart
-                            | Pixel::Shadow
-                            | Pixel::Ash
-                            | Pixel::Glow { .. }
+                        Pixel::Wood { .. } | Pixel::Ash | Pixel::Glow { .. }
                     )
                 })
             })
@@ -637,25 +677,103 @@ impl Embers {
         pixels
     }
 
-    fn colour(&self, pixel: Pixel, x: usize, y: usize) -> Color {
-        let palette = self.palette;
+    /// The pulse of a glowing pixel at this tick, from 0 at its dullest
+    /// to 1 at its brightest, or 1 in a flare.
+    fn level(&self, pixel: Pixel, x: usize, y: usize) -> f32 {
+        let Pixel::Glow { phase, period } = pixel else {
+            return 0.0;
+        };
         let flared = self.flare.is_some_and(|(fx, fy, until)| {
             self.ticks < until && x.abs_diff(fx) <= FLARE_REACH && y.abs_diff(fy) <= FLARE_REACH
         });
+        if flared {
+            return 1.0;
+        }
+        let step = u64::from(self.ticks) * 256 / u64::from(period.max(1));
+        let at = (step + u64::from(phase)) % 256;
+        let level = if at < 128 { at * 2 } else { (255 - at) * 2 };
+        level as f32 / 255.0
+    }
+
+    fn colour(&self, pixel: Pixel, x: usize, y: usize) -> Color {
+        let shades = &self.shades;
         match pixel {
-            Pixel::Glow { .. } if flared => palette.gold,
-            Pixel::Empty => palette.base,
-            Pixel::Stone | Pixel::Heart | Pixel::Ash => palette.muted,
-            Pixel::Grate | Pixel::Bark => palette.subtle,
-            Pixel::Shadow => palette.overlay,
-            Pixel::Glow { phase, period } => {
-                let ramp = [palette.love, palette.rose, palette.gold];
-                let step = u64::from(self.ticks) * 256 / u64::from(period.max(1));
-                let at = (step + u64::from(phase)) % 256;
-                let level = if at < 128 { at * 2 } else { (255 - at) * 2 };
-                let index = usize::try_from(level * 3 / 256).unwrap_or(0);
-                ramp[index.min(ramp.len() - 1)]
+            Pixel::Empty => self.palette.base,
+            Pixel::Stone | Pixel::Ash => self.palette.muted,
+            Pixel::Mortar => self.palette.overlay,
+            Pixel::Grate => self.palette.subtle,
+            Pixel::Wood { light } => shades.wood[usize::from(light.min(WOOD_SHADES - 1))],
+            Pixel::Glow { .. } => {
+                let last = shades.glow.len() - 1;
+                let at = (self.level(pixel, x, y) * last as f32).round() as usize;
+                shades.glow[at.min(last)]
             }
+        }
+    }
+
+    /// The air above the grate that the glow lights: each empty pixel
+    /// within `HALO_REACH` of a glowing pixel takes a share of love, the
+    /// glow's deepest colour, that fades with the distance and swells with
+    /// the pulse of the brightest glow near it.
+    fn light_air(&self) -> Vec<(usize, usize, f32)> {
+        let (width, above) = (self.width, self.rows.saturating_sub(BELOW_LOGS));
+        let empty = |x: usize, y: usize| {
+            x < width && y < above && self.pixels[y * width + x] == Pixel::Empty
+        };
+        let reach = HALO_REACH.ceil() as usize;
+        let mut lit: BTreeMap<(usize, usize), f32> = BTreeMap::new();
+        for &(x, y) in &self.glows {
+            let beside = [
+                (x.wrapping_sub(1), y),
+                (x + 1, y),
+                (x, y.wrapping_sub(1)),
+                (x, y + 1),
+            ];
+            if !beside.iter().any(|&(x, y)| empty(x, y)) {
+                continue;
+            }
+            let level = self.level(self.pixels[y * width + x], x, y);
+            for ty in y.saturating_sub(reach)..=y + reach {
+                for tx in x.saturating_sub(reach)..=x + reach {
+                    let far = (tx.abs_diff(x) as f32).hypot(ty.abs_diff(y) as f32);
+                    let fade = 1.0 - far / (HALO_REACH + 1.0);
+                    let share = HALO_SHARE * fade * (0.6 + 0.4 * level);
+                    if far <= HALO_REACH && share >= HALO_LEAST && empty(tx, ty) {
+                        let held = lit.entry((tx, ty)).or_insert(share);
+                        *held = held.max(share);
+                    }
+                }
+            }
+        }
+        lit.into_iter()
+            .map(|((x, y), share)| (x, y, share))
+            .collect()
+    }
+}
+
+/// The colours of the shaded parts of the hearth, mixed once from the
+/// theme, because a frame draws every pixel and a mix is slow.
+#[derive(Debug)]
+struct Shades {
+    wood: Vec<Color>,
+    glow: Vec<Color>,
+}
+
+impl Shades {
+    /// Wood shades from overlay in the shadow through muted to subtle on
+    /// top, and the glow from love through rose to gold. Each mixes the
+    /// colours of one part, so no part takes the colour of another.
+    fn of(palette: &Palette) -> Self {
+        let wood = [palette.overlay, palette.muted, palette.subtle];
+        let glow = [palette.love, palette.rose, palette.gold];
+        let spread = |stops: &[Color], count: usize| -> Vec<Color> {
+            (0..count)
+                .map(|step| octant::ramp(stops, step as f32 / (count - 1) as f32))
+                .collect()
+        };
+        Self {
+            wood: spread(&wood, usize::from(WOOD_SHADES)),
+            glow: spread(&glow, GLOW_SHADES),
         }
     }
 }
@@ -696,10 +814,9 @@ impl Embers {
         } else {
             ('.', self.palette.muted)
         };
-        buf[(area.x + x, area.y + y)]
-            .set_char(glyph)
-            .set_fg(colour)
-            .set_bg(self.palette.base);
+        // The spark keeps the background the canvas gave its cell, so a
+        // spark in the lit air takes no square of dark air with it.
+        buf[(area.x + x, area.y + y)].set_char(glyph).set_fg(colour);
     }
 
     fn step(&mut self, area: Rect) {
@@ -739,6 +856,7 @@ impl Scene for Embers {
     fn tick(&mut self, area: Rect) {
         self.step(area);
         self.falls = self.next_falls();
+        self.halo = self.light_air();
     }
 
     fn set_progress(&mut self, progress: f64) {
@@ -762,6 +880,13 @@ impl Scene for Embers {
         for y in 0..self.rows.min(canvas.height()) {
             for x in 0..self.width.min(canvas.width()) {
                 canvas.set(x, y, self.colour(pixels[y * self.width + x], x, y));
+            }
+        }
+        // A falling log glides over the air its tick lit, and the air keeps
+        // to the pixels the log leaves empty.
+        for &(x, y, share) in &self.halo {
+            if pixels.get(y * self.width + x) == Some(&Pixel::Empty) {
+                canvas.blend(x, y, self.palette.love, share);
             }
         }
         canvas.render(area, buf);
