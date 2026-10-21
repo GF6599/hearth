@@ -2,12 +2,13 @@ use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use ratatui::symbols::border;
 
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
-use crate::theme::{self, Palette};
+use crate::theme::Palette;
 
-/// Drawn cells, as a share of the area, at which the screen clears.
+/// Cells that a pipe crosses, as a share of the area, at which the screen
+/// clears.
 pub const FILL_PERCENT: usize = 60;
 
 /// One tick in this many, a pipe turns.
@@ -40,9 +41,6 @@ fn colours(palette: &Palette) -> Vec<Color> {
     })
 }
 
-/// The runes come from the same set as the frame, so the two match.
-const RUNES: border::Set<'static> = theme::BORDER.to_border_set();
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Up,
@@ -60,35 +58,38 @@ impl Direction {
             (Direction::Left, true) | (Direction::Right, false) => Direction::Up,
         }
     }
-}
 
-/// The rune for a cell entered moving `from` and left moving `to`.
-fn rune(from: Direction, to: Direction) -> &'static str {
-    use Direction::{Down, Left, Right, Up};
-    match (from, to) {
-        (Left | Right, Left | Right) => RUNES.horizontal_top,
-        (Up | Down, Up | Down) => RUNES.vertical_left,
-        (Right, Down) | (Up, Left) => RUNES.top_right,
-        (Left, Down) | (Up, Right) => RUNES.top_left,
-        (Right, Up) | (Down, Left) => RUNES.bottom_right,
-        (Left, Up) | (Down, Right) => RUNES.bottom_left,
+    /// The pixels in one step. A step spans one cell either way, so a pipe
+    /// crosses as many cells a second across as down.
+    fn reach(self) -> usize {
+        match self {
+            Direction::Up | Direction::Down => CELL_HEIGHT,
+            Direction::Left | Direction::Right => CELL_WIDTH,
+        }
     }
 }
 
+/// A pipe's head is the next pixel it lights, so the first pixel of a turn
+/// is also the corner, and the line has no gap there.
 #[derive(Debug, Clone, Copy)]
 struct Pipe {
-    x: u16,
-    y: u16,
+    x: usize,
+    y: usize,
     heading: Direction,
     colour: Color,
 }
 
+/// Each pipe is a line one pixel wide. A pixel is about square, so the
+/// line is as thick across as down. A line two pixels wide fills a whole
+/// cell on a run down and reads as a bar, not a pipe.
 #[derive(Debug)]
 pub struct Pipes {
     rng: Rng,
     colours: Vec<Color>,
+    base: Color,
     size: (u16, u16),
-    cells: Vec<Option<(&'static str, Color)>>,
+    canvas: Canvas,
+    crossed: Vec<bool>,
     pipes: Vec<Pipe>,
     drawn: usize,
     due: u32,
@@ -99,22 +100,24 @@ impl Pipes {
         Self {
             rng,
             colours: colours(palette),
+            base: palette.base,
             size: (0, 0),
-            cells: Vec::new(),
+            canvas: Canvas::new(0, 0, palette.base),
+            crossed: Vec::new(),
             pipes: Vec::new(),
             drawn: 0,
             due: 0,
         }
     }
 
-    /// One pipe laid by hand: it starts at `start` having arrived moving
-    /// `heading`, then takes each move in turn. The same step as a tick,
-    /// with the turns given instead of drawn.
+    /// One pipe laid by hand: its head starts at the pixel `start` having
+    /// arrived moving `heading`, then takes each move in turn. The same
+    /// step as a tick, with the turns given instead of drawn.
     pub fn trace(
         rng: Rng,
         palette: &Palette,
         area: Rect,
-        start: (u16, u16),
+        start: (usize, usize),
         heading: Direction,
         moves: &[Direction],
     ) -> Self {
@@ -141,7 +144,8 @@ impl Pipes {
 
     fn clear(&mut self) {
         let (width, height) = self.size;
-        self.cells = vec![None; usize::from(width) * usize::from(height)];
+        self.canvas = Canvas::new(width, height, self.base);
+        self.crossed = vec![false; usize::from(width) * usize::from(height)];
         self.drawn = 0;
         self.pipes.clear();
         if width == 0 || height == 0 {
@@ -155,7 +159,7 @@ impl Pipes {
     }
 
     fn spawn(&mut self) -> Pipe {
-        let (width, height) = self.size;
+        let (width, height) = (self.canvas.width(), self.canvas.height());
         let colour = self.free_colour(None);
         let (x, y, heading) = match self.rng.random_range(0..4) {
             0 => (self.rng.random_range(0..width), 0, Direction::Down),
@@ -205,20 +209,36 @@ impl Pipes {
             self.lay(&mut pipe, next);
             self.pipes[index] = pipe;
         }
-        if self.drawn * 100 >= self.cells.len() * FILL_PERCENT {
+        if self.drawn * 100 >= self.crossed.len() * FILL_PERCENT {
             self.clear();
         }
     }
 
     fn lay(&mut self, pipe: &mut Pipe, next: Direction) {
-        let (width, height) = self.size;
-        let index = usize::from(pipe.y) * usize::from(width) + usize::from(pipe.x);
-        if let Some(cell) = self.cells.get_mut(index) {
-            if cell.is_none() {
-                self.drawn += 1;
+        for _ in 0..next.reach() {
+            self.light(pipe.x, pipe.y, pipe.colour);
+            if self.advance(pipe, next) {
+                pipe.colour = self.free_colour(Some(pipe.colour));
             }
-            *cell = Some((rune(pipe.heading, next), pipe.colour));
         }
+        pipe.heading = next;
+    }
+
+    fn light(&mut self, x: usize, y: usize, colour: Color) {
+        self.canvas.set(x, y, colour);
+        let cell = y / CELL_HEIGHT * usize::from(self.size.0) + x / CELL_WIDTH;
+        if let Some(crossed) = self.crossed.get_mut(cell)
+            && !*crossed
+        {
+            *crossed = true;
+            self.drawn += 1;
+        }
+    }
+
+    /// Moves the head one pixel, wrapping at an edge, and tells whether it
+    /// wrapped.
+    fn advance(&self, pipe: &mut Pipe, next: Direction) -> bool {
+        let (width, height) = (self.canvas.width(), self.canvas.height());
         let looped = match next {
             Direction::Up => pipe.y == 0,
             Direction::Down => pipe.y + 1 == height,
@@ -231,10 +251,7 @@ impl Pipes {
             Direction::Left => pipe.x = pipe.x.checked_sub(1).unwrap_or(width - 1),
             Direction::Right => pipe.x = (pipe.x + 1) % width,
         }
-        pipe.heading = next;
-        if looped {
-            pipe.colour = self.free_colour(Some(pipe.colour));
-        }
+        looped
     }
 }
 
@@ -254,16 +271,6 @@ impl Scene for Pipes {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let (width, height) = self.size;
-        for y in 0..area.height.min(height) {
-            for x in 0..area.width.min(width) {
-                let index = usize::from(y) * usize::from(width) + usize::from(x);
-                if let Some((symbol, colour)) = self.cells[index] {
-                    buf[(area.x + x, area.y + y)]
-                        .set_symbol(symbol)
-                        .set_fg(colour);
-                }
-            }
-        }
+        self.canvas.render(area, buf);
     }
 }
