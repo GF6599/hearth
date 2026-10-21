@@ -153,7 +153,7 @@ fn neighbouring_pixels_shade_into_each_other() {
 
 /// Given: the scene on a hundred by thirty area.
 /// When: it ticks once and renders.
-/// Then: a third or more of the cells show two colours in one octant glyph.
+/// Then: four cells in five or more show two colours in one octant glyph.
 ///
 /// Why it matters: the edge between two shades runs through the cells at
 /// the grain of a pixel, a quarter of a cell tall. Noise at the grain of a
@@ -178,7 +178,7 @@ fn noise_varies_within_a_cell() {
         })
         .count();
     let cells = usize::try_from(AREA.area()).unwrap();
-    assert!(split * 3 >= cells, "{split} of {cells} cells split");
+    assert!(split * 5 >= cells * 4, "{split} of {cells} cells split");
 }
 
 /// Noise drifts calmly: it changes a few of its pixels each tick, each by
