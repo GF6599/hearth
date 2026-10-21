@@ -1077,9 +1077,9 @@ fn the_reflection_streaks_are_one_pixel_row_tall() {
         // Then:
         let water = ground(&rows) + 1 + CELL_HEIGHT;
         for y in water + 1..rows.len() {
-            for x in 0..rows[y].len() {
+            for (x, (below, above)) in rows[y].iter().zip(&rows[y - 1]).enumerate() {
                 assert!(
-                    !(is_window(rows[y][x]) && is_window(rows[y - 1][x])),
+                    !(is_window(*below) && is_window(*above)),
                     "tick {tick}: a streak two rows tall at {:?}",
                     (x, y)
                 );
@@ -1092,7 +1092,8 @@ fn the_reflection_streaks_are_one_pixel_row_tall() {
 /// Given: the scene at a hundred by thirty, from three seeds.
 /// When: it ticks and renders.
 /// Then: on the ground row each near tower, a run of three or more pixels
-/// that read as its wall, is darker at its left end than at its right.
+/// that read as its wall from its left side to its rim, is darker at its
+/// left end than at its right.
 ///
 /// Why it matters: a wall of one flat colour reads as a cut-out and not as
 /// a tower that stands in the light of the moon.
@@ -1121,7 +1122,13 @@ fn each_near_tower_is_lit_from_the_side_of_the_moon() {
             while x < row.len() && row[x] == PALETTE.overlay {
                 x += 1;
             }
-            if x - start < 3 {
+            // A pillar of the raised line can stand in front of a wall and
+            // cut it, so only a run from a wall's left side to its rim
+            // holds the whole of its light.
+            let whole = (start == 0 || row[start - 1] != PALETTE.muted)
+                && x < row.len()
+                && row[x] == PALETTE.pine;
+            if x - start < 3 || !whole {
                 continue;
             }
             towers += 1;
@@ -1131,7 +1138,7 @@ fn each_near_tower_is_lit_from_the_side_of_the_moon() {
                 "seed {seed}: the near tower at {start}..{x} runs from {left:?} to {right:?}"
             );
         }
-        assert!(towers >= 4, "seed {seed}: {towers} near towers");
+        assert!(towers >= 3, "seed {seed}: {towers} near towers");
     }
 }
 
