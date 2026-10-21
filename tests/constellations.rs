@@ -1113,3 +1113,46 @@ fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
         );
     }
 }
+
+/// Over a see-through base, the lines and the shooting stars mix nothing
+/// into it.
+/// Given: the scene on Rose Pine with a see-through base.
+/// When: it ticks and renders for three minutes.
+/// Then: no pixel lies part way along the mix from the base toward a colour
+/// the scene draws over the sky: a figure's iris or foam, or a shooting
+/// star's gold.
+///
+/// Why it matters: there the base is the terminal's own background, and a
+/// mix with it is a colour the user never chose, a smudge round every edge.
+#[test]
+fn over_a_see_through_base_nothing_mixes_with_it() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
+    let mut scene = Constellations::new(Rng::seed_from_u64(0), palette);
+    let drawn = [palette.iris, palette.foam, palette.gold];
+    let mut lit = 0;
+
+    for tick in 0..SKY_RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 5 != 0 {
+            continue;
+        }
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let shown = pixels::showing(&buffer, AREA, |colour| {
+            colour != palette.base && colour != Color::Reset
+        });
+        lit += shown.len();
+        for (pixel, colour) in shown {
+            assert!(
+                !drawn
+                    .iter()
+                    .any(|to| { colour != *to && on_mix(colour, palette.base, *to) }),
+                "tick {tick}: {pixel:?} in {colour:?} mixes the base"
+            );
+        }
+    }
+    assert!(lit > 0, "nothing drawn");
+}

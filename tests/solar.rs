@@ -2,9 +2,9 @@
 
 mod pixels;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::TAU;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
@@ -1234,5 +1234,94 @@ fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
             render(&still, AREA, AREA),
             "tick {tick}"
         );
+    }
+}
+
+/// The colours of each mix a test has read, by its two ends.
+type Mixes = HashMap<(Color, Color), HashSet<Color>>;
+
+/// Whether `colour` lies part way along the mix from `from` toward `to`,
+/// neither end, within `levels` of a step of the mix in each channel.
+fn part_way(colour: Color, from: Color, to: Color, levels: u8) -> bool {
+    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
+    let mut mixes = MIXES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    let steps = 4096_u16;
+    let mixes = mixes.entry((from, to)).or_insert_with(|| {
+        (1..steps)
+            .map(|step| octant::mix(from, to, f32::from(step) / f32::from(steps)))
+            .collect()
+    });
+    let Color::Rgb(r, g, b) = colour else {
+        return false;
+    };
+    let near = |channel: u8| channel.saturating_sub(levels)..=channel.saturating_add(levels);
+    colour != from
+        && colour != to
+        && near(r).any(|r| near(g).any(|g| near(b).any(|b| mixes.contains(&Color::Rgb(r, g, b)))))
+}
+
+/// Over a see-through base, the solar system mixes nothing into it.
+/// Given: the scene on Rose Pine with a see-through base.
+/// When: it ticks and renders for twenty seconds.
+/// Then: no pixel lies part way along the mix from the base toward a colour
+/// the scene draws over the sky: the sun's gold, the orbits' colour half
+/// way from the overlay to muted, and the Moon's subtle. A pixel on a mix
+/// the scene draws between two other colours is left out: a planet's
+/// shades from the overlay toward its colour and its trail from the
+/// orbits' colour toward it, within two levels, as a trail over an orbit
+/// is a mix rounded twice. The greys of the theme lie near one line from
+/// the base, so such a shade can lie near a mix from the base too.
+///
+/// Why it matters: there the base is the terminal's own background, and a
+/// mix with it is a colour the user never chose, a smudge round every edge.
+#[test]
+fn over_a_see_through_base_nothing_mixes_with_it() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
+    let mut scene = Solar::new(Rng::seed_from_u64(7), palette);
+    let orbit = octant::mix(palette.overlay, palette.muted, 0.5);
+    let drawn = [palette.gold, orbit, palette.subtle];
+    let roles = [
+        palette.subtle,
+        palette.text,
+        palette.foam,
+        palette.love,
+        palette.rose,
+        palette.gold,
+        palette.pine,
+        palette.iris,
+    ];
+    let shaded = |colour: Color| {
+        roles.iter().any(|role| {
+            [palette.overlay, orbit]
+                .iter()
+                .any(|from| colour == *role || part_way(colour, *from, *role, 2))
+        })
+    };
+
+    for tick in 0..330 {
+        // When:
+        scene.tick(AREA);
+        if tick % 30 != 0 {
+            continue;
+        }
+        let mut buffer = Buffer::empty(AREA);
+        scene.render(AREA, &mut buffer);
+
+        // Then:
+        for (pixel, colour) in pixels::showing(&buffer, AREA, |colour| colour != palette.base) {
+            if shaded(colour) {
+                continue;
+            }
+            assert!(
+                !drawn
+                    .iter()
+                    .any(|to| part_way(colour, palette.base, *to, 1)),
+                "tick {tick}: {pixel:?} in {colour:?} mixes the base"
+            );
+        }
     }
 }

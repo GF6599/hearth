@@ -1466,3 +1466,52 @@ fn the_top_of_a_post_mixes_into_the_land() {
     }
     assert!(soft > 0, "no post's top mixes into the land");
 }
+
+/// Over a see-through base, the road, the moon and the posts mix nothing
+/// into it.
+/// Given: the scene on Rose Pine with a see-through base.
+/// When: it ticks and renders over straights and curves.
+/// Then: no pixel lies part way along the mix from the base toward a colour
+/// the scene draws over the land or the sky: the rumble strip's love and
+/// text, the moon's text and the posts' muted. A colour the scene draws,
+/// and a mix it draws over the road, from the overlay toward the dash's
+/// text, the rumble's love, the car's iris or the glow's love, is left
+/// out: the greys of the theme lie near one line from the base, so such a
+/// mix can lie near a mix from the base too.
+///
+/// Why it matters: there the base is the terminal's own background, and a
+/// mix with it is a colour the user never chose, a smudge round every edge.
+#[test]
+fn over_a_see_through_base_nothing_mixes_with_it() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
+    let mut scene = Drive::new(Rng::seed_from_u64(7), palette);
+    let drawn = [palette.love, palette.text, palette.muted];
+    let on_the_road = |colour: Color| {
+        [palette.text, palette.love, palette.iris, palette.overlay]
+            .iter()
+            .any(|to| colour == *to || share_on(colour, palette.overlay, *to).is_some())
+    };
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 50 != 0 {
+            continue;
+        }
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        for (pixel, colour) in pixels::showing(&buffer, AREA, |colour| colour != palette.base) {
+            if drawn.contains(&colour) || on_the_road(colour) {
+                continue;
+            }
+            assert!(
+                !drawn.iter().any(|to| {
+                    share_on(colour, palette.base, *to).is_some_and(|share| share > 0.0)
+                }),
+                "tick {tick}: {pixel:?} in {colour:?} mixes the base"
+            );
+        }
+    }
+}

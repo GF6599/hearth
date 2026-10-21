@@ -1051,3 +1051,50 @@ fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
         );
     }
 }
+
+/// Over a see-through base, the flock, the hawk and the trees mix nothing
+/// into it.
+/// Given: the scene on Rose Pine with a see-through base and the terminal's
+/// background.
+/// When: it ticks and renders through a pass of the hawk.
+/// Then: no pixel lies part way along the mix from the base toward a colour
+/// the scene draws over the sky: the birds' subtle and text, the hawk's
+/// love and the trees' muted. A colour the scene draws, and a bird's mix
+/// from subtle toward text, is left out: the greys of the theme lie near
+/// one line from the base, so muted lies near the mix from it to text.
+///
+/// Why it matters: there the base is the terminal's own background, and a
+/// mix with it is a colour the user never chose, a smudge round every edge.
+#[test]
+fn over_a_see_through_base_nothing_mixes_with_it() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
+    let mut scene =
+        Murmuration::new(Rng::seed_from_u64(7), palette).with_background(Background::Terminal);
+    let drawn = [palette.subtle, palette.text, palette.love, palette.muted];
+    let mut hawk = 0;
+
+    for tick in 0..HAWK_EVERY.end() + 300 {
+        // When:
+        scene.tick(AREA);
+        if tick % 25 != 0 && scene.hawk().is_none() {
+            continue;
+        }
+        hawk += usize::from(scene.hawk().is_some());
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        for (pixel, colour) in pixels::showing(&buffer, AREA, |colour| colour != palette.base) {
+            if drawn.contains(&colour) || share_on(colour, palette.subtle, palette.text).is_some() {
+                continue;
+            }
+            assert!(
+                !drawn.iter().any(|to| {
+                    share_on(colour, palette.base, *to).is_some_and(|share| share > 0.0)
+                }),
+                "tick {tick}: {pixel:?} in {colour:?} mixes the base"
+            );
+        }
+    }
+    assert!(hawk > 0, "no hawk came");
+}
