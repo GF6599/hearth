@@ -492,3 +492,40 @@ fn a_pipe_down_is_lighter_on_one_side() {
         "an edge is the pipe's colour"
     );
 }
+
+/// Given: a pipe at pixel (5, 4) that arrived moving down, in the flat
+/// Rose Pine theme, whose base is the terminal's own background.
+/// When: it moves down twice.
+/// Then: no pixel the pipe lights is a mix of the base with a colour the
+/// pipe shows, so each is the pipe colour, its highlight, or the base.
+///
+/// Why it matters: a mix with a see-through base paints an opaque colour
+/// that guesses the user's background, and shows as a dark smudge beside
+/// the pipe over a background of another colour.
+#[test]
+fn a_pipe_down_keeps_its_edges_hard_on_a_see_through_base() {
+    // Given, when:
+    let area = Rect::new(0, 0, 10, 6);
+    let palette = &theme::FLAT_THEMES[0];
+    let scene = Pipes::trace(
+        Rng::seed_from_u64(7),
+        palette,
+        area,
+        (5, 4),
+        Direction::Down,
+        &[Direction::Down, Direction::Down],
+    );
+
+    // Then:
+    let lit = lit(&render(&scene, area), palette.base);
+    let colours: BTreeSet<String> = lit.iter().map(|(_, c)| format!("{c:?}")).collect();
+    for (place, colour) in &lit {
+        for (_, other) in &lit {
+            let mixed = share(*colour, palette.base, *other);
+            assert!(
+                mixed.is_none_or(|share| share == 1.0),
+                "{colour:?} at {place:?} mixes the base with {other:?}: {colours:?}"
+            );
+        }
+    }
+}
