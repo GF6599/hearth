@@ -48,10 +48,14 @@ fn pixels_in(buffer: &Buffer, area: Rect, colours: &[Color]) -> BTreeSet<(usize,
         .collect()
 }
 
+/// The steps of each mix a test has read, by its two ends: each colour of
+/// the mix with the first step that rounds to it.
+type Mixes = HashMap<(Color, Color), HashMap<Color, u16>>;
+
 /// How far `colour` lies along the mix from `from` toward `to`, from 0 to
 /// 1, or none for a colour off it.
 fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
-    static MIXES: OnceLock<Mutex<HashMap<(Color, Color), HashMap<Color, u16>>>> = OnceLock::new();
+    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
     let mut mixes = MIXES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -603,9 +607,9 @@ fn every_theme_lights_the_sky_low_over_the_trees() {
         let grid = pixels::grid(&buffer, AREA, |_, cell| {
             pixels::shown(cell).unwrap_or([Color::Reset; pixels::PIXELS])
         });
-        for x in 0..usize::from(AREA.width) * CELL_WIDTH {
-            assert_eq!(grid[0][x], darkest, "{name}: top at {x}");
-            assert_eq!(grid[low][x], lightest, "{name}: low at {x}");
+        for (x, (top, over)) in grid[0].iter().zip(&grid[low]).enumerate() {
+            assert_eq!(*top, darkest, "{name}: top at {x}");
+            assert_eq!(*over, lightest, "{name}: low at {x}");
         }
     }
 }

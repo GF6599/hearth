@@ -44,9 +44,12 @@ fn render(scene: &Constellations, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
+/// The colours of each mix a test has read, by its two ends.
+type Mixes = HashMap<(Color, Color), HashSet<Color>>;
+
 /// Whether `colour` is a mix from `from` toward `to`, either end included.
 fn on_mix(colour: Color, from: Color, to: Color) -> bool {
-    static MIXES: OnceLock<Mutex<HashMap<(Color, Color), HashSet<Color>>>> = OnceLock::new();
+    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
     let mut mixes = MIXES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -434,7 +437,7 @@ fn a_figure_line_is_soft_and_fades_by_its_colour() {
                 line.iter()
                     .map(|&(r, g, b)| luma(Color::Rgb(r, g, b)))
                     .max()
-                    .unwrap_or(luma(PALETTE.base)),
+                    .unwrap_or_else(|| luma(PALETTE.base)),
             );
         }
         assert!(figures > 0, "seed {seed}: no figure ended");
