@@ -249,12 +249,12 @@ impl SceneKind {
     /// length.
     pub fn summary(self) -> &'static str {
         match self {
-            SceneKind::Noise => "random glyphs over the whole screen",
+            SceneKind::Noise => "static of random pixels over the whole screen",
             SceneKind::Matrix => "katakana rain that fades from foam to pine",
-            SceneKind::Fire => "the doom fire, rising in half blocks",
+            SceneKind::Fire => "the doom fire, rising in octant pixels",
             SceneKind::Embers => "logs that burn down on a grate, throwing sparks",
             SceneKind::Life => "Conway's game of life on a torus",
-            SceneKind::Pipes => "pipes that walk and turn in box runes",
+            SceneKind::Pipes => "pipes one pixel wide that walk and turn",
             SceneKind::Bonsai => "a bonsai tree that grows from a pot",
             SceneKind::Aquarium => "fish, bubbles and swaying seaweed",
             SceneKind::Murmuration => "a flock of starlings that folds at dusk",
