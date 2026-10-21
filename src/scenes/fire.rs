@@ -4,6 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::dither;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -26,9 +27,8 @@ const fn stops(palette: &Palette) -> [Color; 7] {
     ]
 }
 
-/// Draws a cell as two heat rows: the foreground is the upper one and the
-/// background the lower one.
-const HALF_BLOCK: char = '▀';
+/// The rows of pixels the heat climbs in a tick: half a cell.
+const CLIMB: usize = 2;
 
 /// The stop for one pixel. Between two stops, the share of pixels that take
 /// the hotter one follows how far the heat is from the cooler one.
@@ -76,8 +76,8 @@ impl Fire {
 
 impl Scene for Fire {
     fn tick(&mut self, area: Rect) {
-        let width = usize::from(area.width);
-        let rows = usize::from(area.height) * 2;
+        let width = usize::from(area.width) * CELL_WIDTH;
+        let rows = usize::from(area.height) * CELL_HEIGHT;
         if (width, rows) != (self.width, self.rows) {
             self.width = width;
             self.rows = rows;
@@ -91,39 +91,30 @@ impl Scene for Fire {
 
         let max_decay = self.max_decay();
         let last_column = width - 1;
-        for y in 0..rows - 1 {
-            for x in 0..width {
-                let source_x = match self.rng.random_range(0..3) {
-                    0 => x.saturating_sub(1),
-                    1 => x,
-                    _ => (x + 1).min(last_column),
-                };
-                let source = self.heat[(y + 1) * width + source_x];
-                let decay = self.rng.random_range(0..=max_decay);
-                self.heat[y * width + x] = source.saturating_sub(decay);
+        for _ in 0..CLIMB {
+            for y in 0..rows - 1 {
+                for x in 0..width {
+                    let source_x = match self.rng.random_range(0..3) {
+                        0 => x.saturating_sub(1),
+                        1 => x,
+                        _ => (x + 1).min(last_column),
+                    };
+                    let source = self.heat[(y + 1) * width + source_x];
+                    let decay = self.rng.random_range(0..=max_decay);
+                    self.heat[y * width + x] = source.saturating_sub(decay);
+                }
             }
         }
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        for y in 0..area.height {
-            let upper = usize::from(y) * 2;
-            let lower = upper + 1;
-            if lower >= self.rows {
-                break;
-            }
-            for x in 0..area.width {
-                let column = usize::from(x);
-                if column >= self.width {
-                    break;
-                }
-                let upper_heat = self.heat[upper * self.width + column];
-                let lower_heat = self.heat[lower * self.width + column];
-                buf[(area.x + x, area.y + y)]
-                    .set_char(HALF_BLOCK)
-                    .set_fg(color(self.palette, upper_heat, column, upper))
-                    .set_bg(color(self.palette, lower_heat, column, lower));
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        for y in 0..self.rows.min(canvas.height()) {
+            for x in 0..self.width.min(canvas.width()) {
+                let heat = self.heat[y * self.width + x];
+                canvas.set(x, y, color(self.palette, heat, x, y));
             }
         }
+        canvas.render(area, buf);
     }
 }
