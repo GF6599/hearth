@@ -161,6 +161,53 @@ const fn colours() -> [Color; 7] {
     ]
 }
 
+/// The distance between two colours in RGB.
+fn distance(one: Color, other: Color) -> f32 {
+    match (one, other) {
+        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
+            .into_iter()
+            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
+            .sum::<f32>()
+            .sqrt(),
+        _ => f32::INFINITY,
+    }
+}
+
+/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
+/// one to the other, to a step of rounding, and a twentieth of the way or
+/// more from each, so a colour a step from either is no mix.
+fn between(colour: Color, one: Color, other: Color) -> bool {
+    let (span, near, far) = (
+        distance(one, other),
+        distance(one, colour),
+        distance(colour, other),
+    );
+    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
+}
+
+/// Whether `colour` lies on a ramp of `stops`: a stop, or a mix of two
+/// stops next to each other.
+fn on_ramp(colour: Color, stops: &[Color]) -> bool {
+    stops.contains(&colour)
+        || stops
+            .windows(2)
+            .any(|pair| between(colour, pair[0], pair[1]))
+}
+
+/// The wood from its shadow to its lit top, and the glow from dull to
+/// bright.
+const fn wood_ramp() -> [Color; 3] {
+    let [subtle, muted, overlay] = wood();
+    [overlay, muted, subtle]
+}
+
+/// The share of love in a pixel of air the glow lights: its distance from
+/// the base over love's.
+fn lit_share(colour: Color) -> f32 {
+    let palette = &theme::ROSE_PINE;
+    distance(palette.base, colour) / distance(palette.base, palette.love)
+}
+
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it ticks once and renders.
 /// Then: every pixel in the top half is the base colour.
@@ -429,12 +476,13 @@ fn sparks(buffer: &Buffer) -> Vec<(u16, u16, String, Color, Color)> {
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it runs for four hundred ticks, with a frame after each.
 /// Then: every spark is `•` in gold, `·` in rose or `.` in muted, on the
-/// base colour, in a cell above the grate, and some spark reaches the top
-/// half of the screen.
+/// base colour or on air the glow lights with love, in a cell above the
+/// grate, and some spark reaches the top half of the screen.
 ///
 /// Why it matters: the glyph shrinks and the colour cools as a spark rises,
 /// and a spark below the grate or one that never climbs breaks the picture
-/// of heat going up a chimney.
+/// of heat going up a chimney. A spark on the dark base in lit air shows a
+/// dark square around it.
 #[test]
 fn sparks_rise_above_the_grate_and_cool_as_they_shrink() {
     // Given:
@@ -456,7 +504,11 @@ fn sparks_rise_above_the_grate_and_cool_as_they_shrink() {
                 "·" => palette.rose,
                 _ => palette.muted,
             };
-            assert_eq!((fg, bg), (colour, palette.base), "{glyph} at ({x}, {y})");
+            assert_eq!(fg, colour, "{glyph} at ({x}, {y})");
+            assert!(
+                bg == palette.base || between(bg, palette.base, palette.love),
+                "{glyph} at ({x}, {y}) on {bg:?}"
+            );
             assert!(
                 y < grate_cell,
                 "{glyph} at ({x}, {y}) is not above the grate"
@@ -558,38 +610,33 @@ fn the_fire_draws_in_octant_glyphs() {
 
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it ticks forty times and renders.
-/// Then: some glowing pixel shows another colour of the glow than a pixel
+/// Then: some glowing pixel shows another shade of the glow than a pixel
 /// in the same half of its cell.
 ///
 /// Why it matters: each pixel of a log glows on its own pulse. A glow that
 /// pulses in blocks of half a cell shows a coarse grain.
 #[test]
 fn the_glow_pulses_in_pixels_a_quarter_of_a_cell_tall() {
-    // Given:
-    let mut fire = Toned::each_colour(7);
-
-    // When:
-    for _ in 0..40 {
-        fire.tick(AREA);
-    }
-    let shown = fire.colours(AREA);
+    // Given, when:
+    let shown = pixels(&render(&ticked(7, AREA, 40), AREA, AREA));
 
     // Then:
+    let glowing = |colour: Option<Color>| colour.filter(|colour| on_ramp(*colour, &glow()));
     let half = DOWN / 2;
     let fine = (0..shown.len()).any(|y| {
         (0..shown[y].len()).any(|x| {
-            let Some(colour) = shown[y][x].filter(|colour| glow().contains(colour)) else {
+            let Some(colour) = glowing(shown[y][x]) else {
                 return false;
             };
             let (left, top) = (x - x % ACROSS, y - y % half);
             (top..top + half).any(|row| {
                 (left..left + ACROSS)
-                    .filter_map(|column| shown[row][column])
-                    .any(|other| other != colour && glow().contains(&other))
+                    .filter_map(|column| glowing(shown[row][column]))
+                    .any(|other| other != colour)
             })
         })
     });
-    assert!(fine, "each half of a cell glows in one colour");
+    assert!(fine, "each half of a cell glows in one shade");
 }
 
 /// The shares of a tick at which a test draws a frame between two ticks.
@@ -702,4 +749,187 @@ fn a_falling_log_sits_between_two_ticks() {
         before = after;
     }
     assert!(between, "no log fell between two ticks");
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it ticks once and renders.
+/// Then: down some column of a log the wood shows more than three shades,
+/// its top is lighter than its underside on average, and some pixel of
+/// wood is darker than the wood above and below it, a line along the grain.
+///
+/// Why it matters: a log in three flat bands reads as a striped slab, and
+/// a log shaded from its lit top to its dark underside, with lines along
+/// its grain, reads as round wood with bark.
+#[test]
+fn a_log_is_lit_on_top_shaded_under_and_lined_along_its_grain() {
+    // Given, when:
+    let shown = pixels(&render(&ticked(7, AREA, 1), AREA, AREA));
+
+    // Then:
+    let wood = |colour: Option<Color>| colour.filter(|colour| on_ramp(*colour, &wood_ramp()));
+    let grate = shown.len() - BELOW_LOGS;
+    let mut runs: Vec<Vec<Color>> = Vec::new();
+    for x in 0..shown[0].len() {
+        let mut run = Vec::new();
+        for row in shown.iter().take(grate) {
+            match wood(row[x]) {
+                Some(colour) => run.push(colour),
+                None if run.len() >= LOG_RUN => runs.push(std::mem::take(&mut run)),
+                None => run.clear(),
+            }
+        }
+    }
+    assert!(!runs.is_empty(), "no column of wood {LOG_RUN} pixels deep");
+    let shades = |run: &[Color]| {
+        let mut seen: Vec<Color> = Vec::new();
+        for colour in run {
+            if !seen.contains(colour) {
+                seen.push(*colour);
+            }
+        }
+        seen.len()
+    };
+    assert!(
+        runs.iter().any(|run| shades(run) > 3),
+        "no column of a log shows more than three shades of wood"
+    );
+    let mean = |values: Vec<u32>| values.iter().sum::<u32>() / values.len() as u32;
+    let tops = mean(runs.iter().map(|run| theme::luma(run[0])).collect());
+    let undersides = mean(
+        runs.iter()
+            .map(|run| theme::luma(run[run.len() - 1]))
+            .collect(),
+    );
+    assert!(
+        tops > undersides,
+        "the tops of the logs have a mean luma of {tops} and their undersides {undersides}"
+    );
+    let lined = runs.iter().any(|run| {
+        run.windows(3).any(|three| {
+            let [above, line, below] = [three[0], three[1], three[2]].map(theme::luma);
+            line < above && line < below
+        })
+    });
+    assert!(lined, "no line along the grain of a log");
+}
+
+/// The fewest pixels of wood down a column that the shading test reads.
+const LOG_RUN: usize = 8;
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it ticks once and renders.
+/// Then: some pixels of the air above the grate are mixes of the base and
+/// love, and those within two pixels of the glow hold more love on average
+/// than those four or more pixels from it.
+///
+/// Why it matters: a glow that ends at the edge of the wood reads as a
+/// picture of embers, and a warm light that fades out into the dark around
+/// them reads as a fire in a room.
+#[test]
+fn the_glow_lights_the_air_around_the_fire() {
+    // Given, when:
+    let shown = pixels(&render(&ticked(7, AREA, 1), AREA, AREA));
+
+    // Then:
+    let palette = &theme::ROSE_PINE;
+    let grate = shown.len() - BELOW_LOGS;
+    let glowing: Vec<(usize, usize)> = (0..grate)
+        .flat_map(|y| (0..shown[y].len()).map(move |x| (x, y)))
+        .filter(|&(x, y)| shown[y][x].is_some_and(|colour| on_ramp(colour, &glow())))
+        .collect();
+    let lit: Vec<(usize, usize, Color)> = (0..grate)
+        .flat_map(|y| (0..shown[y].len()).map(move |x| (x, y)))
+        .filter_map(|(x, y)| {
+            let colour = shown[y][x]?;
+            between(colour, palette.base, palette.love).then_some((x, y, colour))
+        })
+        .collect();
+    assert!(!lit.is_empty(), "no air the glow lights");
+    let reach = |x: usize, y: usize| {
+        glowing
+            .iter()
+            .map(|(gx, gy)| gx.abs_diff(x).max(gy.abs_diff(y)))
+            .min()
+            .unwrap_or(usize::MAX)
+    };
+    let mean = |shares: Vec<f32>| shares.iter().sum::<f32>() / shares.len().max(1) as f32;
+    let near = mean(
+        lit.iter()
+            .filter(|(x, y, _)| reach(*x, *y) <= 2)
+            .map(|(_, _, colour)| lit_share(*colour))
+            .collect(),
+    );
+    let far = mean(
+        lit.iter()
+            .filter(|(x, y, _)| reach(*x, *y) >= 4)
+            .map(|(_, _, colour)| lit_share(*colour))
+            .collect(),
+    );
+    assert!(
+        near > far,
+        "the air near the glow holds {near} of love and the air further out {far}"
+    );
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs forty ticks, with a frame after each.
+/// Then: some frame shows a glowing pixel that is a mix of love and rose
+/// or of rose and gold.
+///
+/// Why it matters: a glow in three flat colours pulses in steps, and a
+/// glow through the shades between them pulses as embers do.
+#[test]
+fn the_glow_shades_between_love_rose_and_gold() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let [love, rose, gold] = glow();
+    let mut shaded = false;
+
+    for _ in 0..40 {
+        // When:
+        scene.tick(AREA);
+        let shown = pixels(&render(&scene, AREA, AREA));
+
+        // Then:
+        shaded |= shown
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|colour| between(*colour, love, rose) || between(*colour, rose, gold));
+    }
+    assert!(shaded, "the glow showed only love, rose and gold");
+}
+
+/// Given: the scene on an eighty by twenty-four area on Rose Pine with the
+/// terminal's background, where the base is see-through.
+/// When: it ticks forty times and renders.
+/// Then: no pixel is a mix of the base and love.
+///
+/// Why it matters: a mix with the base is an opaque colour over the
+/// terminal's own background, and lit air drawn in it shows as a smudge
+/// around the fire on a transparent terminal.
+#[test]
+fn over_the_terminal_background_the_air_stays_clear() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[0];
+    assert!(palette.see_through);
+    let mut scene = Embers::new(Rng::seed_from_u64(7), palette);
+
+    // When:
+    for _ in 0..40 {
+        scene.tick(AREA);
+    }
+    let shown = pixels(&render(&scene, AREA, AREA));
+
+    // Then:
+    for (y, row) in shown.iter().enumerate() {
+        for (x, colour) in row.iter().enumerate() {
+            if let Some(colour) = colour {
+                assert!(
+                    !between(*colour, palette.base, palette.love),
+                    "{colour:?} at ({x}, {y}) mixes the base and love"
+                );
+            }
+        }
+    }
 }
