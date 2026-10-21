@@ -163,6 +163,11 @@ struct Particle {
     y: f32,
     vx: f32,
     vy: f32,
+    /// The move of the last tick, in square units. The next move draws on
+    /// the random jitter, which a frame cannot know, but it is close to
+    /// this one. So a frame between two ticks carries the particle on by
+    /// its share of this move.
+    step: (f32, f32),
     /// Ticks of ink left, out of `lifetime`.
     left: u32,
     lifetime: u32,
@@ -197,6 +202,8 @@ pub struct Ink {
     currents: Currents,
     /// Ticks since the start, the time the currents read.
     time: u32,
+    /// How far the scene has run towards its next tick.
+    progress: f32,
     next_serial: u64,
     last_accent: Option<usize>,
     /// Ticks until the next drop.
@@ -214,6 +221,7 @@ impl Ink {
             drops: Vec::new(),
             currents,
             time: 0,
+            progress: 0.0,
             next_serial: 0,
             last_accent: None,
             wait: 0,
@@ -272,8 +280,12 @@ impl Ink {
         let mut inks = vec![[0.0_f32; 5]; columns * rows];
         for drop in &self.drops {
             for particle in &drop.particles {
-                let x = particle.x * PIXELS_ACROSS as f32 - 0.5;
-                let y = particle.y * PIXELS_DOWN as f32 - 0.5;
+                let (x, y) = self.inside(
+                    particle.x + particle.step.0 * self.progress,
+                    particle.y + particle.step.1 * self.progress,
+                );
+                let x = x * PIXELS_ACROSS as f32 - 0.5;
+                let y = y * PIXELS_DOWN as f32 - 0.5;
                 let (left, top) = (x.floor(), y.floor());
                 let (right_share, lower_share) = (x - left, y - top);
                 for (column, across) in [(left, 1.0 - right_share), (left + 1.0, right_share)] {
@@ -333,6 +345,7 @@ impl Scene for Ink {
                         y: drop.y,
                         vx: self.rng.random_range(-SPREAD..=SPREAD),
                         vy: drop.speed * self.rng.random_range(SHARE_OF_HEAD),
+                        step: (0.0, 0.0),
                         left: lifetime,
                         lifetime,
                     });
@@ -346,10 +359,12 @@ impl Scene for Ink {
                 particle.vx = particle.vx * DRAG + self.rng.random_range(-JITTER..=JITTER);
                 particle.vy *= DRAG;
                 let (across, down) = self.currents.velocity(particle.x, particle.y, time, pane);
-                (particle.x, particle.y) = self.inside(
+                let (x, y) = self.inside(
                     particle.x + particle.vx + across,
                     particle.y + particle.vy + down + SINK,
                 );
+                particle.step = (x - particle.x, y - particle.y);
+                (particle.x, particle.y) = (x, y);
                 particle.left -= 1;
             }
             drop.particles.retain(|particle| particle.left > 0);
@@ -357,6 +372,10 @@ impl Scene for Ink {
         drops.retain(|drop| drop.emitting > 0 || !drop.particles.is_empty());
         self.drops = drops;
         self.time = self.time.wrapping_add(1);
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress as f32;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
