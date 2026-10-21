@@ -4,7 +4,7 @@ use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
-use crate::braille;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -125,8 +125,8 @@ impl Life {
 
 impl Scene for Life {
     fn tick(&mut self, area: Rect) {
-        let width = usize::from(area.width) * braille::CELL_WIDTH;
-        let height = usize::from(area.height) * braille::CELL_HEIGHT;
+        let width = usize::from(area.width) * CELL_WIDTH;
+        let height = usize::from(area.height) * CELL_HEIGHT;
         if (width, height) != (self.width, self.height) {
             self.width = width;
             self.height = height;
@@ -143,42 +143,32 @@ impl Scene for Life {
         }
     }
 
-    /// A braille glyph draws all its dots in one colour, so a cell takes the
-    /// colour of most of its live cells.
+    /// A cell holds two colours, and in nearly every cell the dead cells
+    /// take one of them. So the live cells of a cell take one colour, the
+    /// colour of most of them, and the cell keeps the shape of the board.
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        for y in 0..area.height {
-            for x in 0..area.width {
-                let (left, top) = (
-                    usize::from(x) * braille::CELL_WIDTH,
-                    usize::from(y) * braille::CELL_HEIGHT,
-                );
-                if left + braille::CELL_WIDTH > self.width
-                    || top + braille::CELL_HEIGHT > self.height
-                {
-                    continue;
-                }
-                let (mut dots, mut young, mut settled) = (0, 0, 0);
-                for row in 0..braille::CELL_HEIGHT {
-                    for column in 0..braille::CELL_WIDTH {
-                        match self.age[(top + row) * self.width + left + column] {
-                            0 => continue,
-                            1 => young += 1,
-                            _ => settled += 1,
-                        }
-                        dots |= braille::dot(column, row);
-                    }
-                }
-                let colour = if young > settled {
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        for top in (0..self.height.min(canvas.height())).step_by(CELL_HEIGHT) {
+            for left in (0..self.width.min(canvas.width())).step_by(CELL_WIDTH) {
+                let age = |x: usize, y: usize| self.age[y * self.width + x];
+                let live = || {
+                    (top..top + CELL_HEIGHT)
+                        .flat_map(|y| (left..left + CELL_WIDTH).map(move |x| (x, y)))
+                        .filter(|(x, y)| *x < self.width && *y < self.height && age(*x, *y) > 0)
+                };
+                let (count, young) = live().fold((0, 0), |(count, young), (x, y)| {
+                    (count + 1, young + usize::from(age(x, y) == 1))
+                });
+                let colour = if young * 2 > count {
                     self.palette.rose
                 } else {
                     self.palette.iris
                 };
-                let glyph = if dots == 0 { ' ' } else { braille::glyph(dots) };
-                buf[(area.x + x, area.y + y)]
-                    .set_char(glyph)
-                    .set_fg(colour)
-                    .set_bg(self.palette.base);
+                for (x, y) in live() {
+                    canvas.set(x, y, colour);
+                }
             }
         }
+        canvas.render(area, buf);
     }
 }
