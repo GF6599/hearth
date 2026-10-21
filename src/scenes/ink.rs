@@ -109,9 +109,7 @@ impl Tones {
                 for blend in 0..HALF_BLENDS {
                     let ink = octant::mix(first, second, blend as f32 / BLENDS as f32);
                     tones.push(std::array::from_fn(|step| {
-                        let mut water = Canvas::new(1, 1, palette);
-                        water.blend(0, 0, ink, step as f32 / TONES as f32);
-                        water.get(0, 0).unwrap_or(palette.base)
+                        octant::blend(palette, palette.base, ink, step as f32 / TONES as f32)
                     }));
                 }
             }

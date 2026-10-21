@@ -68,9 +68,7 @@ pub fn color(palette: &Palette, heat: u16) -> Color {
 
 fn shade(palette: &Palette, stops: &[Color], heat: u16) -> Color {
     let (colour, coverage) = flame(stops, heat);
-    let mut canvas = Canvas::new(1, 1, palette);
-    canvas.blend(0, 0, colour, coverage);
-    canvas.get(0, 0).unwrap_or(palette.base)
+    octant::blend(palette, palette.base, colour, coverage)
 }
 
 #[derive(Debug)]

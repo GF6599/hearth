@@ -137,17 +137,15 @@ fn fade(share: f32) -> f32 {
 }
 
 /// Each shade from the base to the text. The first stop of the ramp from
-/// the base, overlay, mixes in by coverage through a canvas, so on a
+/// the base, overlay, blends in by coverage as a canvas blends it, so on a
 /// see-through base its edge stays hard. The rest are mixes of theme
 /// colours along overlay, muted, subtle and text.
 fn shades(palette: &Palette) -> [Color; SHADES] {
     let stops = [palette.overlay, palette.muted, palette.subtle, palette.text];
-    let mut canvas = Canvas::new(SHADES as u16, 1, palette);
     std::array::from_fn(|shade| {
         let place = shade as f32 / (SHADES - 1) as f32 * stops.len() as f32;
         let colour = octant::ramp(&stops, (place - 1.0) / (stops.len() - 1) as f32);
-        canvas.blend(shade, 0, colour, place);
-        canvas.get(shade, 0).unwrap_or(palette.base)
+        octant::blend(palette, palette.base, colour, place)
     })
 }
 

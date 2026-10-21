@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -180,7 +180,7 @@ impl Shades {
     fn new(palette: &Palette) -> Self {
         let step = |shade: usize| shade as f32 / (WALL_SHADES - 1) as f32;
         let near = std::array::from_fn(|shade| {
-            blended(
+            octant::blend(
                 palette,
                 palette.overlay,
                 palette.pine,
@@ -188,7 +188,7 @@ impl Shades {
             )
         });
         let far = std::array::from_fn(|shade| {
-            blended(
+            octant::blend(
                 palette,
                 palette.surface,
                 palette.overlay,
@@ -197,28 +197,17 @@ impl Shades {
         });
         let sky = std::array::from_fn(|shade| {
             let share = shade as f32 / (SKY_SHADES - 1) as f32;
-            blended(palette, palette.base, palette.iris, HORIZON * share)
+            octant::blend(palette, palette.base, palette.iris, HORIZON * share)
         });
         Self {
             sky,
             ends: [palette.gold, palette.rose]
-                .map(|light| blended(palette, palette.base, light, STREAK_END)),
+                .map(|light| octant::blend(palette, palette.base, light, STREAK_END)),
             walls: [far, near],
             glows: [palette.gold, palette.rose]
-                .map(|light| near.map(|wall| blended(palette, wall, light, WINDOW_GLOW))),
+                .map(|light| near.map(|wall| octant::blend(palette, wall, light, WINDOW_GLOW))),
         }
     }
-}
-
-/// The colour `over` gives a pixel of `under` at `share`, as the canvas
-/// blends it. A theme over the terminal's background has a see-through
-/// base, and its surface too, and the canvas never mixes either, so the
-/// sky and the far walls stay the user's own background.
-fn blended(palette: &Palette, under: Color, over: Color, share: f32) -> Color {
-    let mut pixel = Canvas::new(1, 1, palette);
-    pixel.set(0, 0, under);
-    pixel.blend(0, 0, over, share);
-    pixel.get(0, 0).unwrap_or(under)
 }
 
 impl City {
@@ -419,7 +408,7 @@ impl City {
         let blends: Vec<Color> = (0..=GLOW_STEPS as usize)
             .map(|step| {
                 let share = step as f32 / GLOW_STEPS;
-                blended(self.palette, self.palette.base, self.palette.text, share)
+                octant::blend(self.palette, self.palette.base, self.palette.text, share)
             })
             .collect();
         // The glow takes one shade in each cell, from the distance of the

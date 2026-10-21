@@ -255,14 +255,8 @@ impl Shades {
                 since_birth as f32 / f32::from(SETTLE_GENERATIONS),
             )
         };
-        // A fade mixes with the base, so it blends through a canvas, which
-        // keeps the edge hard where the base is see-through.
-        let mut canvas = Canvas::new(1, 1, palette);
-        let mut over_base = |colour: Color, coverage: f32| {
-            canvas.set(0, 0, palette.base);
-            canvas.blend(0, 0, colour, coverage);
-            canvas.get(0, 0).unwrap_or(palette.base)
-        };
+        let over_base =
+            |colour: Color, coverage: f32| octant::blend(palette, palette.base, colour, coverage);
         Self {
             live: std::array::from_fn(settling),
             fading: std::array::from_fn(|since_birth| {

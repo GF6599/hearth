@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -145,20 +145,20 @@ impl Shades {
             palette.overlay
         };
         let water = [
-            blended(palette, palette.pine, palette.foam, SHALLOW),
+            octant::blend(palette, palette.pine, palette.foam, SHALLOW),
             palette.pine,
-            blended(palette, palette.pine, dark, DEEP),
+            octant::blend(palette, palette.pine, dark, DEEP),
         ];
         let sea = std::array::from_fn(|shade| {
             let body = ramp(palette, &water, step(shade, SEA_SHADES));
             std::array::from_fn(|foam| {
-                blended(palette, body, palette.foam, foam as f32 / (FADE + 1) as f32)
+                octant::blend(palette, body, palette.foam, foam as f32 / (FADE + 1) as f32)
             })
         });
         let dry = [
-            blended(palette, palette.gold, palette.rose, SAND_LIGHT),
+            octant::blend(palette, palette.gold, palette.rose, SAND_LIGHT),
             palette.gold,
-            blended(palette, palette.gold, palette.muted, SAND_SHADOW),
+            octant::blend(palette, palette.gold, palette.muted, SAND_SHADOW),
         ];
         let sand = std::array::from_fn(|shade| {
             wet_tones(
@@ -182,22 +182,13 @@ fn step(shade: usize, shades: usize) -> f32 {
     shade as f32 / (shades - 1) as f32
 }
 
-/// The colour `over` gives a pixel of `under` at `share`, as the canvas
-/// blends it, so a role that is the see-through base never mixes.
-fn blended(palette: &Palette, under: Color, over: Color, share: f32) -> Color {
-    let mut pixel = Canvas::new(1, 1, palette);
-    pixel.set(0, 0, under);
-    pixel.blend(0, 0, over, share);
-    pixel.get(0, 0).unwrap_or(under)
-}
-
 /// The colour at `at` along `stops`, as `octant::ramp` places it, each
 /// step blended as the canvas blends it.
 fn ramp(palette: &Palette, stops: &[Color], at: f32) -> Color {
     let last = stops.len() - 1;
     let place = at.clamp(0.0, 1.0) * last as f32;
     let below = (place as usize).min(last - 1);
-    blended(
+    octant::blend(
         palette,
         stops[below],
         stops[below + 1],
@@ -210,7 +201,7 @@ fn ramp(palette: &Palette, stops: &[Color], at: f32) -> Color {
 /// colour.
 fn wet_tones(palette: &Palette, dry: Color, wet: Color, most: f32) -> [Color; WET_SHADES + 1] {
     std::array::from_fn(|wetness| {
-        blended(palette, dry, wet, most * wetness as f32 / WET_SHADES as f32)
+        octant::blend(palette, dry, wet, most * wetness as f32 / WET_SHADES as f32)
     })
 }
 
@@ -360,14 +351,14 @@ impl Tide {
                 let mask = masks[self.rng.random_range(0..masks.len())];
                 let tint = self.rng.random_range(0.0..1.0);
                 let tone = if shell {
-                    blended(
+                    octant::blend(
                         self.palette,
                         self.palette.love,
                         self.palette.rose,
                         SHELL_TINT * tint,
                     )
                 } else {
-                    blended(
+                    octant::blend(
                         self.palette,
                         self.palette.subtle,
                         self.palette.muted,
