@@ -4,7 +4,9 @@ use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use ratatui::style::Color;
+
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -50,8 +52,8 @@ const POST: (f64, f64, f64) = (0.3, 0.01, 1.25);
 /// than this would stand on the edge, so it is left out, like a post lost
 /// in the dark.
 const CLEAR: f64 = 2.0;
-/// The car from behind, a letter to a pixel across and to `CAR_LINE` pixels
-/// down: body, window, tail light, plate and tyre. A dot is clear.
+/// A car ahead from behind, a letter to a pixel across and to `CAR_LINE`
+/// pixels down: body, window, tail light, plate and tyre. A dot is clear.
 const CAR: [&str; 9] = [
     ".......BBBBBBBBBB.......",
     "......BWWWWWWWWWWB......",
@@ -63,8 +65,9 @@ const CAR: [&str; 9] = [
     "BBBBBBBBBBBBBBBBBBBBBBBB",
     ".TTTT..............TTTT.",
 ];
-/// The pixel rows of each line of `CAR`. The car is drawn in pixels twice
-/// as tall as wide, and a pixel is about square.
+/// The pixel rows of each line of `CAR`, the height of a car ahead as near
+/// as the one driven. The car is drawn in pixels twice as tall as wide,
+/// and a pixel is about square.
 const CAR_LINE: usize = 2;
 /// Where the car's middle runs, as a share of the road's half width right
 /// of its middle.
@@ -93,6 +96,90 @@ const SHOWN_FIRST: [u8; 6] = *b"LPBWT.";
 /// height. A pixel is half a cell across and a quarter of a cell down, so
 /// about square.
 const MOON: (f64, f64) = (0.07, 0.14);
+/// How far the moon's halo reaches past its edge, as a share of its
+/// radius, and how much of the moon it mixes into the sky at the edge.
+const HALO: (f64, f64) = (0.6, 0.18);
+/// How far the sky's colour at the horizon lies from the overlay toward
+/// love, a glow of dusk low in the sky.
+const DUSK: f32 = 0.2;
+/// The steps a share of coverage rounds to. The canvas samples its own
+/// shapes in sixteenths of a pixel, and a cell shows two colours, so a
+/// finer share shows no more and only adds colours for each cell to choose
+/// between.
+const COVERAGE_STEPS: f64 = 16.0;
+/// The slanted parts of the car from behind, each a polygon of pixel
+/// corners from the top left of a box `CAR_SIZE` across and down, in the
+/// order they are drawn: the roof, its window, and the upper body.
+const CAR_SLANTS: [(Part, &[(f64, f64)]); 3] = [
+    (
+        Part::Body,
+        &[(6.5, 0.0), (17.5, 0.0), (21.0, 6.0), (3.0, 6.0)],
+    ),
+    (
+        Part::Window,
+        &[(7.5, 1.0), (16.5, 1.0), (19.0, 5.0), (5.0, 5.0)],
+    ),
+    (
+        Part::Body,
+        &[
+            (2.0, 6.0),
+            (22.0, 6.0),
+            (24.0, 8.0),
+            (24.0, 10.0),
+            (0.0, 10.0),
+            (0.0, 8.0),
+        ],
+    ),
+];
+/// The square parts of the car below them, as left, top, right and bottom
+/// in the same box: the lower body, the taillights, the plate and the
+/// tyres.
+const CAR_BOXES: [(Part, [f64; 4]); 6] = [
+    (Part::Body, [0.0, 10.0, 24.0, 16.0]),
+    (Part::Light, [1.0, 10.0, 5.0, 13.0]),
+    (Part::Light, [19.0, 10.0, 23.0, 13.0]),
+    (Part::Plate, [10.0, 11.0, 14.0, 13.0]),
+    (Part::Tyre, [1.0, 16.0, 5.0, 18.0]),
+    (Part::Tyre, [19.0, 16.0, 23.0, 18.0]),
+];
+/// The car's box in pixels, across and down.
+const CAR_SIZE: (usize, usize) = (24, 18);
+/// How far each taillight glows round it, in pixels, and how much of its
+/// colour it mixes in at its edge.
+const GLOW: (f64, f64) = (3.5, 0.35);
+
+/// What a part of the car is, so it takes its colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Body,
+    Window,
+    Light,
+    Plate,
+    Tyre,
+}
+
+fn stepped(share: f64) -> f64 {
+    (share * COVERAGE_STEPS).round() / COVERAGE_STEPS
+}
+
+/// Mixes `colour` into each pixel the box from `left` to `right` across and
+/// `top` to `bottom` down covers, by the share it covers. The pixel at
+/// (x, y) spans x to x + 1 and y to y + 1.
+fn fill_box(canvas: &mut Canvas, [left, top, right, bottom]: [f64; 4], colour: Color) {
+    let span = |from: f64, to: f64| from.floor().max(0.0) as usize..to.ceil().max(0.0) as usize;
+    let overlap = |at: usize, from: f64, to: f64| {
+        (to.min(at as f64 + 1.0) - from.max(at as f64)).clamp(0.0, 1.0)
+    };
+    for y in span(top, bottom) {
+        let down = overlap(y, top, bottom);
+        for x in span(left, right) {
+            let share = stepped(overlap(x, left, right) * down);
+            if share > 0.0 {
+                canvas.blend(x, y, colour, share as f32);
+            }
+        }
+    }
+}
 
 /// A stretch of track with one curve: negative bends left, positive right.
 #[derive(Debug, Clone, Copy)]
@@ -233,8 +320,34 @@ impl Drive {
         }
     }
 
-    /// The stars, then the moon, in the sky above `horizon`. Both slide
-    /// with the sky and come round again at the other side.
+    /// The sky down to `horizon`, half a cell at a time from the base at
+    /// the top to a glow of dusk at the horizon, and below it the glow. A
+    /// cell of two halves keeps both its colours and a star. Over a
+    /// see-through base the sky is the base, the terminal's own background.
+    fn draw_dusk(&self, canvas: &mut Canvas, horizon: usize) {
+        if self.palette.see_through {
+            return;
+        }
+        let palette = self.palette;
+        let dusk = octant::mix(palette.overlay, palette.love, DUSK);
+        let half = CELL_HEIGHT / 2;
+        let halves = horizon.div_ceil(half);
+        // A gradient one pixel a half cell, so the canvas mixes the base.
+        let mut ruler = Canvas::new(
+            1,
+            u16::try_from(halves.div_ceil(CELL_HEIGHT)).unwrap_or(u16::MAX),
+            palette,
+        );
+        ruler.gradient(0..halves, palette.base, dusk);
+        for step in 0..halves {
+            let colour = ruler.get(0, step).unwrap_or(dusk);
+            canvas.gradient(step * half..(step + 1) * half, colour, colour);
+        }
+        canvas.gradient(halves * half..canvas.height(), dusk, dusk);
+    }
+
+    /// The stars, then the moon and its halo, in the sky above `horizon`.
+    /// Both slide with the sky and come round again at the other side.
     fn draw_sky(&self, canvas: &mut Canvas, horizon: usize, sky: f64) {
         let width = canvas.width() as f64;
         let height = canvas.height() as f64;
@@ -247,14 +360,24 @@ impl Drive {
         let (radius, middle) = (MOON.0 * height, MOON.1 * height);
         let span = width + 2.0 * radius;
         let centre = (0.7 * width + sky * width).rem_euclid(span) - radius;
-        for y in 0..horizon.min(canvas.height()) {
-            for x in 0..canvas.width() {
-                let (dx, dy) = (x as f64 + 0.5 - centre, y as f64 + 0.5 - middle);
-                if dx * dx + dy * dy <= radius * radius {
-                    canvas.set(x, y, self.palette.text);
+        // The centre of the pixel at (x, y) lies at (x + 0.5, y + 0.5) here,
+        // and at (x, y) on the canvas.
+        let (x, y) = (centre - 0.5, middle - 0.5);
+        let reach = radius * (1.0 + HALO.0);
+        let rows = (y - reach).floor().max(0.0) as usize
+            ..((y + reach).ceil().max(0.0) as usize).min(horizon);
+        for row in rows {
+            for column in
+                (x - reach).floor().max(0.0) as usize..=(x + reach).ceil().max(0.0) as usize
+            {
+                let out = ((column as f64 - x).hypot(row as f64 - y) - radius) / (reach - radius);
+                if (0.0..1.0).contains(&out) {
+                    let share = stepped(HALO.1 * (1.0 - out).powi(2));
+                    canvas.blend(column, row, self.palette.text, share as f32);
                 }
             }
         }
+        canvas.disc((x as f32, y as f32), radius as f32, self.palette.text);
     }
 
     /// The colour of each pixel, row by row. The road is laid from near to
@@ -270,6 +393,7 @@ impl Drive {
             return canvas;
         }
         let now = self.moment();
+        self.draw_dusk(&mut canvas, horizon);
         self.draw_sky(&mut canvas, horizon, now.sky);
         let width = across as f64;
         let share = 1.0 / road_rows as f64;
@@ -306,31 +430,53 @@ impl Drive {
                 shown = Some((centre, half));
             }
             let band = (ahead / STRIPE).floor() as i64 & 1 == 0;
+            let rumble = if band { palette.love } else { palette.text };
+            let mut layers = vec![(half, rumble), (half * (1.0 - RUMBLE), palette.overlay)];
+            if band {
+                layers.push((half * DASH, palette.text));
+            }
+            let reach = (centre - half - 1.0).floor().max(0.0) as usize
+                ..((centre + half + 1.0).ceil().max(0.0) as usize).min(across);
             for y in top..drawn {
-                for x in 0..across {
-                    let off = (x as f64 + 0.5 - centre).abs();
-                    let colour = if off < half * DASH && band {
-                        palette.text
-                    } else if off < half * (1.0 - RUMBLE) {
-                        palette.overlay
-                    } else if off < half {
-                        if band { palette.love } else { palette.text }
-                    } else {
-                        palette.base
-                    };
-                    canvas.set(x, y, colour);
+                canvas.gradient(y..y + 1, palette.base, palette.base);
+                for x in reach.clone() {
+                    // The pixel spans x to x + 1 across, and each layer
+                    // from the road's middle out to each side.
+                    let shares = layers.iter().map(|&(out, colour)| {
+                        let covered =
+                            (x as f64 + 1.0).min(centre + out) - (x as f64).max(centre - out);
+                        (stepped(covered.clamp(0.0, 1.0)) as f32, colour)
+                    });
+                    let mut colour = None;
+                    let mut partial = false;
+                    for (share, layer) in shares.clone() {
+                        if share >= 1.0 {
+                            colour = Some(layer);
+                        } else if share > 0.0 {
+                            partial = true;
+                        }
+                    }
+                    if !partial {
+                        if let Some(colour) = colour {
+                            canvas.blend(x, y, colour, 1.0);
+                        }
+                        continue;
+                    }
+                    for (share, layer) in shares {
+                        if share > 0.0 {
+                            canvas.blend(x, y, layer, share);
+                        }
+                    }
                 }
             }
             drawn = top;
         }
-        // The sky in the cell of the road's top row is clear, because a cell
-        // that held a star or the moon and the road would hold more colours
-        // than a cell draws.
+        // The sky in the cell of the road's top row takes the land's colour,
+        // because a cell that held the sky, a star or the moon and the road
+        // would hold more colours than a cell draws.
         if drawn < down {
             for y in drawn / CELL_HEIGHT * CELL_HEIGHT..drawn {
-                for x in 0..across {
-                    canvas.set(x, y, palette.base);
-                }
+                canvas.gradient(y..y + 1, palette.base, palette.base);
             }
         }
         self.draw_posts(&mut canvas, &stretches, now.travelled);
@@ -359,36 +505,25 @@ impl Drive {
                 continue;
             };
             let near = step as f64 / road_rows as f64;
-            let height = (POST.0 * down * near).round().max(1.0) as usize;
-            let thick = (POST.1 * across * near).round().max(1.0) as usize;
-            if (POST.2 - 1.0) * half < thick as f64 / 2.0 + CLEAR {
+            // A post a pixel or two wide gains nothing from soft sides but
+            // half-lit columns, so its sides lie on whole pixels, and its top
+            // mixes into the sky so it grows smoothly as it comes near.
+            let height = POST.0 * down * near;
+            let thick = (POST.1 * across * near).round().max(1.0);
+            if (POST.2 - 1.0) * half < thick / 2.0 + CLEAR {
                 continue;
             }
-            // A post covers whole cells, from the first column and row of a
-            // cell to the end of one, so no cell holds a post and two colours
-            // of what stands behind it.
-            let thick = thick.div_ceil(CELL_WIDTH) * CELL_WIDTH;
-            let bottom = ground / CELL_HEIGHT * CELL_HEIGHT + CELL_HEIGHT - 1;
-            let top = ground.saturating_sub(height - 1) / CELL_HEIGHT * CELL_HEIGHT;
+            let bottom = ground as f64 + 1.0;
             for side in [-1.0, 1.0] {
-                let middle = centre + side * half * POST.2;
-                let left = ((middle - thick as f64 / 2.0).round() as i64)
-                    .div_euclid(CELL_WIDTH as i64)
-                    * CELL_WIDTH as i64;
-                for x in left..left + thick as i64 {
-                    let Ok(x) = usize::try_from(x) else {
-                        continue;
-                    };
-                    for y in top..=bottom {
-                        canvas.set(x, y, self.palette.muted);
-                    }
-                }
+                let left = (centre + side * half * POST.2 - thick / 2.0).round();
+                let post = [left, bottom - height, left + thick, bottom];
+                fill_box(canvas, post, self.palette.muted);
             }
         }
     }
 
-    /// The cars ahead in the left lane, from far to near, the same car as
-    /// the one driven, shrunk with distance. A car on a stretch hidden
+    /// The cars ahead in the left lane, from far to near, the shape of the
+    /// one driven, shrunk with distance. A car on a stretch hidden
     /// behind a crest is hidden with it. Each covers whole cells, so no
     /// cell holds a car and two colours of the road behind it.
     fn draw_traffic(
@@ -462,46 +597,78 @@ impl Drive {
         }
     }
 
-    /// The car at the bottom of the pane in the right lane. In a curve its
-    /// roof leans two pixels toward it and its upper body one.
+    /// The car at the bottom of the pane in the right lane, with its
+    /// taillights glowing. In a curve its roof leans two pixels toward it
+    /// and its upper body one.
     fn draw_car(&self, canvas: &mut Canvas, travelled: f64) {
         let (down, across) = (canvas.height(), canvas.width());
-        let (wide, tall) = (CAR[0].len(), CAR.len() * CAR_LINE);
+        let (wide, tall) = CAR_SIZE;
         if down < tall || across < wide {
             return;
         }
         let curve = self.curve(travelled + 2.0);
         let lean = if curve > 0.25 {
-            1
+            1.0
         } else if curve < -0.25 {
-            -1
+            -1.0
         } else {
-            0
+            0.0
         };
         let middle = across as f64 / 2.0 * (1.0 + ROAD * LANE);
-        let left = middle.round() as i64 - wide as i64 / 2;
-        for (line, pattern) in CAR.iter().enumerate() {
-            let shift = match line {
-                0..=2 => 2 * lean,
-                3..=4 => lean,
-                _ => 0,
-            };
-            let y = down - tall + line * CAR_LINE;
-            for (offset, letter) in pattern.chars().enumerate() {
-                let colour = match letter {
-                    'B' => self.palette.iris,
-                    'W' | 'T' => self.palette.base,
-                    'L' => self.palette.love,
-                    'P' => self.palette.text,
-                    _ => continue,
-                };
-                let Ok(x) = usize::try_from(left + offset as i64 + shift) else {
-                    continue;
-                };
-                for y in y..y + CAR_LINE {
-                    canvas.set(x, y, colour);
+        let left = (middle.round() as i64 - wide as i64 / 2) as f64;
+        let top = (down - tall) as f64;
+        let palette = self.palette;
+        let place = |corners: &[(f64, f64)]| -> Vec<(f32, f32)> {
+            corners
+                .iter()
+                .map(|&(x, y)| {
+                    let shift = if y < 6.0 {
+                        2.0 * lean
+                    } else if y < 10.0 {
+                        lean
+                    } else {
+                        0.0
+                    };
+                    ((left + x + shift - 0.5) as f32, (top + y - 0.5) as f32)
+                })
+                .collect()
+        };
+        let colour = |part: Part| match part {
+            Part::Body => palette.iris,
+            Part::Window | Part::Tyre => palette.base,
+            Part::Light => palette.love,
+            Part::Plate => palette.text,
+        };
+        // The glow lies under the car, so it lights the road beside the
+        // tail and the body keeps its colour.
+        for [from_x, from_y, to_x, to_y] in CAR_BOXES
+            .iter()
+            .filter(|(part, _)| *part == Part::Light)
+            .map(|(_, corners)| *corners)
+        {
+            // The middle of the light, where the canvas places the pixels.
+            let (x, y) = (
+                left + (from_x + to_x) / 2.0 - 0.5,
+                top + (from_y + to_y) / 2.0 - 0.5,
+            );
+            let (across, down) = (GLOW.0 * 2.0, GLOW.0);
+            for row in (y - down).floor().max(0.0) as usize..=(y + down).ceil() as usize {
+                for column in (x - across).floor().max(0.0) as usize..=(x + across).ceil() as usize
+                {
+                    let out = ((column as f64 - x) / across).hypot((row as f64 - y) / down);
+                    if out < 1.0 {
+                        let share = stepped(GLOW.1 * (1.0 - out).powi(2));
+                        canvas.blend(column, row, palette.love, share as f32);
+                    }
                 }
             }
+        }
+        for (part, corners) in CAR_SLANTS {
+            canvas.polygon(&place(corners), colour(part));
+        }
+        for (part, [from_x, from_y, to_x, to_y]) in CAR_BOXES {
+            let corners = [left + from_x, top + from_y, left + to_x, top + to_y];
+            fill_box(canvas, corners, colour(part));
         }
     }
 }
