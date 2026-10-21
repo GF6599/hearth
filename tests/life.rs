@@ -1,8 +1,10 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::BTreeSet;
 
-use hearth::braille;
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::life::{HOLD_GENERATIONS, Life};
 use hearth::theme;
@@ -17,22 +19,22 @@ fn render(scene: &Life, area: Rect) -> Buffer {
 }
 
 /// The live cells read back from a render, as (column, row) on the board,
-/// where a terminal cell holds a braille glyph of two board columns and
-/// four board rows.
+/// where a terminal cell holds an octant glyph of two board columns and
+/// four board rows, and a live cell shows in front of the base.
 fn alive(buffer: &Buffer, area: Rect) -> BTreeSet<(u16, u16)> {
     let mut cells = BTreeSet::new();
     for position in area.positions() {
-        let glyph = buffer[position].symbol().chars().next().unwrap_or(' ');
-        let dots = u32::from(glyph).wrapping_sub(0x2800);
-        if dots > 0xff {
+        let Some(shown) = pixels::shown(&buffer[position]) else {
             continue;
-        }
-        let (x, y) = ((position.x - area.x) * 2, (position.y - area.y) * 4);
-        for column in 0..2 {
-            for row in 0..4 {
-                if dots & braille::dot(usize::from(column), usize::from(row)) != 0 {
-                    cells.insert((x + column, y + row));
-                }
+        };
+        let (x, y) = (
+            (position.x - area.x) * CELL_WIDTH as u16,
+            (position.y - area.y) * CELL_HEIGHT as u16,
+        );
+        for (pixel, colour) in shown.into_iter().enumerate() {
+            if colour != theme::ROSE_PINE.base {
+                let (column, row) = (pixel % CELL_WIDTH, pixel / CELL_WIDTH);
+                cells.insert((x + column as u16, y + row as u16));
             }
         }
     }
@@ -158,14 +160,14 @@ fn a_dead_board_reseeds_at_once() {
     );
 }
 
-/// Each terminal cell draws two board columns and four board rows in
-/// braille, and takes the young colour when most of its live cells were
-/// just born.
+/// Each terminal cell draws two board columns and four board rows as
+/// solid pixels, and its live cells take the young colour when most of
+/// them were just born.
 /// Given: a blinker on a ten by twelve board in a five by three area.
 /// When: one generation turns it from across to down.
 /// Then: the cell that holds only a new end of the blinker is in the young
-/// colour, and the cell that holds the old middle and the other new end is
-/// in the settled colour.
+/// colour, the cell that holds the old middle and the other new end is in
+/// the settled colour, and the dead cells of both stay in the base.
 ///
 /// Why it matters: a board four times as fine reads as more detail only if
 /// the colour still tells a birth from a cell that stays.
@@ -184,4 +186,6 @@ fn a_cell_takes_the_colour_of_most_of_its_live_cells() {
     assert_eq!(alive(&buffer, area), vertical);
     assert_eq!(buffer[(2, 0)].fg, theme::ROSE_PINE.rose);
     assert_eq!(buffer[(2, 1)].fg, theme::ROSE_PINE.iris);
+    assert_eq!(buffer[(2, 0)].bg, theme::ROSE_PINE.base);
+    assert_eq!(buffer[(2, 1)].bg, theme::ROSE_PINE.base);
 }
