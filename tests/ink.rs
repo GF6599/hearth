@@ -2,7 +2,7 @@
 
 mod pixels;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use hearth::config::Background;
@@ -658,5 +658,72 @@ fn a_cloud_glides_between_two_ticks() {
             path.windows(2).all(|pair| pair[0] < pair[1]),
             "seed {seed}: mean row {path:?} from one tick to the next"
         );
+    }
+}
+
+/// Each colour within a channel step of `colour`.
+fn around(colour: Color) -> Vec<(u8, u8, u8)> {
+    let Color::Rgb(r, g, b) = colour else {
+        return Vec::new();
+    };
+    (0..27)
+        .map(|at| {
+            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
+            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
+        })
+        .collect()
+}
+
+/// Every colour within a channel step of a mix strictly between `base` and
+/// one of `colours`, sampled finely along each mix, less the colours within
+/// a step of the base or of one of `colours` themselves.
+fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
+    let mut near: HashSet<(u8, u8, u8)> = colours
+        .iter()
+        .flat_map(|colour| {
+            (1..200).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
+        })
+        .collect();
+    for end in colours.iter().chain([&base]) {
+        for each in around(*end) {
+            near.remove(&each);
+        }
+    }
+    near
+}
+
+/// Over the terminal's background the ink mixes no colour with the water.
+/// Given: the scene in flat Rose Pine, whose base is the terminal's own
+/// background.
+/// When: it ticks and renders over half a minute.
+/// Then: no pixel lies on a mix from the base toward an accent.
+///
+/// Why it matters: a mix with a see-through base is an opaque colour that
+/// fades toward the theme's base, which the user does not see, so a cloud
+/// shows a dark rim over their own background.
+#[test]
+fn over_the_terminal_background_no_ink_mixes_with_the_water() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[0];
+    let mixes = base_mixes(palette.base, &ink::accents(palette));
+    let mut scene = Ink::new(Rng::seed_from_u64(7), palette);
+    for tick in 0..500 {
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+
+        // When:
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        for (place, colour) in pixels::showing(&buffer, AREA, |_| true) {
+            if let Color::Rgb(r, g, b) = colour {
+                assert!(
+                    !mixes.contains(&(r, g, b)),
+                    "tick {tick}: {colour:?} at {place:?} mixes with the base"
+                );
+            }
+        }
     }
 }

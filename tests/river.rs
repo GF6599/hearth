@@ -96,7 +96,13 @@ fn linear(name: &str, count: usize) -> PathBuf {
 /// The river over `corpus`, ticked until its history has landed, with a
 /// bound, so the read off the UI thread has finished.
 fn landed(corpus: Corpus) -> River {
-    let mut scene = River::new(Rng::seed_from_u64(7), PALETTE, Arc::new(corpus));
+    landed_in(corpus, PALETTE)
+}
+
+/// The river over `corpus` in `palette`, ticked until its history has
+/// landed.
+fn landed_in(corpus: Corpus, palette: &'static Palette) -> River {
+    let mut scene = River::new(Rng::seed_from_u64(7), palette, Arc::new(corpus));
     for _ in 0..1000 {
         scene.tick(AREA);
         if !rows(&render(&scene, AREA, AREA), AREA)
@@ -1218,5 +1224,74 @@ fn the_banks_slope_softly_into_the_bed() {
         sandy * 2 > rows,
         "{sandy} of {rows} rows have a sandy bed beside the banks"
     );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// Each colour within a channel step of `colour`.
+fn around(colour: Color) -> Vec<(u8, u8, u8)> {
+    let Color::Rgb(r, g, b) = colour else {
+        return Vec::new();
+    };
+    (0..27)
+        .map(|at| {
+            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
+            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
+        })
+        .collect()
+}
+
+/// Every colour within a channel step of a mix strictly between `base` and
+/// one of `colours`, sampled finely along each mix, less the colours within
+/// a step of the base or of one of `colours` themselves.
+fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
+    let mut near: HashSet<(u8, u8, u8)> = colours
+        .iter()
+        .flat_map(|colour| {
+            (1..200).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
+        })
+        .collect();
+    for end in colours.iter().chain([&base]) {
+        for each in around(*end) {
+            near.remove(&each);
+        }
+    }
+    near
+}
+
+/// Over the terminal's background the river mixes no colour with the base.
+/// Given: the river of a repository whose history splits and merges, in
+/// flat Rose Pine, whose base is the terminal's own background.
+/// When: it ticks and renders over a few seconds.
+/// Then: no pixel lies on a mix from the base toward gold, pine or foam,
+/// the colours the river draws. Its stones are greys, and the greys of Rose
+/// Pine lie almost on one line from the base, so a shaded stone would read
+/// as a mix with it.
+///
+/// Why it matters: a mix with a see-through base is an opaque colour that
+/// fades toward the theme's base, which the user does not see, so a bank or
+/// a lane shows a dark rim over their own background.
+#[test]
+fn over_the_terminal_background_nothing_mixes_with_the_base() {
+    // Given:
+    let repo = branched("flat");
+    let palette = &theme::FLAT_THEMES[0];
+    let drawn = [palette.gold, palette.pine, palette.foam];
+    let mixes = base_mixes(palette.base, &drawn);
+    let mut scene = landed_in(Corpus::default().with_history_root(repo.clone()), palette);
+    for tick in 0..100 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        for (place, colour) in pixels::showing(&buffer, AREA, |_| true) {
+            if let Color::Rgb(r, g, b) = colour {
+                assert!(
+                    !mixes.contains(&(r, g, b)),
+                    "tick {tick}: {colour:?} at {place:?} mixes with the base"
+                );
+            }
+        }
+    }
     let _ = fs::remove_dir_all(&repo);
 }
