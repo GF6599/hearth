@@ -204,6 +204,10 @@ pub struct Study {
     /// The tick of the tail's flick, or none while it rests.
     flick: Option<usize>,
     next_flick: u32,
+    /// The share of the way from the last tick to the next. The rain and
+    /// the steam draw on from their tick by it, so they move a pixel at a
+    /// time at any rate.
+    progress: f64,
 }
 
 impl Study {
@@ -221,6 +225,7 @@ impl Study {
             next_flicker: 0,
             flick: None,
             next_flick: 0,
+            progress: 0.0,
         };
         let lines = SCREEN.3 / 2;
         study.screen = (0..lines).map(|_| study.code()).collect();
@@ -346,7 +351,11 @@ impl Study {
     fn draw_rain(&self, rows: &mut [Vec<Color>]) {
         let (_, top, _, tall) = RAIN;
         for streak in &self.rain {
-            let lowest = (streak.y * LETTER as f64).floor() as isize;
+            // A streak that starts again on the next tick runs on below
+            // the glass until then, so no frame draws it on its way back
+            // to the top.
+            let y = streak.y + streak.speed * self.progress;
+            let lowest = (y * LETTER as f64).floor() as isize;
             let length = (streak.length * LETTER) as isize;
             for row in lowest + 1 - length..=lowest {
                 let Ok(row) = usize::try_from(row) else {
@@ -374,7 +383,7 @@ impl Study {
         let scale = LETTER as f64;
         for &(age, sway) in &self.steam {
             for behind in [0.0, 8.0, 16.0] {
-                let age = age - behind;
+                let age = age + self.progress - behind;
                 if age < 0.0 {
                     continue;
                 }
@@ -477,6 +486,10 @@ impl Scene for Study {
                 None
             }
         };
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
