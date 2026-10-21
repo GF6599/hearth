@@ -13,11 +13,11 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
-use crate::braille;
 use crate::config::Background;
 use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
 use crate::minimap::Outline;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{self, FRAME_RATE, Rng, Scene};
 use crate::snippet;
 use crate::theme::{self, Palette};
@@ -495,29 +495,30 @@ impl Typing {
             cursor,
             self.palette,
         );
-        for (y, row) in (frame.y..frame.bottom()).zip(cells) {
-            for (x, halves) in (x..x + width).zip(row) {
-                let cell = &mut buf[(x, y)];
-                if self.background == Background::Terminal {
-                    if let Some((glyph, colour)) = dotted(halves) {
-                        cell.set_char(glyph).set_fg(colour);
-                    }
-                    continue;
-                }
-                match halves {
-                    (Some(upper), lower) => {
-                        cell.set_char('▀').set_fg(upper);
-                        if let Some(lower) = lower {
-                            cell.set_bg(lower);
+        let mut canvas = Canvas::new(width, frame.height, self.palette.base);
+        // Over the terminal's own background each line takes one row of
+        // pixels and leaves the row under it clear, because two full halves
+        // of lines read as a solid panel there. Two lines of two colours
+        // then make a cell of three, and the canvas draws the lower line in
+        // the upper line's colour.
+        let rows: [Range<usize>; 2] = if self.background == Background::Terminal {
+            [0..1, CELL_HEIGHT / 2..CELL_HEIGHT / 2 + 1]
+        } else {
+            [0..CELL_HEIGHT / 2, CELL_HEIGHT / 2..CELL_HEIGHT]
+        };
+        for (row, cells) in cells.iter().enumerate() {
+            for (column, &(upper, lower)) in cells.iter().enumerate() {
+                for (half, line) in rows.iter().zip([upper, lower]) {
+                    let Some(colour) = line else { continue };
+                    for dy in half.clone() {
+                        for dx in 0..CELL_WIDTH {
+                            canvas.set(column * CELL_WIDTH + dx, row * CELL_HEIGHT + dy, colour);
                         }
                     }
-                    (None, Some(lower)) => {
-                        cell.set_char('▄').set_fg(lower);
-                    }
-                    (None, None) => {}
                 }
             }
         }
+        canvas.render(Rect::new(x, frame.y, width, frame.height), buf);
     }
 
     /// A part that does not fit goes whole, the language first and then
@@ -728,15 +729,4 @@ impl Scene for Typing {
             buf[(x, y)].set_char(' ').set_bg(self.palette.text);
         }
     }
-}
-
-/// Each line of a minimap cell as one row of dots, with a row clear between
-/// the two, so a terminal's own background shows between the lines. A cell
-/// has one colour, so the upper line's wins.
-fn dotted((upper, lower): (Option<Color>, Option<Color>)) -> Option<(char, Color)> {
-    let row = |line: Option<Color>, at: usize| {
-        line.map_or(0, |_| braille::dot(0, at) | braille::dot(1, at))
-    };
-    let colour = upper.or(lower)?;
-    Some((braille::glyph(row(upper, 0) | row(lower, 2)), colour))
 }

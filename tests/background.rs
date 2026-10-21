@@ -169,8 +169,8 @@ fn the_terminal_background_leaves_no_theme_background() {
 /// a block glyph the same colour, when the theme's base and surface read as
 /// the terminal's, and murmuration's overlay too, because its whole sky
 /// clears. The one other change is the typing scene's minimap: each cell
-/// it draws in blocks shows dots in one of the block's colours, because
-/// blocks over the terminal's background read as a solid panel.
+/// it draws in blocks shows octant pixels in one of the block's colours,
+/// because blocks over the terminal's background read as a solid panel.
 ///
 /// Why it matters: a half block whose top was the base, cleared and not
 /// turned over, draws its lower colour over the whole cell and doubles the
@@ -201,12 +201,11 @@ fn the_terminal_background_keeps_every_picture() {
             for position in AREA.positions() {
                 let at = format!("{name} {args:?} at {position:?}");
                 let painted = seen(&before[position], &behind);
+                let cell = &after[position];
                 if let (true, (Some(quarters), ..)) = (typing, &painted)
-                    && before[position].symbol() != " "
+                    && is_octant(cell.symbol())
                     && quarters.iter().any(|colour| *colour != Color::Reset)
                 {
-                    let cell = &after[position];
-                    assert!(is_dots(cell.symbol()), "{:?} {at}", cell.symbol());
                     assert!(quarters.contains(&cell.fg), "fg {:?} {at}", cell.fg);
                     assert_eq!(cell.bg, Color::Reset, "{at}");
                     continue;
@@ -217,12 +216,12 @@ fn the_terminal_background_keeps_every_picture() {
     }
 }
 
-/// A braille glyph that holds at least one dot.
-fn is_dots(symbol: &str) -> bool {
+/// An octant glyph that holds at least one pixel.
+fn is_octant(symbol: &str) -> bool {
     symbol
         .chars()
         .next()
-        .is_some_and(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
+        .is_some_and(|glyph| (1..=u8::MAX).any(|bits| octant::glyph(bits) == glyph))
 }
 
 fn shows(buffer: &Buffer, colour: Color) -> bool {
@@ -290,8 +289,9 @@ fn the_whole_murmuration_sky_shows_the_terminal() {
 /// Given: a file that asks for the terminal's background, on Rose Pine and
 /// on Dawn.
 /// When: hearth starts the typing scene, and runs a while.
-/// Then: the minimap draws its lines in dots, no cell of the scene is a
-/// block glyph, and no cell paints a background but the cursor's.
+/// Then: the minimap draws its lines in octant pixels, no cell of the
+/// scene is a block glyph, and no cell paints a background but the
+/// cursor's.
 ///
 /// Why it matters: lines of blocks two to a cell fill every cell they
 /// cross, so the outline of a long file reads as a solid panel over a
@@ -310,7 +310,7 @@ fn the_typing_minimap_shows_the_terminal_between_its_lines() {
         let buffer = frame(&["hearth", "typing", "--seed", "7"], &config);
 
         // Then:
-        let mut dots = 0;
+        let mut lines = 0;
         for position in AREA.positions() {
             let cell = &buffer[position];
             let at = format!("{name} at {position:?}");
@@ -324,9 +324,9 @@ fn the_typing_minimap_shows_the_terminal_between_its_lines() {
                 "bg {:?} {at}",
                 cell.bg
             );
-            dots += usize::from(is_dots(cell.symbol()));
+            lines += usize::from(is_octant(cell.symbol()));
         }
-        assert!(dots > 20, "{name}: {dots} cells of dots");
+        assert!(lines > 20, "{name}: {lines} cells of lines");
     }
 }
 
