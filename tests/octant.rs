@@ -571,3 +571,224 @@ fn a_ramp_passes_through_each_stop() {
         octant::mix(PALETTE.base, PALETTE.love, 0.5)
     );
 }
+
+/// The share of the way from `from` to `to` whose mix is `colour`, to the
+/// nearest 1/256, or none for a colour off the line between them.
+fn share_of(from: Color, to: Color, colour: Color) -> Option<f32> {
+    (0..=256)
+        .map(|step| step as f32 / 256.0)
+        .find(|share| octant::mix(from, to, *share) == colour)
+}
+
+/// Each row of `canvas` from `rows`, pixel by pixel.
+fn canvas_rows(canvas: &Canvas, rows: Range<usize>) -> Vec<Vec<Color>> {
+    rows.map(|y| {
+        (0..canvas.width())
+            .map(|x| canvas.get(x, y).unwrap())
+            .collect()
+    })
+    .collect()
+}
+
+/// A colour blends into a pixel by its coverage.
+/// Given: a canvas in the base with one pixel of ink.
+/// When: foam blends into pixels of the base at coverage 0, a quarter and
+/// 1, into the ink at a half, and into a pixel past an edge.
+/// Then: coverage 0 leaves the base, a quarter gives the mix of the base
+/// and foam at a quarter, 1 gives foam, and a half on the ink gives the mix
+/// of the ink and foam at a half. No other pixel changes.
+///
+/// Why it matters: every soft edge is a blend. A blend that ignored the
+/// colour already there would draw a halo of the base round a shape that
+/// lies over another.
+#[test]
+fn a_colour_blends_into_a_pixel_by_its_coverage() {
+    // Given:
+    let mut canvas = Canvas::new(2, 1, PALETTE);
+    canvas.set(3, 3, INK);
+
+    // When:
+    canvas.blend(0, 0, OTHER, 0.0);
+    canvas.blend(1, 0, OTHER, 0.25);
+    canvas.blend(2, 0, OTHER, 1.0);
+    canvas.blend(3, 3, OTHER, 0.5);
+    canvas.blend(4, 0, OTHER, 1.0);
+
+    // Then:
+    let mut expected = vec![vec![BASE; 4]; 4];
+    expected[0][1] = octant::mix(BASE, OTHER, 0.25);
+    expected[0][2] = OTHER;
+    expected[3][3] = octant::mix(INK, OTHER, 0.5);
+    assert_eq!(canvas_rows(&canvas, 0..4), expected);
+}
+
+/// A disc fills its inside, and blends its edge by the share of each
+/// pixel it covers.
+/// Given: a canvas in the base.
+/// When: a disc of ink with radius 2.5 is drawn round the centre of pixel
+/// (5, 6).
+/// Then: the pixels whose whole square lies inside show the ink, the
+/// pixels whose whole square lies outside show the base, the pixel at
+/// (7, 8) on the edge shows a mix of the two strictly between them, and
+/// the shares of all pixels add up to the disc's area within half a pixel.
+///
+/// Why it matters: a disc drawn whole pixel by pixel has a ragged rim. A
+/// soft rim that covered too much or too little would make a moon or a
+/// bubble grow or shrink as it moves.
+#[test]
+fn a_disc_blends_its_edge_by_coverage() {
+    // Given:
+    let mut canvas = Canvas::new(6, 3, PALETTE);
+    let (centre, radius) = ((5.0, 6.0), 2.5);
+
+    // When:
+    canvas.disc(centre, radius, INK);
+
+    // Then:
+    let mut area = 0.0;
+    for y in 0..canvas.height() {
+        for x in 0..canvas.width() {
+            let colour = canvas.get(x, y).unwrap();
+            let share = share_of(BASE, INK, colour)
+                .unwrap_or_else(|| panic!("({x}, {y}) is {colour:?}, no mix of base and ink"));
+            area += share;
+            let (dx, dy) = (x as f32 - centre.0, y as f32 - centre.1);
+            let far = (dx.abs() + 0.5).hypot(dy.abs() + 0.5);
+            let near = (dx.abs() - 0.5).max(0.0).hypot((dy.abs() - 0.5).max(0.0));
+            if far <= radius {
+                assert_eq!(colour, INK, "({x}, {y}) lies inside");
+            } else if near >= radius {
+                assert_eq!(colour, BASE, "({x}, {y}) lies outside");
+            }
+        }
+    }
+    let edge = canvas.get(7, 8).unwrap();
+    assert_ne!(edge, INK, "the edge at (7, 8)");
+    assert_ne!(edge, BASE, "the edge at (7, 8)");
+    let disc = std::f32::consts::PI * radius * radius;
+    assert!(
+        (area - disc).abs() < 0.5,
+        "the shares add up to {area}, not {disc}"
+    );
+}
+
+/// A line covers its width, and a pixel it half covers shows the half mix.
+/// Given: a canvas in the base.
+/// When: a line of ink two pixels wide runs across from the centre of
+/// pixel (1, 2) to the centre of pixel (10, 2).
+/// Then: away from its ends, row 2 shows the ink, rows 1 and 3, half under
+/// the line, show the mix of the base and the ink at a half, and rows 0
+/// and 4 show the base.
+///
+/// Why it matters: a constellation line or a wire drawn one pixel at a
+/// time steps like a stair. A soft line that came out too wide or too
+/// thin would change weight as it turns.
+#[test]
+fn a_line_covers_its_width() {
+    // Given:
+    let mut canvas = Canvas::new(6, 2, PALETTE);
+
+    // When:
+    canvas.line((1.0, 2.0), (10.0, 2.0), 2.0, INK);
+
+    // Then:
+    let half = octant::mix(BASE, INK, 0.5);
+    for x in 3..9 {
+        let column: Vec<Color> = (0..5).map(|y| canvas.get(x, y).unwrap()).collect();
+        assert_eq!(column, [BASE, half, INK, half, BASE], "column {x}");
+    }
+}
+
+/// A line at a slant blends each pixel it crosses in part.
+/// Given: a canvas in the base.
+/// When: a line of ink one pixel wide runs from the centre of pixel (0, 0)
+/// to the centre of pixel (9, 3).
+/// Then: some pixel shows a mix strictly between the base and the ink,
+/// and every pixel shows the base, the ink, or a mix of the two.
+///
+/// Why it matters: a slanted line is where a hard line steps the most.
+#[test]
+fn a_slanted_line_blends_the_pixels_it_crosses() {
+    // Given:
+    let mut canvas = Canvas::new(5, 1, PALETTE);
+
+    // When:
+    canvas.line((0.0, 0.0), (9.0, 3.0), 1.0, INK);
+
+    // Then:
+    let mut soft = 0;
+    for y in 0..canvas.height() {
+        for x in 0..canvas.width() {
+            let colour = canvas.get(x, y).unwrap();
+            let share = share_of(BASE, INK, colour)
+                .unwrap_or_else(|| panic!("({x}, {y}) is {colour:?}, no mix of base and ink"));
+            if share > 0.0 && share < 1.0 {
+                soft += 1;
+            }
+        }
+    }
+    assert!(soft > 0, "no pixel blends");
+}
+
+/// A polygon fills its inside, and a pixel its edge halves shows the half
+/// mix.
+/// Given: a canvas in the base.
+/// When: a polygon of ink is drawn with its left side on the left edge of
+/// the canvas, its right side through the centres of column 4, its top on
+/// the top edge, and its bottom side on the line between rows 2 and 3.
+/// Then: columns 0 to 3 of rows 0 to 2 show the ink, column 4 of those
+/// rows shows the mix of the base and the ink at a half, and every other
+/// pixel shows the base.
+///
+/// Why it matters: a roof, a hill or a wave crest is a polygon. Its edge
+/// must blend by the share each pixel lies inside.
+#[test]
+fn a_polygon_fills_its_inside_and_blends_its_edge() {
+    // Given:
+    let mut canvas = Canvas::new(4, 2, PALETTE);
+
+    // When:
+    canvas.polygon(&[(-0.5, -0.5), (4.0, -0.5), (4.0, 2.5), (-0.5, 2.5)], INK);
+
+    // Then:
+    let half = octant::mix(BASE, INK, 0.5);
+    for y in 0..canvas.height() {
+        for x in 0..canvas.width() {
+            let expected = match (x, y) {
+                (0..4, 0..3) => INK,
+                (4, 0..3) => half,
+                _ => BASE,
+            };
+            assert_eq!(canvas.get(x, y), Some(expected), "({x}, {y})");
+        }
+    }
+}
+
+/// A gradient starts on its top colour and ends on its bottom colour.
+/// Given: a canvas in the base.
+/// When: a gradient from the ink to foam fills rows 2 to 9.
+/// Then: each pixel of row 2 is the ink, each of row 9 is foam, each of
+/// row 5 is the mix three sevenths of the way, and rows outside the span
+/// keep the base.
+///
+/// Why it matters: a sky or a sea shades between two theme colours. Its
+/// end rows must be the theme colours themselves, or the gradient meets
+/// the next band of the scene with a seam.
+#[test]
+fn a_gradient_runs_from_its_top_colour_to_its_bottom_colour() {
+    // Given:
+    let mut canvas = Canvas::new(2, 3, PALETTE);
+
+    // When:
+    canvas.gradient(2..10, INK, OTHER);
+
+    // Then:
+    let rows = canvas_rows(&canvas, 0..12);
+    let width = canvas.width();
+    assert_eq!(rows[2], vec![INK; width]);
+    assert_eq!(rows[9], vec![OTHER; width]);
+    assert_eq!(rows[5], vec![octant::mix(INK, OTHER, 3.0 / 7.0); width]);
+    for y in [0, 1, 10, 11] {
+        assert_eq!(rows[y], vec![BASE; width], "row {y}");
+    }
+}

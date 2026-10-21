@@ -2,6 +2,7 @@
 //! glyph and two colours.
 
 use std::cmp::Reverse;
+use std::ops::Range;
 use std::sync::LazyLock;
 
 use ratatui::buffer::{Buffer, Cell};
@@ -344,6 +345,16 @@ impl Canvas {
             self.pixels[index] = colour;
         }
     }
+
+    pub fn blend(&mut self, _x: usize, _y: usize, _colour: Color, _coverage: f32) {}
+
+    pub fn disc(&mut self, _centre: (f32, f32), _radius: f32, _colour: Color) {}
+
+    pub fn line(&mut self, _from: (f32, f32), _to: (f32, f32), _width: f32, _colour: Color) {}
+
+    pub fn polygon(&mut self, _corners: &[(f32, f32)], _colour: Color) {}
+
+    pub fn gradient(&mut self, _rows: Range<usize>, _top: Color, _bottom: Color) {}
 
     /// Draws each cell into `buf` from the top left of `area`. Cells past
     /// the area are not drawn.
