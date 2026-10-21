@@ -6,8 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
-use crate::dither;
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -37,7 +36,9 @@ const BRIGHTNESS_WEIGHTS: [u32; 3] = [6, 3, 1];
 /// The chance that a star starts to twinkle on a tick, so each star
 /// twinkles about once in 24 seconds.
 const TWINKLE_CHANCE: f64 = 1.0 / 400.0;
-/// How long a twinkle lasts, in ticks, about half a second.
+/// How long a twinkle lasts, in ticks, about half a second. A twinkle turns
+/// a star's colour toward the next brightness and back, and keeps its
+/// glyph.
 const TWINKLE_TICKS: RangeInclusive<u32> = 4..=12;
 
 /// Ticks before the first figure, about 2 to 6 seconds, so a new pane
@@ -74,21 +75,36 @@ const METEOR_RUN: RangeInclusive<f32> = 40.0..=80.0;
 const METEOR_SPEED: f32 = 4.0;
 /// Its angle below level, in radians, about 20 to 57 degrees.
 const METEOR_SLANT: RangeInclusive<f32> = 0.35..=1.0;
+/// The width of a figure's line and of a shooting star, in pixels.
+const LINE_WIDTH: f32 = 1.0;
+/// The steps a share of coverage rounds to. The canvas samples its own
+/// shapes in sixteenths of a pixel, and a cell shows two colours, so a
+/// finer share shows no more and only adds colours for each cell to choose
+/// between.
+const COVERAGE_STEPS: f32 = 16.0;
 
 #[derive(Debug)]
 struct Star {
     x: u16,
     y: u16,
     brightness: usize,
-    /// The brightness the star shows while it twinkles, and the ticks the
-    /// twinkle has left.
-    twinkle: Option<(usize, u32)>,
+    /// The brightness the star turns toward while it twinkles, the ticks
+    /// the twinkle has left, and the ticks it had at its start.
+    twinkle: Option<(usize, u32, u32)>,
 }
 
 impl Star {
-    fn shown(&self) -> usize {
-        self.twinkle
-            .map_or(self.brightness, |(brightness, _)| brightness)
+    /// The brightness the star shows, from 0 for the dimmest to 2 for the
+    /// brightest, a share `progress` of a tick after its last tick. A
+    /// twinkle turns it toward the brightness of the twinkle and back on
+    /// half a wave, so it starts and ends at the star's own.
+    fn shown(&self, progress: f64) -> f32 {
+        let own = self.brightness as f32;
+        let Some((toward, left, length)) = self.twinkle else {
+            return own;
+        };
+        let along = ((length - left) as f32 + progress as f32) / (length + 1) as f32;
+        own + (toward as f32 - own) * (std::f32::consts::PI * along).sin()
     }
 }
 
@@ -112,24 +128,31 @@ struct Meteor {
 }
 
 impl Meteor {
-    /// The pixels from the end of its trail to its head, on one line, a
-    /// share `progress` of a tick after its last tick. Both ends lie on its
-    /// run, which starts and ends inside the pane. A shooting star that
-    /// burns out before its next tick shows nothing.
-    fn pixels(&self, progress: f64) -> Vec<(i32, i32)> {
+    /// Its stroke from the end of its trail to its head, a share `progress`
+    /// of a tick after its last tick, or none once it burns out. Both ends
+    /// lie on its run, which starts and ends inside the pane. The trail
+    /// fades from the head back to the end of a full trail, so a shooting
+    /// star that burns out fades from its head too.
+    fn stroke(&self, progress: f64, colour: Color) -> Option<Stroke> {
         let flown = self.flown + METEOR_SPEED * progress as f32;
         if self.burnt_out(flown) {
-            return Vec::new();
+            return None;
         }
         let at = |along: f32| {
             (
-                (self.from.0 + self.direction.0 * along).round() as i32,
-                (self.from.1 + self.direction.1 * along).round() as i32,
+                self.from.0 + self.direction.0 * along,
+                self.from.1 + self.direction.1 * along,
             )
         };
-        let head = flown.min(self.run);
-        let tail = (flown - TRAIL as f32).max(0.0);
-        line(at(tail), at(head))
+        let (head, tail) = (flown.min(self.run), (flown - TRAIL as f32).max(0.0));
+        let length = head - tail;
+        Some(Stroke {
+            path: vec![at(tail), at(head)],
+            colour,
+            strength: Box::new(move |along| {
+                (1.0 - (flown - tail - along * length) / TRAIL as f32).clamp(0.0, 1.0)
+            }),
+        })
     }
 
     /// Whether the end of its trail has passed the end of its run once it
@@ -202,14 +225,6 @@ impl Constellations {
                     twinkle: None,
                 });
             }
-        }
-    }
-
-    fn role(&self, brightness: usize) -> Color {
-        match brightness {
-            0 => self.palette.muted,
-            1 => self.palette.subtle,
-            _ => self.palette.text,
         }
     }
 
@@ -382,119 +397,189 @@ fn hop(from: &Star, to: &Star) -> f32 {
     across.hypot(down)
 }
 
-/// The pixel in the middle of a star's cell.
-fn centre(star: Position) -> (i32, i32) {
+/// The pixel nearest the middle of a star's cell. The middle lies between
+/// pixels, and a level line through it would light two rows at half
+/// strength.
+fn centre(star: Position) -> (f32, f32) {
     (
-        i32::from(star.x) * CELL_WIDTH as i32 + 1,
-        i32::from(star.y) * CELL_HEIGHT as i32 + 2,
+        f32::from(star.x) * CELL_WIDTH as f32 + 1.0,
+        f32::from(star.y) * CELL_HEIGHT as f32 + 2.0,
     )
 }
 
-/// The pixels of a line from one pixel to another, in order, by Bresenham.
-fn line(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
-    let (across, down) = ((to.0 - from.0).abs(), -(to.1 - from.1).abs());
-    let (step_x, step_y) = ((to.0 - from.0).signum(), (to.1 - from.1).signum());
-    let (mut x, mut y, mut error) = (from.0, from.1, across + down);
-    let mut pixels = vec![(x, y)];
-    while (x, y) != to {
-        let twice = 2 * error;
-        if twice >= down {
-            error += down;
-            x += step_x;
-        }
-        if twice <= across {
-            error += across;
-            y += step_y;
-        }
-        pixels.push((x, y));
+/// A line along `path` in `colour`, mixed into the sky by its coverage
+/// times its strength. The strength takes the share of the path's length
+/// from its start, from 0 to 1.
+struct Stroke {
+    path: Vec<(f32, f32)>,
+    colour: Color,
+    strength: Box<dyn Fn(f32) -> f32>,
+}
+
+impl std::fmt::Debug for Stroke {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Stroke")
+            .field("path", &self.path)
+            .field("colour", &self.colour)
+            .finish_non_exhaustive()
     }
-    pixels
+}
+
+impl Stroke {
+    /// The pixels the stroke can touch: left, top, right and bottom.
+    fn bounds(&self) -> [f32; 4] {
+        let reach = LINE_WIDTH / 2.0 + 1.0;
+        self.path.iter().fold(
+            [f32::MAX, f32::MAX, f32::MIN, f32::MIN],
+            |[left, top, right, bottom], &(x, y)| {
+                [
+                    left.min(x - reach),
+                    top.min(y - reach),
+                    right.max(x + reach),
+                    bottom.max(y + reach),
+                ]
+            },
+        )
+    }
+
+    /// The share of the pixel at `point` the stroke mixes in. Where two
+    /// legs of the path meet, the nearer leg counts once, so a joint is no
+    /// brighter than the legs.
+    fn share(&self, point: (f32, f32)) -> f32 {
+        let lengths: Vec<f32> = self
+            .path
+            .windows(2)
+            .map(|leg| (leg[1].0 - leg[0].0).hypot(leg[1].1 - leg[0].1))
+            .collect();
+        let total: f32 = lengths.iter().sum();
+        let mut start = 0.0;
+        let mut nearest = (f32::MAX, 0.0);
+        for (leg, length) in self.path.windows(2).zip(&lengths) {
+            let (from, to) = (leg[0], leg[1]);
+            let along = if *length == 0.0 {
+                0.0
+            } else {
+                (((point.0 - from.0) * (to.0 - from.0) + (point.1 - from.1) * (to.1 - from.1))
+                    / (length * length))
+                    .clamp(0.0, 1.0)
+            };
+            let off = (point.0 - from.0 - along * (to.0 - from.0))
+                .hypot(point.1 - from.1 - along * (to.1 - from.1));
+            if off < nearest.0 {
+                nearest = (off, (start + along * length) / total.max(f32::MIN_POSITIVE));
+            }
+            start += length;
+        }
+        let coverage = (LINE_WIDTH / 2.0 + 0.5 - nearest.0).clamp(0.0, 1.0);
+        let coverage = (coverage * COVERAGE_STEPS).round() / COVERAGE_STEPS;
+        coverage * (self.strength)(nearest.1)
+    }
 }
 
 impl Figure {
-    /// The pixels the line shows at its age: a growing share of the path while
-    /// it draws, all of it while it holds, and a thinning dither while it
-    /// fades. While it draws, the share grows on by `progress` of a tick, so
-    /// the pen moves between two ticks.
-    fn pixels(&self, progress: f64) -> Vec<(i32, i32)> {
-        let segments: Vec<Vec<(i32, i32)>> = self
-            .stars
+    /// The line at its age, a share `progress` of a tick after its last
+    /// tick: from the first star to a pen that moves along the path while
+    /// it draws, all of it while it holds, and all of it at a falling
+    /// strength while it fades.
+    fn stroke(&self, progress: f64) -> Stroke {
+        let stars: Vec<(f32, f32)> = self.stars.iter().copied().map(centre).collect();
+        let total: f32 = stars
             .windows(2)
-            .map(|pair| line(centre(pair[0]), centre(pair[1])))
-            .collect();
-        let total: usize = segments.iter().map(Vec::len).sum();
-        let drawn = if self.age < DRAW_TICKS {
-            let ticks = f64::from(self.age) + 1.0 + progress;
-            ((total as f64 * ticks / f64::from(DRAW_TICKS)) as usize).min(total)
-        } else {
-            total
-        };
-        let left = FIGURE_TICKS.saturating_sub(self.age) as usize;
-        let sixteenths = if left < FADE_TICKS as usize {
-            (left * dither::SHADES).div_ceil(FADE_TICKS as usize)
-        } else {
-            dither::SHADES
-        };
-        segments
-            .into_iter()
-            .flatten()
-            .take(drawn)
-            .filter(|(x, y)| {
-                dither::lights(
-                    sixteenths,
-                    x.unsigned_abs() as usize,
-                    y.unsigned_abs() as usize,
-                )
-            })
-            .collect()
+            .map(|leg| (leg[1].0 - leg[0].0).hypot(leg[1].1 - leg[0].1))
+            .sum();
+        let ticks = f64::from(self.age) + 1.0 + progress;
+        let drawn = total * (ticks / f64::from(DRAW_TICKS)).min(1.0) as f32;
+        let mut path = vec![stars[0]];
+        let mut left = drawn;
+        for leg in stars.windows(2) {
+            let length = (leg[1].0 - leg[0].0).hypot(leg[1].1 - leg[0].1);
+            if left >= length {
+                path.push(leg[1]);
+                left -= length;
+            } else {
+                let share = left / length;
+                path.push((
+                    leg[0].0 + (leg[1].0 - leg[0].0) * share,
+                    leg[0].1 + (leg[1].1 - leg[0].1) * share,
+                ));
+                break;
+            }
+        }
+        let strength = self.strength(progress);
+        Stroke {
+            path,
+            colour: self.colour,
+            strength: Box::new(move |_| strength),
+        }
     }
 
-    fn holding(&self) -> bool {
-        (DRAW_TICKS..DRAW_TICKS + HOLD_TICKS).contains(&self.age)
+    /// How strongly the figure shows, from 1 while it draws and holds down
+    /// to 0 at the end of its fade.
+    fn strength(&self, progress: f64) -> f32 {
+        let left = f64::from(FIGURE_TICKS.saturating_sub(self.age)) - progress;
+        (left / f64::from(FADE_TICKS)).clamp(0.0, 1.0) as f32
+    }
+
+    /// How far its name has turned from muted to subtle: up while the line
+    /// draws, in full while it holds, and down while it fades.
+    fn name_share(&self, progress: f64) -> f32 {
+        let drawn = (f64::from(self.age) + progress) / f64::from(DRAW_TICKS);
+        (drawn.min(1.0) as f32).min(self.strength(progress))
     }
 }
 
 impl Constellations {
-    /// Draws the pixels of the lines on a canvas over the cells they cross
-    /// alone. The lines are a few short strokes, so a canvas over the whole
-    /// pane would spend most of each frame on empty sky.
-    fn draw_lines(&self, lines: &[((i32, i32), Color)], area: Rect, buf: &mut Buffer) {
-        let (width, height) = (CELL_WIDTH as i32, CELL_HEIGHT as i32);
-        let cells: Vec<(i32, i32)> = lines
-            .iter()
-            .map(|((x, y), _)| (x.div_euclid(width), y.div_euclid(height)))
-            .filter(|(column, row)| {
-                (0..i32::from(area.width)).contains(column)
-                    && (0..i32::from(area.height)).contains(row)
-            })
-            .collect();
-        let (Some(left), Some(right), Some(top), Some(bottom)) = (
-            cells.iter().map(|cell| cell.0).min(),
-            cells.iter().map(|cell| cell.0).max(),
-            cells.iter().map(|cell| cell.1).min(),
-            cells.iter().map(|cell| cell.1).max(),
+    /// Draws the strokes on a canvas over the cells they cross alone. The
+    /// lines are a few short strokes, so a canvas over the whole pane would
+    /// spend most of each frame on empty sky.
+    fn draw_strokes(&self, strokes: &[Stroke], area: Rect, buf: &mut Buffer) {
+        let Some([left, top, right, bottom]) = strokes.iter().map(Stroke::bounds).reduce(
+            |[left, top, right, bottom], [l, t, r, b]| {
+                [left.min(l), top.min(t), right.max(r), bottom.max(b)]
+            },
         ) else {
             return;
         };
-        let (Ok(columns), Ok(rows), Ok(column), Ok(row)) = (
-            u16::try_from(right - left + 1),
-            u16::try_from(bottom - top + 1),
-            u16::try_from(left),
-            u16::try_from(top),
+        let (width, height) = (CELL_WIDTH as f32, CELL_HEIGHT as f32);
+        let column = (left / width).floor().max(0.0) as u16;
+        let row = (top / height).floor().max(0.0) as u16;
+        let columns = ((right / width).floor() as i32 + 1).min(i32::from(area.width));
+        let rows = ((bottom / height).floor() as i32 + 1).min(i32::from(area.height));
+        let (Ok(columns), Ok(rows)) = (
+            u16::try_from(columns - i32::from(column)),
+            u16::try_from(rows - i32::from(row)),
         ) else {
             return;
         };
+        if columns == 0 || rows == 0 {
+            return;
+        }
         let mut canvas = Canvas::new(columns, rows, self.palette);
-        for &((x, y), colour) in lines {
-            let (Ok(x), Ok(y)) = (
-                usize::try_from(x - left * width),
-                usize::try_from(y - top * height),
-            ) else {
-                continue;
-            };
-            canvas.set(x, y, colour);
+        let (left, top) = (
+            usize::from(column) * CELL_WIDTH,
+            usize::from(row) * CELL_HEIGHT,
+        );
+        for stroke in strokes {
+            let [from_x, from_y, to_x, to_y] = stroke.bounds();
+            let xs = (from_x.floor().max(left as f32) as usize)..=(to_x.ceil().max(0.0) as usize);
+            for y in (from_y.floor().max(top as f32) as usize)..=(to_y.ceil().max(0.0) as usize) {
+                for x in xs.clone() {
+                    let share = stroke.share((x as f32, y as f32));
+                    if share > 0.0 {
+                        canvas.blend(x - left, y - top, stroke.colour, share);
+                    }
+                }
+            }
         }
         canvas.render(Rect::new(area.x + column, area.y + row, columns, rows), buf);
+    }
+
+    /// The colour of a star of `brightness` from 0 for the dimmest to 2 for
+    /// the brightest, along the roles of the three.
+    fn shade(&self, brightness: f32) -> Color {
+        let roles = [self.palette.muted, self.palette.subtle, self.palette.text];
+        octant::ramp(&roles, brightness / (roles.len() - 1) as f32)
     }
 }
 
@@ -511,8 +596,8 @@ impl Scene for Constellations {
         }
         for star in &mut self.stars {
             star.twinkle = match star.twinkle {
-                Some((_, 0)) => None,
-                Some((brightness, left)) => Some((brightness, left - 1)),
+                Some((_, 0, _)) => None,
+                Some((brightness, left, length)) => Some((brightness, left - 1, length)),
                 None if self.rng.random_bool(TWINKLE_CHANCE) => {
                     let brightness = match star.brightness {
                         0 => 1,
@@ -520,7 +605,8 @@ impl Scene for Constellations {
                         1 => 2,
                         _ => 1,
                     };
-                    Some((brightness, self.rng.random_range(TWINKLE_TICKS)))
+                    let length = self.rng.random_range(TWINKLE_TICKS);
+                    Some((brightness, length, length))
                 }
                 None => None,
             };
@@ -539,42 +625,34 @@ impl Scene for Constellations {
         };
         let at = |x: i32, y: i32| Position::new(area.x + x as u16, area.y + y as u16);
 
-        let mut lines: Vec<((i32, i32), Color)> = Vec::new();
-        if let Some(figure) = &self.figure {
-            lines.extend(
-                figure
-                    .pixels(self.progress)
-                    .into_iter()
-                    .map(|pixel| (pixel, figure.colour)),
-            );
-        }
-        if let Some(meteor) = &self.meteor {
-            lines.extend(
-                meteor
-                    .pixels(self.progress)
-                    .into_iter()
-                    .map(|pixel| (pixel, self.palette.gold)),
-            );
-        }
-        self.draw_lines(&lines, area, buf);
+        let strokes: Vec<Stroke> = self
+            .figure
+            .iter()
+            .map(|figure| figure.stroke(self.progress))
+            .chain(
+                self.meteor
+                    .iter()
+                    .filter_map(|meteor| meteor.stroke(self.progress, self.palette.gold)),
+            )
+            .collect();
+        self.draw_strokes(&strokes, area, buf);
 
         for star in &self.stars {
             let (x, y) = (i32::from(star.x), i32::from(star.y));
             if !inside(x, y) {
                 continue;
             }
-            let brightness = star.shown();
             buf[at(x, y)]
-                .set_char(GLYPHS[brightness])
-                .set_fg(self.role(brightness));
+                .set_char(GLYPHS[star.brightness])
+                .set_fg(self.shade(star.shown(self.progress)));
         }
 
         if let Some(figure) = &self.figure {
-            let colour = if figure.holding() {
-                self.palette.subtle
-            } else {
-                self.palette.muted
-            };
+            let colour = octant::mix(
+                self.palette.muted,
+                self.palette.subtle,
+                figure.name_share(self.progress),
+            );
             let (x, y) = (i32::from(figure.name_at.x), i32::from(figure.name_at.y));
             for (offset, letter) in (0..).zip(figure.name.chars()) {
                 if inside(x + offset, y) {
