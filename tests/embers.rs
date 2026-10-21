@@ -70,7 +70,8 @@ fn two_tone(set: &[Color]) -> &'static Palette {
 /// Scenes from one seed, each in two tones: one set of colours in light
 /// and the rest in dark. A palette changes no tick, so the scenes run in
 /// step. A cell of the whole palette can hold three colours and draws only
-/// two, but a cell of two tones draws each pixel as it is.
+/// two, but a cell of two tones draws each pixel in one of them or a grey
+/// between them where the scene mixes a colour of the set with another.
 struct Toned {
     scenes: Vec<Embers>,
 }
@@ -114,7 +115,10 @@ impl Toned {
             .collect()
     }
 
-    /// The colour of each pixel, from the scenes of `each_colour`.
+    /// The colour of each pixel, from the scenes of `each_colour`, or
+    /// `None` for a pixel no scene draws in light: a mix, such as a shade
+    /// of the glow or of the wood or air the glow lights, which each scene
+    /// draws in a grey, and a pixel under a spark.
     fn colours(&self, area: Rect) -> Vec<Vec<Option<Color>>> {
         let sets = self.sets(area);
         let mut rows = vec![vec![None; sets[0][0].len()]; sets[0].len()];
@@ -268,9 +272,12 @@ fn the_logs_rest_on_a_grate_over_hearth_stones() {
 
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it renders after one tick and again after forty.
-/// Then: some pixels change. Every change is a glow that pulses, wood that
-/// starts to glow, or wood that burns away, and none is in the stones or
-/// the grate.
+/// Then: of the pixels in one colour of the fire on both frames, some
+/// change. Every change is a glow that pulses, wood that starts to glow,
+/// or wood that burns away, and none is in the stones or the grate. A mix
+/// reads as no colour, so the test reads the base, the stones, the grate,
+/// and the wood and the glow where they show a colour of their own, and
+/// not their shades between or the air the glow lights.
 ///
 /// Why it matters: the glow is what makes the fire live, and wood that
 /// grows back, or a stone or the grate that flickers, reads as a fault.
@@ -816,15 +823,26 @@ fn a_log_is_lit_on_top_shaded_under_and_lined_along_its_grain() {
 /// The fewest pixels of wood down a column that the shading test reads.
 const LOG_RUN: usize = 8;
 
-/// Given: the scene on an eighty by twenty-four area.
+/// The rings of air around the glow that the fade test reads, by whole
+/// pixels from the nearest glowing pixel, and the most love the last ring
+/// holds as a share of the first's. The air near the fire also takes the
+/// brightest of more glows, so even a light of one strength holds a little
+/// less love further out, but no less than this.
+const RINGS: std::ops::RangeInclusive<usize> = 1..=4;
+const FADED: f32 = 2.0 / 3.0;
+
+/// Given: the scene on an eighty by twenty-four area, and each pixel of
+/// the air above the grate in the ring of whole pixels it lies from the
+/// nearest glowing pixel.
 /// When: it ticks once and renders.
-/// Then: some pixels of the air above the grate are mixes of the base and
-/// love, and those within two pixels of the glow hold more love on average
-/// than those four or more pixels from it.
+/// Then: some pixels of the air are mixes of the base and love. From the
+/// first ring to the fourth each ring of them holds less love on average
+/// than the ring inside it, and the fourth under two thirds of the first's.
 ///
 /// Why it matters: a glow that ends at the edge of the wood reads as a
 /// picture of embers, and a warm light that fades out into the dark around
-/// them reads as a fire in a room.
+/// them reads as a fire in a room. A light of one strength out to its edge
+/// reads as a halo cut out of paper.
 #[test]
 fn the_glow_lights_the_air_around_the_fire() {
     // Given, when:
@@ -845,29 +863,28 @@ fn the_glow_lights_the_air_around_the_fire() {
         })
         .collect();
     assert!(!lit.is_empty(), "no air the glow lights");
-    let reach = |x: usize, y: usize| {
+    let ring = |x: usize, y: usize| {
         glowing
             .iter()
-            .map(|(gx, gy)| gx.abs_diff(x).max(gy.abs_diff(y)))
-            .min()
-            .unwrap_or(usize::MAX)
+            .map(|(gx, gy)| (gx.abs_diff(x) as f32).hypot(gy.abs_diff(y) as f32))
+            .fold(f32::INFINITY, f32::min)
+            .round() as usize
     };
-    let mean = |shares: Vec<f32>| shares.iter().sum::<f32>() / shares.len().max(1) as f32;
-    let near = mean(
-        lit.iter()
-            .filter(|(x, y, _)| reach(*x, *y) <= 2)
-            .map(|(_, _, colour)| lit_share(*colour))
-            .collect(),
-    );
-    let far = mean(
-        lit.iter()
-            .filter(|(x, y, _)| reach(*x, *y) >= 4)
-            .map(|(_, _, colour)| lit_share(*colour))
-            .collect(),
-    );
+    let shares: Vec<f32> = RINGS
+        .map(|at| {
+            let ring: Vec<f32> = lit
+                .iter()
+                .filter(|(x, y, _)| ring(*x, *y) == at)
+                .map(|(_, _, colour)| lit_share(*colour))
+                .collect();
+            assert!(!ring.is_empty(), "no lit air in ring {at}");
+            ring.iter().sum::<f32>() / ring.len() as f32
+        })
+        .collect();
+    let (first, last) = (shares[0], shares[shares.len() - 1]);
     assert!(
-        near > far,
-        "the air near the glow holds {near} of love and the air further out {far}"
+        shares.windows(2).all(|pair| pair[0] > pair[1]) && last < first * FADED,
+        "the love in each ring of air from the glow out: {shares:?}"
     );
 }
 

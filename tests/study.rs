@@ -1095,13 +1095,17 @@ fn the_room_is_shaded_with_mixes_of_its_colours() {
     assert!(shaded, "the room shows no mix of two of its colours");
 }
 
+/// The most light the glow further out holds, as a share of the light near
+/// the bulb, so a glow of one strength fails.
+const FADED: f32 = 2.0 / 3.0;
+
 /// Given: the scene on a pane the size of the picture, before the lamp
 /// first flickers.
 /// When: it ticks once and renders.
 /// Then: on the wall under the bulb, in the lamp's area, some pixels are
-/// mixes of the wall and rose or of rose and gold, and those within three
-/// pixels of the bulb, its text, lie further from the wall on average than
-/// those further out.
+/// mixes of the wall and rose or of rose and gold, and those further than
+/// three pixels from the bulb, its text, lie under two thirds as far from
+/// the wall on average as those within three.
 ///
 /// Why it matters: light drawn in flat gold and rose reads as a pattern on
 /// the wall, and a glow that fades out from the bulb reads as light.
@@ -1152,7 +1156,7 @@ fn the_lamp_glows_on_the_wall_and_fades_from_the_bulb() {
     };
     let (near, out) = (light(true), light(false));
     assert!(
-        near > out,
+        out < near * FADED,
         "the glow near the bulb lies {near} from the wall and further out {out}"
     );
 }
