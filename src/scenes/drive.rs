@@ -2,10 +2,9 @@ use std::collections::VecDeque;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
-use ratatui::style::Color;
+use ratatui::layout::Rect;
 
-use crate::quadrant;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -51,8 +50,8 @@ const POST: (f64, f64, f64) = (0.3, 0.01, 1.25);
 /// than this would stand on the edge, so it is left out, like a post lost
 /// in the dark.
 const CLEAR: f64 = 2.0;
-/// The car from behind, a pixel to a letter: body, window, tail light,
-/// plate and tyre. A dot is clear.
+/// The car from behind, a letter to a pixel across and to `CAR_LINE` pixels
+/// down: body, window, tail light, plate and tyre. A dot is clear.
 const CAR: [&str; 9] = [
     ".......BBBBBBBBBB.......",
     "......BWWWWWWWWWWB......",
@@ -64,6 +63,9 @@ const CAR: [&str; 9] = [
     "BBBBBBBBBBBBBBBBBBBBBBBB",
     ".TTTT..............TTTT.",
 ];
+/// The pixel rows of each line of `CAR`. The car is drawn in pixels twice
+/// as tall as wide, and a pixel is about square.
+const CAR_LINE: usize = 2;
 /// Where the car's middle runs, as a share of the road's half width right
 /// of its middle.
 const LANE: f64 = 0.45;
@@ -88,8 +90,8 @@ const DETAIL: usize = 5;
 /// the window, so the pillars beside the window stay at any size.
 const SHOWN_FIRST: [u8; 6] = *b"LPBWT.";
 /// The moon's radius and the height of its middle, as shares of the pane's
-/// height. A pixel is half a cell across and half a cell down, so twice as
-/// tall as wide, and the moon spans twice its radius in pixels across.
+/// height. A pixel is half a cell across and a quarter of a cell down, so
+/// about square.
 const MOON: (f64, f64) = (0.07, 0.14);
 
 /// A stretch of track with one curve: negative bends left, positive right.
@@ -208,26 +210,23 @@ impl Drive {
 
     /// The stars, then the moon, in the sky above `horizon`. Both slide
     /// with the sky and come round again at the other side.
-    fn draw_sky(&self, rows: &mut [Vec<Color>], horizon: usize) {
-        let across = rows.first().map_or(0, Vec::len);
-        let width = across as f64;
-        let height = rows.len() as f64;
-        let room = horizon.saturating_sub(2) as f64;
+    fn draw_sky(&self, canvas: &mut Canvas, horizon: usize) {
+        let width = canvas.width() as f64;
+        let height = canvas.height() as f64;
+        let room = horizon.saturating_sub(CELL_HEIGHT) as f64;
         for &(x, y) in &self.stars {
             let column = ((x + self.sky).rem_euclid(1.0) * width) as usize;
             let row = (y * room) as usize;
-            if let Some(pixel) = rows.get_mut(row).and_then(|row| row.get_mut(column)) {
-                *pixel = self.palette.subtle;
-            }
+            canvas.set(column, row, self.palette.subtle);
         }
         let (radius, middle) = (MOON.0 * height, MOON.1 * height);
-        let span = width + 4.0 * radius;
-        let centre = (0.7 * width + self.sky * width).rem_euclid(span) - 2.0 * radius;
-        for (y, row) in rows.iter_mut().enumerate().take(horizon) {
-            for (x, pixel) in row.iter_mut().enumerate() {
-                let (dx, dy) = ((x as f64 + 0.5 - centre) / 2.0, y as f64 + 0.5 - middle);
+        let span = width + 2.0 * radius;
+        let centre = (0.7 * width + self.sky * width).rem_euclid(span) - radius;
+        for y in 0..horizon.min(canvas.height()) {
+            for x in 0..canvas.width() {
+                let (dx, dy) = (x as f64 + 0.5 - centre, y as f64 + 0.5 - middle);
                 if dx * dx + dy * dy <= radius * radius {
-                    *pixel = self.palette.text;
+                    canvas.set(x, y, self.palette.text);
                 }
             }
         }
@@ -236,17 +235,16 @@ impl Drive {
     /// The colour of each pixel, row by row. The road is laid from near to
     /// far, and each stretch fills only the rows above what is nearer, so
     /// a crest hides the road beyond it.
-    fn pixels(&self) -> Vec<Vec<Color>> {
-        let across = usize::from(self.width) * 2;
-        let down = usize::from(self.height) * 2;
+    fn pixels(&self) -> Canvas {
         let palette = self.palette;
-        let mut rows = vec![vec![palette.base; across]; down];
+        let mut canvas = Canvas::new(self.width, self.height, palette.base);
+        let (across, down) = (canvas.width(), canvas.height());
         let horizon = (down as f64 * HORIZON) as usize;
         let road_rows = down.saturating_sub(horizon + 1);
         if road_rows == 0 {
-            return rows;
+            return canvas;
         }
-        self.draw_sky(&mut rows, horizon);
+        self.draw_sky(&mut canvas, horizon);
         let width = across as f64;
         let share = 1.0 / road_rows as f64;
         let eye = self.altitude(self.travelled);
@@ -282,10 +280,10 @@ impl Drive {
                 shown = Some((centre, half));
             }
             let band = (ahead / STRIPE).floor() as i64 & 1 == 0;
-            for row in &mut rows[top..drawn] {
-                for (x, pixel) in row.iter_mut().enumerate() {
+            for y in top..drawn {
+                for x in 0..across {
                     let off = (x as f64 + 0.5 - centre).abs();
-                    *pixel = if off < half * DASH && band {
+                    let colour = if off < half * DASH && band {
                         palette.text
                     } else if off < half * (1.0 - RUMBLE) {
                         palette.overlay
@@ -294,28 +292,33 @@ impl Drive {
                     } else {
                         palette.base
                     };
+                    canvas.set(x, y, colour);
                 }
             }
             drawn = top;
         }
-        // The road's top meets the sky on a cell boundary, because a cell
+        // The sky in the cell of the road's top row is clear, because a cell
         // that held a star or the moon and the road would hold more colours
-        // than a quadrant cell draws.
-        if drawn % 2 == 1 && drawn < down {
-            rows[drawn - 1] = rows[drawn].clone();
+        // than a cell draws.
+        if drawn < down {
+            for y in drawn / CELL_HEIGHT * CELL_HEIGHT..drawn {
+                for x in 0..across {
+                    canvas.set(x, y, palette.base);
+                }
+            }
         }
-        self.draw_posts(&mut rows, &stretches);
-        self.draw_traffic(&mut rows, &stretches, horizon, eye);
-        self.draw_car(&mut rows);
-        rows
+        self.draw_posts(&mut canvas, &stretches);
+        self.draw_traffic(&mut canvas, &stretches, horizon, eye);
+        self.draw_car(&mut canvas);
+        canvas
     }
 
     /// The posts on both sides of the road, from far to near, so a nearer
     /// post stands in front. A post on a stretch hidden behind a crest is
     /// hidden with it.
-    fn draw_posts(&self, rows: &mut [Vec<Color>], stretches: &[Option<(usize, f64, f64)>]) {
+    fn draw_posts(&self, canvas: &mut Canvas, stretches: &[Option<(usize, f64, f64)>]) {
         let road_rows = stretches.len() - 1;
-        let (down, across) = (rows.len() as f64, rows.first().map_or(0, Vec::len) as f64);
+        let (down, across) = (canvas.height() as f64, canvas.width() as f64);
         let first = (self.travelled + 1.0) / POST_GAP;
         let last = (self.travelled + road_rows as f64) / POST_GAP;
         for post in (first.ceil() as i64..=last.floor() as i64).rev() {
@@ -330,23 +333,23 @@ impl Drive {
             if (POST.2 - 1.0) * half < thick as f64 / 2.0 + CLEAR {
                 continue;
             }
-            // A post covers whole cells, from an even column and row to the
-            // end of a cell, so no cell holds a post and two colours of what
-            // stands behind it.
-            let thick = thick.div_ceil(2) * 2;
-            let bottom = (ground | 1).min(rows.len() - 1);
-            let top = ground.saturating_sub(height - 1) & !1;
+            // A post covers whole cells, from the first column and row of a
+            // cell to the end of one, so no cell holds a post and two colours
+            // of what stands behind it.
+            let thick = thick.div_ceil(CELL_WIDTH) * CELL_WIDTH;
+            let bottom = ground / CELL_HEIGHT * CELL_HEIGHT + CELL_HEIGHT - 1;
+            let top = ground.saturating_sub(height - 1) / CELL_HEIGHT * CELL_HEIGHT;
             for side in [-1.0, 1.0] {
                 let middle = centre + side * half * POST.2;
-                let left = (middle - thick as f64 / 2.0).round() as i64 & !1;
+                let left = ((middle - thick as f64 / 2.0).round() as i64)
+                    .div_euclid(CELL_WIDTH as i64)
+                    * CELL_WIDTH as i64;
                 for x in left..left + thick as i64 {
                     let Ok(x) = usize::try_from(x) else {
                         continue;
                     };
-                    for row in &mut rows[top..=bottom] {
-                        if let Some(pixel) = row.get_mut(x) {
-                            *pixel = self.palette.muted;
-                        }
+                    for y in top..=bottom {
+                        canvas.set(x, y, self.palette.muted);
                     }
                 }
             }
@@ -359,14 +362,15 @@ impl Drive {
     /// cell holds a car and two colours of the road behind it.
     fn draw_traffic(
         &self,
-        rows: &mut [Vec<Color>],
+        canvas: &mut Canvas,
         stretches: &[Option<(usize, f64, f64)>],
         horizon: usize,
         eye: f64,
     ) {
         let road_rows = stretches.len() - 1;
-        let across = rows.first().map_or(0, Vec::len) as f64;
-        let (wide, tall) = (CAR[0].len() as f64, CAR.len() as f64);
+        let across = canvas.width() as f64;
+        let (wide, lines) = (CAR[0].len() as f64, CAR.len() as f64);
+        let tall = lines * CAR_LINE as f64;
         for &car in self.traffic.iter().rev() {
             let near = 1.0 / (car - self.travelled);
             let step = road_rows as f64 * near;
@@ -382,13 +386,15 @@ impl Drive {
                 let ground = (horizon as f64 + step * (1.0 - rise)).round() as usize;
                 (ground, across / 2.0, across * ROAD / 2.0 * near)
             };
-            let cells_across = (wide * near / 2.0).ceil().max(1.0) as usize;
-            let cells_down = (tall * near / 2.0).ceil().max(1.0) as usize;
+            let (cell_width, cell_height) = (CELL_WIDTH as i64, CELL_HEIGHT as i64);
+            let cells_across = (wide * near / CELL_WIDTH as f64).ceil().max(1.0) as usize;
+            let cells_down = (tall * near / CELL_HEIGHT as f64).ceil().max(1.0) as usize;
             let middle = centre - half * LANE;
-            let left = ((middle - cells_across as f64) / 2.0).floor() as i64 * 2;
-            let top = (ground | 1) as i64 + 1 - 2 * cells_down as i64;
+            let left =
+                ((middle - cells_across as f64) / CELL_WIDTH as f64).floor() as i64 * cell_width;
+            let top = (ground as i64 / cell_height + 1 - cells_down as i64) * cell_height;
             for down in 0..cells_down {
-                let line = CAR[((down as f64 + 0.5) * tall / cells_down as f64) as usize];
+                let line = CAR[((down as f64 + 0.5) * lines / cells_down as f64) as usize];
                 for over in 0..cells_across {
                     let from = (over as f64 * wide / cells_across as f64) as usize;
                     let to = (((over + 1) as f64 * wide / cells_across as f64).ceil() as usize)
@@ -407,15 +413,14 @@ impl Drive {
                         b'P' => self.palette.text,
                         _ => self.palette.gold,
                     };
-                    for y in 0..2 {
-                        for x in 0..2 {
-                            let (x, y) = (left + 2 * over as i64 + x, top + 2 * down as i64 + y);
-                            let pixel = usize::try_from(y)
-                                .ok()
-                                .zip(usize::try_from(x).ok())
-                                .and_then(|(y, x)| rows.get_mut(y)?.get_mut(x));
-                            if let Some(pixel) = pixel {
-                                *pixel = colour;
+                    for y in 0..cell_height {
+                        for x in 0..cell_width {
+                            let (x, y) = (
+                                left + cell_width * over as i64 + x,
+                                top + cell_height * down as i64 + y,
+                            );
+                            if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) {
+                                canvas.set(x, y, colour);
                             }
                         }
                     }
@@ -426,10 +431,10 @@ impl Drive {
 
     /// The car at the bottom of the pane in the right lane. In a curve its
     /// roof leans two pixels toward it and its upper body one.
-    fn draw_car(&self, rows: &mut [Vec<Color>]) {
-        let (down, across) = (rows.len(), rows.first().map_or(0, Vec::len));
-        let wide = CAR[0].len();
-        if down < CAR.len() || across < wide {
+    fn draw_car(&self, canvas: &mut Canvas) {
+        let (down, across) = (canvas.height(), canvas.width());
+        let (wide, tall) = (CAR[0].len(), CAR.len() * CAR_LINE);
+        if down < tall || across < wide {
             return;
         }
         let curve = self.curve(self.travelled + 2.0);
@@ -448,7 +453,7 @@ impl Drive {
                 3..=4 => lean,
                 _ => 0,
             };
-            let y = down - CAR.len() + line;
+            let y = down - tall + line * CAR_LINE;
             for (offset, letter) in pattern.chars().enumerate() {
                 let colour = match letter {
                     'B' => self.palette.iris,
@@ -457,9 +462,11 @@ impl Drive {
                     'P' => self.palette.text,
                     _ => continue,
                 };
-                let x = left + offset as i64 + shift;
-                if let Some(pixel) = usize::try_from(x).ok().and_then(|x| rows[y].get_mut(x)) {
-                    *pixel = colour;
+                let Ok(x) = usize::try_from(left + offset as i64 + shift) else {
+                    continue;
+                };
+                for y in y..y + CAR_LINE {
+                    canvas.set(x, y, colour);
                 }
             }
         }
@@ -472,7 +479,7 @@ impl Scene for Drive {
         self.height = area.height;
         self.travelled += SPEED;
         self.sky -= self.curve(self.travelled) * SKY;
-        let reach = self.travelled + f64::from(area.height) * 2.0 + EASE;
+        let reach = self.travelled + f64::from(area.height) * CELL_HEIGHT as f64 + EASE;
         self.lay(reach);
         let travelled = self.travelled;
         for car in &mut self.traffic {
@@ -481,7 +488,7 @@ impl Scene for Drive {
         // A car a quarter unit ahead stands far below the bottom row.
         self.traffic.retain(|car| car - travelled > 0.25);
         if travelled >= self.next_car {
-            let down = usize::from(area.height) * 2;
+            let down = usize::from(area.height) * CELL_HEIGHT;
             let road_rows = down.saturating_sub((down as f64 * HORIZON) as usize + 1);
             self.traffic
                 .push(travelled + (road_rows.max(1) as f64).min(AHEAD));
@@ -490,22 +497,6 @@ impl Scene for Drive {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let rows = self.pixels();
-        for row in 0..self.height.min(area.height) {
-            for column in 0..self.width.min(area.width) {
-                let (x, y) = (usize::from(column) * 2, usize::from(row) * 2);
-                let quarters = [
-                    rows[y][x],
-                    rows[y][x + 1],
-                    rows[y + 1][x],
-                    rows[y + 1][x + 1],
-                ];
-                let (glyph, fore, back) = quadrant::cell(quarters, self.palette.base);
-                buf[Position::new(area.x + column, area.y + row)]
-                    .set_char(glyph)
-                    .set_fg(fore)
-                    .set_bg(back);
-            }
-        }
+        self.pixels().render(area, buf);
     }
 }
