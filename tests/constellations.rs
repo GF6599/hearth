@@ -67,8 +67,9 @@ fn role(glyph: &str) -> Option<Color> {
     }
 }
 
-/// The lit pixels of a render, those in any colour but the base, in dots
-/// from the top left of the area, each with its colour.
+/// The lit pixels of a render, in dots from the top left of the area, each
+/// with its colour. The sky shows the base, or the terminal's own colour
+/// where nothing drew.
 fn line_dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
     let mut dots = Vec::new();
     for position in area.positions() {
@@ -76,7 +77,7 @@ fn line_dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
             continue;
         };
         for (pixel, colour) in shown.into_iter().enumerate() {
-            if colour == PALETTE.base {
+            if colour == PALETTE.base || colour == Color::Reset {
                 continue;
             }
             let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
