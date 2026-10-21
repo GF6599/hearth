@@ -1,11 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::constellations::{Constellations, NAMES, TRAIL};
 use hearth::scenes::typing::Speed;
@@ -65,26 +67,21 @@ fn role(glyph: &str) -> Option<Color> {
     }
 }
 
-/// The lit braille dots of a render, in dots from the top left of the
-/// area, each with the colour of its cell.
+/// The lit pixels of a render, those in any colour but the base, in dots
+/// from the top left of the area, each with its colour.
 fn line_dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
     let mut dots = Vec::new();
     for position in area.positions() {
-        let cell = &buffer[position];
-        let Some(code) = cell.symbol().chars().next().map(u32::from) else {
+        let Some(shown) = pixels::shown(&buffer[position]) else {
             continue;
         };
-        if !(0x2801..=0x28ff).contains(&code) {
-            continue;
-        }
-        for column in 0..CELL_WIDTH {
-            for row in 0..CELL_HEIGHT {
-                if (code - 0x2800) & braille::dot(column, row) != 0 {
-                    let x = usize::from(position.x - area.x) * CELL_WIDTH + column;
-                    let y = usize::from(position.y - area.y) * CELL_HEIGHT + row;
-                    dots.push(((x as f32, y as f32), cell.fg));
-                }
+        for (pixel, colour) in shown.into_iter().enumerate() {
+            if colour == PALETTE.base {
+                continue;
             }
+            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
+            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
+            dots.push(((x as f32, y as f32), colour));
         }
     }
     dots
