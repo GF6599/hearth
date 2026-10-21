@@ -136,7 +136,7 @@ just check    # the quality gate: clippy, the tests, cargo deny, then a format c
 just demo     # record doc/demo.gif with vhs
 ```
 
-Every scene is a module under `src/scenes/` that implements the `Scene` trait: `tick` advances one frame and `render` draws it. A scene takes its random source from the seed, so a test can assert one exact frame.
+Every scene is a module under `src/scenes/` that implements the `Scene` trait: `tick` advances one tick and `render` draws it. The app draws four frames a tick, about 60 frames a second, and a scene at 1× ticks once every four frames. A scene can glide between two ticks with `set_progress`, which gives it the share of the next tick it has run. The typing scene ticks once a frame. A scene takes its random source from the seed, so a test can assert one exact frame.
 
 ## License
 

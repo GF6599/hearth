@@ -35,12 +35,22 @@ use crate::theme::Palette;
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
 
-/// About 16 frames per second. Fast enough for rain and fire, slow enough
-/// that an idle terminal stays cheap.
-pub const TICK_RATE: Duration = Duration::from_millis(60);
+const TICK_MILLIS: u64 = 60;
 
-/// Each step in quarters of a tick for each frame, so the count stays whole
-/// and a seeded replay ticks on the same frames.
+/// The unit every scene counts its time in. A scene at 1× ticks once in
+/// this time, about 16 times a second.
+pub const TICK_RATE: Duration = Duration::from_millis(TICK_MILLIS);
+
+/// The frames the app draws in one tick, so a scene can glide between two
+/// ticks.
+pub const FRAMES_PER_TICK: u32 = 4;
+
+/// About 60 frames a second. Fast enough that motion looks smooth, slow
+/// enough that an idle terminal stays cheap.
+pub const FRAME_RATE: Duration = Duration::from_millis(TICK_MILLIS / FRAMES_PER_TICK as u64);
+
+/// Each step in quarters of a tick for each tick at 1×, so the count stays
+/// whole and a seeded replay ticks on the same frames.
 const RATES: &[(u32, &str)] = &[
     (1, "¼×"),
     (2, "½×"),
@@ -70,8 +80,8 @@ impl Settings {
     };
 }
 
-/// How fast a scene runs against one tick a frame, for a scene whose own
-/// unit means nothing to a reader.
+/// How fast a scene runs against one tick in each `TICK_RATE`, for a scene
+/// whose own unit means nothing to a reader.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rate(usize);
 
@@ -137,8 +147,9 @@ pub fn draw_notice(text: &str, area: Rect, palette: &Palette, buf: &mut Buffer) 
 }
 
 pub trait Scene {
-    /// Advances the scene by one frame. The area is the whole terminal, so a
-    /// scene sizes its own state from it and a resize needs no other signal.
+    /// Advances the scene by one tick, or by one frame for typing. The area
+    /// is the whole terminal, so a scene sizes its own state from it and a
+    /// resize needs no other signal.
     fn tick(&mut self, area: Rect);
 
     fn render(&self, area: Rect, buf: &mut Buffer);
@@ -146,6 +157,12 @@ pub trait Scene {
     /// Only the typing scene counts its speed in keystrokes per second. The
     /// others run at a `Rate` that `App` applies, so they ignore this.
     fn set_speed(&mut self, _speed: Speed) {}
+
+    /// How far the scene has run from its last tick towards its next, from
+    /// 0 up to but not including 1, given after each frame. A scene that
+    /// glides between ticks draws from it. The others ignore it and show
+    /// their last tick. Typing ticks once a frame, so it gets none.
+    fn set_progress(&mut self, _progress: f64) {}
 
     /// What a scene that keeps real time has left to run, for `+` and `-`
     /// to show. The rate means nothing to such a scene. The others have

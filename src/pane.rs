@@ -6,7 +6,7 @@ use ratatui::style::Style;
 
 use crate::config::Background;
 use crate::corpus::Corpus;
-use crate::scene::{QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
+use crate::scene::{FRAMES_PER_TICK, QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
 
@@ -307,7 +307,8 @@ pub struct Pane {
     palette: &'static Palette,
     background: Background,
     scene: Box<dyn Scene>,
-    /// Quarter ticks owed and not yet run, carried from frame to frame.
+    /// The share of a tick owed and not yet run, in `CREDIT_PER_TICK`
+    /// parts, carried from frame to frame.
     credit: u32,
 }
 
@@ -389,16 +390,23 @@ impl Pane {
     }
 }
 
-/// Typing keeps one tick a frame and counts its own speed in keystrokes.
-/// Every other scene ticks once for each whole tick its rate has paid for.
+/// A rate counts quarters of a tick for each tick, and a tick has
+/// `FRAMES_PER_TICK` frames, so a frame earns `rate.quarters()` of these
+/// parts and the count stays whole.
+const CREDIT_PER_TICK: u32 = QUARTERS_PER_TICK * FRAMES_PER_TICK;
+
+/// Runs one frame. Typing keeps one tick a frame and counts its own speed
+/// in keystrokes. Every other scene ticks once for each whole tick its rate
+/// has paid for, then learns how far it is towards the next.
 pub fn advance(scene: &mut dyn Scene, kind: SceneKind, rate: Rate, credit: &mut u32, area: Rect) {
     if kind == SceneKind::Typing {
         scene.tick(area);
         return;
     }
     *credit += rate.quarters();
-    while *credit >= QUARTERS_PER_TICK {
-        *credit -= QUARTERS_PER_TICK;
+    while *credit >= CREDIT_PER_TICK {
+        *credit -= CREDIT_PER_TICK;
         scene.tick(area);
     }
+    scene.set_progress(f64::from(*credit) / f64::from(CREDIT_PER_TICK));
 }

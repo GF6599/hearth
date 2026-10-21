@@ -11,13 +11,13 @@ use crate::corpus::Corpus;
 use crate::octant;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
-use crate::scene::{ALL, Rate, Scene, SceneKind, Settings};
+use crate::scene::{ALL, FRAMES_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
 use toml_edit::Value;
 
-/// Frames a changed speed stays on screen, about one second.
-const NOTICE_TICKS: u32 = 16;
+/// Frames a changed speed stays on screen: 16 ticks, about one second.
+const NOTICE_FRAMES: u32 = 16 * FRAMES_PER_TICK;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -51,12 +51,12 @@ pub struct App {
     preview_credit: u32,
     mode: Mode,
     selected: usize,
-    /// The first scene in the picker list on the last tick.
+    /// The first scene in the picker list on the last frame.
     picker_top: usize,
     /// What the user typed after `/` in the picker. `None` lists every
     /// scene.
     query: Option<String>,
-    ticks: u32,
+    frames: u32,
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
     fresh: bool,
@@ -126,7 +126,7 @@ impl App {
             selected: slot_of(kind),
             picker_top: 0,
             query: None,
-            ticks: 0,
+            frames: 0,
             fresh: false,
             should_quit: false,
         };
@@ -168,7 +168,7 @@ impl App {
         };
         self.unsaved = saved.err().map(|e| e.to_string());
         self.notice_text = name.to_string();
-        self.notice = NOTICE_TICKS;
+        self.notice = NOTICE_FRAMES;
     }
 
     pub fn saving_to(mut self, path: PathBuf) -> Self {
@@ -180,10 +180,18 @@ impl App {
         self.mode == Mode::Picking
     }
 
+    /// Runs the frames of one tick, so a test can count in the unit the
+    /// scenes count in.
+    pub fn tick(&mut self, area: Rect) {
+        for _ in 0..FRAMES_PER_TICK {
+            self.frame(area);
+        }
+    }
+
     /// The pane under the picker holds still, and the picker's preview
     /// runs in its place.
-    pub fn tick(&mut self, area: Rect) {
-        self.ticks = self.ticks.wrapping_add(1);
+    pub fn frame(&mut self, area: Rect) {
+        self.frames = self.frames.wrapping_add(1);
         self.notice = self.notice.saturating_sub(1);
         let layout = self.panes.layout(area);
         let picking = self.is_picking().then(|| self.panes.focus());
@@ -228,7 +236,7 @@ impl App {
                 .position(|slot| *slot == self.selected)
                 .unwrap_or(0),
             top: self.picker_top,
-            tick: self.ticks,
+            tick: self.frames / FRAMES_PER_TICK,
             query: self.query.as_deref(),
         })
     }
@@ -344,7 +352,7 @@ impl App {
         if let Some(left) = self.panes.focused().time_left() {
             self.unsaved = None;
             self.notice_text = left;
-            self.notice = NOTICE_TICKS;
+            self.notice = NOTICE_FRAMES;
             return;
         }
         let saved = if self.panes.focused().kind == SceneKind::Typing {
@@ -360,7 +368,7 @@ impl App {
         };
         self.unsaved = saved.err().map(|e| e.to_string());
         self.notice_text = self.speed_label(self.panes.focused().kind);
-        self.notice = NOTICE_TICKS;
+        self.notice = NOTICE_FRAMES;
     }
 
     fn save(&self, speed: Value) -> std::io::Result<()> {

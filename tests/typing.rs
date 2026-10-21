@@ -9,7 +9,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::scene::{FRAME_RATE, Rng, Scene};
+use hearth::scene::{FRAME_RATE, FRAMES_PER_TICK, Rng, Scene};
 use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
 use hearth::theme;
 use rand::SeedableRng;
@@ -314,8 +314,9 @@ fn the_scene_types_at_the_speed_it_is_given() {
     }
 }
 
-/// A file typed at 200 keystrokes per second for ten ticks: between 60 and
-/// 180 keystrokes, which types a short file and stays inside the hold.
+/// A file typed at 200 keystrokes per second for the frames of ten ticks:
+/// between 60 and 180 keystrokes, which types a short file and stays inside
+/// the hold.
 fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
     let scene = Typing::new(
         Rng::seed_from_u64(7),
@@ -323,7 +324,8 @@ fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
         Arc::new(Corpus::from_files([(path.to_string(), text.to_string())])),
         "200".parse().unwrap(),
     );
-    render(&ticked(scene, area, 10), area, area)
+    let frames = 10 * FRAMES_PER_TICK as usize;
+    render(&ticked(scene, area, frames), area, area)
 }
 
 fn colour_at(buffer: &Buffer, needle: &str) -> Color {

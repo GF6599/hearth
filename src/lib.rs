@@ -1,7 +1,7 @@
 //! # hearth: a terminal screensaver.
 //!
 //! ```text
-//! main ─► loop { draw → handle_events → tick }
+//! main ─► loop { draw → handle_events → frame }
 //!              │
 //!              ├── cli       Command-line arguments
 //!              ├── config    The preferences kept between runs

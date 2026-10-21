@@ -6,7 +6,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::{self, Config};
 use hearth::events::{self, TerminalEvents};
-use hearth::scene::TICK_RATE;
+use hearth::scene::FRAME_RATE;
 use hearth::scenes::typing;
 
 fn main() {
@@ -60,18 +60,18 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
 
     let result = (|| -> std::io::Result<()> {
         let mut source = TerminalEvents;
-        let mut last_tick = Instant::now();
-        app.tick(terminal.get_frame().area());
+        let mut last_frame = Instant::now();
+        app.frame(terminal.get_frame().area());
 
         loop {
             terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
 
-            let timeout = TICK_RATE.saturating_sub(last_tick.elapsed());
+            let timeout = FRAME_RATE.saturating_sub(last_frame.elapsed());
             events::handle_events(&mut app, &mut source, timeout)?;
 
-            if last_tick.elapsed() >= TICK_RATE {
-                last_tick = Instant::now();
-                app.tick(terminal.get_frame().area());
+            if last_frame.elapsed() >= FRAME_RATE {
+                last_frame = Instant::now();
+                app.frame(terminal.get_frame().area());
             }
 
             if app.should_quit {
