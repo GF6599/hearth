@@ -112,22 +112,30 @@ struct Meteor {
 }
 
 impl Meteor {
-    /// The pixels from the end of its trail to its head, on one line. Both
-    /// ends lie on its run, which starts and ends inside the pane.
-    fn pixels(&self) -> Vec<(i32, i32)> {
+    /// The pixels from the end of its trail to its head, on one line, a
+    /// share `progress` of a tick after its last tick. Both ends lie on its
+    /// run, which starts and ends inside the pane. A shooting star that
+    /// burns out before its next tick shows nothing.
+    fn pixels(&self, progress: f64) -> Vec<(i32, i32)> {
+        let flown = self.flown + METEOR_SPEED * progress as f32;
+        if self.burnt_out(flown) {
+            return Vec::new();
+        }
         let at = |along: f32| {
             (
                 (self.from.0 + self.direction.0 * along).round() as i32,
                 (self.from.1 + self.direction.1 * along).round() as i32,
             )
         };
-        let head = self.flown.min(self.run);
-        let tail = (self.flown - TRAIL as f32).max(0.0);
+        let head = flown.min(self.run);
+        let tail = (flown - TRAIL as f32).max(0.0);
         line(at(tail), at(head))
     }
 
-    fn burnt_out(&self) -> bool {
-        self.flown - TRAIL as f32 > self.run
+    /// Whether the end of its trail has passed the end of its run once it
+    /// has flown `flown` pixels.
+    fn burnt_out(&self, flown: f32) -> bool {
+        flown - TRAIL as f32 > self.run
     }
 }
 
@@ -145,6 +153,9 @@ pub struct Constellations {
     meteor: Option<Meteor>,
     /// Ticks until the next shooting star.
     meteor_wait: u32,
+    /// The share of a tick since the last, so a shooting star flies and a
+    /// line draws itself between two ticks.
+    progress: f64,
 }
 
 impl Constellations {
@@ -160,6 +171,7 @@ impl Constellations {
             last_name: None,
             meteor: None,
             meteor_wait: 0,
+            progress: 0.0,
         }
     }
 
@@ -297,7 +309,7 @@ impl Constellations {
     fn meteor_tick(&mut self) {
         if let Some(meteor) = &mut self.meteor {
             meteor.flown += METEOR_SPEED;
-            if meteor.burnt_out() {
+            if meteor.burnt_out(meteor.flown) {
                 self.meteor = None;
                 self.meteor_wait = self.rng.random_range(METEOR_WAIT);
             }
@@ -402,8 +414,9 @@ fn line(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
 impl Figure {
     /// The pixels the line shows at its age: a growing share of the path while
     /// it draws, all of it while it holds, and a thinning dither while it
-    /// fades.
-    fn pixels(&self) -> Vec<(i32, i32)> {
+    /// fades. While it draws, the share grows on by `progress` of a tick, so
+    /// the pen moves between two ticks.
+    fn pixels(&self, progress: f64) -> Vec<(i32, i32)> {
         let segments: Vec<Vec<(i32, i32)>> = self
             .stars
             .windows(2)
@@ -411,7 +424,8 @@ impl Figure {
             .collect();
         let total: usize = segments.iter().map(Vec::len).sum();
         let drawn = if self.age < DRAW_TICKS {
-            total * (self.age as usize + 1) / DRAW_TICKS as usize
+            let ticks = f64::from(self.age) + 1.0 + progress;
+            ((total as f64 * ticks / f64::from(DRAW_TICKS)) as usize).min(total)
         } else {
             total
         };
@@ -515,6 +529,10 @@ impl Scene for Constellations {
         self.meteor_tick();
     }
 
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
+    }
+
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let inside = |x: i32, y: i32| {
             (0..i32::from(area.width)).contains(&x) && (0..i32::from(area.height)).contains(&y)
@@ -525,7 +543,7 @@ impl Scene for Constellations {
         if let Some(figure) = &self.figure {
             lines.extend(
                 figure
-                    .pixels()
+                    .pixels(self.progress)
                     .into_iter()
                     .map(|pixel| (pixel, figure.colour)),
             );
@@ -533,7 +551,7 @@ impl Scene for Constellations {
         if let Some(meteor) = &self.meteor {
             lines.extend(
                 meteor
-                    .pixels()
+                    .pixels(self.progress)
                     .into_iter()
                     .map(|pixel| (pixel, self.palette.gold)),
             );
