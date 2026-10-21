@@ -1223,7 +1223,8 @@ fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
 /// terminal's own background, from three seeds.
 /// When: it ticks and renders over a few seconds.
 /// Then: no pixel lies on a mix from the base toward overlay, pine, gold,
-/// rose, love or text, the colours the city draws.
+/// rose or love, the colours the city draws, and none is a mix from the
+/// base toward the moon by a step of coverage.
 ///
 /// Why it matters: a mix with a see-through base is an opaque colour, and
 /// it shows as a dark smear over the user's own background.
@@ -1236,9 +1237,17 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
         palette.gold,
         palette.rose,
         palette.love,
-        palette.text,
     ];
-    let mixes = base_mixes(palette.base, &drawn);
+    let mut mixes = base_mixes(palette.base, &drawn);
+    // The greys of Rose Pine lie almost on one line from the base, so a lit
+    // wall lies near a mix toward the moon. The moon mixes only by a step
+    // of coverage, so the test reads those steps and no other.
+    for step in 1..COVERAGE_STEPS {
+        let share = step as f32 / COVERAGE_STEPS as f32;
+        if let Color::Rgb(r, g, b) = octant::mix(palette.base, palette.text, share) {
+            mixes.insert((r, g, b));
+        }
+    }
     for seed in [7, 8, 9] {
         // Given:
         let mut scene = City::new(Rng::seed_from_u64(seed), palette);
