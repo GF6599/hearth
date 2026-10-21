@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -66,6 +66,29 @@ const MOON: (f64, f64, f64) = (0.06, 0.8, 0.14);
 /// The pixel rows of a rim, a window, a lamp and the water line: half a
 /// cell.
 const THIN: usize = CELL_HEIGHT / 2;
+/// The shades of the sky from the top of the pane to the horizon, and how
+/// far the horizon leans from the base to iris, as the city lights the
+/// night above it.
+const SKY_SHADES: usize = 12;
+const HORIZON: f32 = 0.2;
+/// The steps of the moon's glow, as of a coverage the canvas tells apart,
+/// the most the glow leans the sky to the moon, and how far it reaches as
+/// a share of the moon's radius.
+const GLOW_STEPS: f32 = 16.0;
+const GLOW: f64 = 0.3;
+const GLOW_REACH: f64 = 2.4;
+/// The shades of a wall from its left to its right, the side of the moon,
+/// and how far the right leans to the rim of a near wall and to the near
+/// wall from a far one.
+const WALL_SHADES: usize = 6;
+const NEAR_LIGHT: f32 = 0.2;
+const FAR_LIGHT: f32 = 0.4;
+/// How far a lit window warms the wall of its cell toward its own light.
+const WINDOW_GLOW: f32 = 0.12;
+/// How far the ends of a streak in the water lean to its light, and the
+/// ticks for which a streak keeps to one of the two rows of its window.
+const STREAK_END: f32 = 0.45;
+const SHIMMER: u64 = 3;
 
 /// A tower's columns and its top row, in pixels. Its sides are the edges
 /// of cells and its top row is the top or the middle of a cell, so no cell
@@ -132,11 +155,72 @@ pub struct City {
     next_train: u64,
     /// How far the scene has run from its last tick towards its next.
     progress: f64,
+    shades: Shades,
+    /// The sky with its moon, laid once for each pane.
+    backdrop: Canvas,
+}
+
+/// Every colour the city draws from more than one role, mixed once from
+/// the palette, so a frame mixes no colour.
+#[derive(Debug)]
+struct Shades {
+    /// The sky from the top of the pane to the horizon.
+    sky: [Color; SKY_SHADES],
+    /// A far wall and a near one, from left to right.
+    walls: [[Color; WALL_SHADES]; 2],
+    /// A near wall in the cell of a gold and of a rose window, from left
+    /// to right.
+    glows: [[Color; WALL_SHADES]; 2],
+    /// The ends of a gold and of a rose streak on the open water, as the
+    /// canvas blends them, so they leave a see-through base clear.
+    ends: [Color; 2],
+}
+
+impl Shades {
+    fn new(palette: &Palette) -> Self {
+        let step = |shade: usize| shade as f32 / (WALL_SHADES - 1) as f32;
+        let near = std::array::from_fn(|shade| {
+            octant::mix(palette.overlay, palette.pine, NEAR_LIGHT * step(shade))
+        });
+        let far = std::array::from_fn(|shade| {
+            octant::mix(palette.surface, palette.overlay, FAR_LIGHT * step(shade))
+        });
+        // A see-through base never mixes, so the sky stays the terminal's
+        // own background.
+        let sky = std::array::from_fn(|shade| {
+            if palette.see_through {
+                palette.base
+            } else {
+                let share = shade as f32 / (SKY_SHADES - 1) as f32;
+                octant::mix(palette.base, palette.iris, HORIZON * share)
+            }
+        });
+        let ends = [palette.gold, palette.rose].map(|light| {
+            let mut water = Canvas::new(1, 1, palette);
+            water.blend(0, 0, light, STREAK_END);
+            water.get(0, 0).unwrap_or(palette.base)
+        });
+        Self {
+            sky,
+            ends,
+            walls: [far, near],
+            glows: [palette.gold, palette.rose]
+                .map(|light| near.map(|wall| octant::mix(wall, light, WINDOW_GLOW))),
+        }
+    }
 }
 
 impl City {
-    pub fn sky(&self, _y: usize) -> Color {
-        self.palette.base
+    /// The colour of the sky on pixel row `y` of the pane, lighter toward
+    /// the horizon a cell row at a time, and the base from the shore down.
+    pub fn sky(&self, y: usize) -> Color {
+        let shore = Self::shore(usize::from(self.height) * CELL_HEIGHT);
+        if y >= shore {
+            return self.palette.base;
+        }
+        let lines = (shore / CELL_HEIGHT).max(2) - 1;
+        let shade = (y / CELL_HEIGHT * (SKY_SHADES - 1) + lines / 2) / lines;
+        self.shades.sky[shade.min(SKY_SHADES - 1)]
     }
 
     pub fn new(mut rng: Rng, palette: &'static Palette) -> Self {
@@ -159,6 +243,8 @@ impl City {
             train: None,
             next_train,
             progress: 0.0,
+            shades: Shades::new(palette),
+            backdrop: Canvas::new(0, 0, palette),
         }
     }
 
@@ -296,22 +382,121 @@ impl City {
         towers
     }
 
-    fn in_moon(x: usize, y: usize, across: usize, down: usize) -> bool {
+    /// Lays the sky and the moon of the pane. The moon has a soft rim and a
+    /// glow that fades into the sky, each a mix of the sky toward the moon
+    /// by a step of coverage.
+    fn lay_backdrop(&mut self) {
+        let mut canvas = Canvas::new(self.width, self.height, self.palette);
+        let (across, down) = (canvas.width(), canvas.height());
+        let shore = Self::shore(down);
+        for y in 0..shore {
+            let sky = self.sky(y);
+            for x in 0..across {
+                canvas.set(x, y, sky);
+            }
+        }
         let (width, height) = (across as f64, down as f64);
         let (radius, centre, middle) = (MOON.0 * height, MOON.1 * width, MOON.2 * height);
-        let (dx, dy) = (x as f64 + 0.5 - centre, y as f64 + 0.5 - middle);
-        dx * dx + dy * dy <= radius * radius
-    }
-
-    fn draw_moon(&self, canvas: &mut Canvas, shore: usize) {
-        let (across, down) = (canvas.width(), canvas.height());
-        for y in 0..shore {
-            for x in 0..across {
-                if Self::in_moon(x, y, across, down) {
-                    canvas.set(x, y, self.palette.text);
+        // The canvas puts a pixel's middle on whole numbers, and the moon
+        // puts it half a pixel in.
+        let (x0, y0) = (centre - 0.5, middle - 0.5);
+        let reach = radius * GLOW_REACH;
+        // The disc on a canvas of its own gives the coverage of each pixel
+        // of the moon's rim, read back by the colour each coverage blends.
+        let mut disc = Canvas::new(self.width, self.height, self.palette);
+        disc.disc((x0 as f32, y0 as f32), radius as f32, self.palette.text);
+        let blends: Vec<Color> = (0..=GLOW_STEPS as usize)
+            .map(|step| {
+                let mut pixel = Canvas::new(1, 1, self.palette);
+                pixel.blend(0, 0, self.palette.text, step as f32 / GLOW_STEPS);
+                pixel.get(0, 0).unwrap_or(self.palette.base)
+            })
+            .collect();
+        // The glow takes one shade in each cell, from the distance of the
+        // cell's middle, so a cell of glow holds one colour. A pixel of the
+        // rim takes the more of its coverage and the glow, so the glow runs
+        // into the moon with no dark ring between.
+        for top in (0..shore).step_by(CELL_HEIGHT) {
+            for left in (0..across).step_by(CELL_WIDTH) {
+                let middle = (
+                    left as f64 + (CELL_WIDTH - 1) as f64 / 2.0,
+                    top as f64 + (CELL_HEIGHT - 1) as f64 / 2.0,
+                );
+                let distance = (middle.0 - x0).hypot(middle.1 - y0);
+                if distance >= reach {
+                    continue;
+                }
+                let fade = (1.0 - (distance - radius) / (reach - radius)).min(1.0);
+                let glow = (GLOW * fade * fade * GLOW_STEPS as f64).round() as usize;
+                for y in top..(top + CELL_HEIGHT).min(shore) {
+                    for x in left..left + CELL_WIDTH {
+                        let covered = disc
+                            .get(x, y)
+                            .and_then(|colour| blends.iter().rposition(|each| *each == colour))
+                            .unwrap_or(0);
+                        let share = covered.max(glow) as f32 / GLOW_STEPS;
+                        canvas.blend(x, y, self.palette.text, share);
+                    }
                 }
             }
         }
+        self.backdrop = canvas;
+    }
+
+    /// Gives the sky left in each cell of the moon's glow that a tower or a
+    /// mast partly covers one colour, the colour most of it shows. The rim
+    /// and the glow of the moon shade the sky a pixel at a time, and a cell
+    /// with two shades of it and a wall holds three colours, of which the
+    /// canvas keeps the pair nearest its pixels, so a pixel of the wall
+    /// could take the moon's light.
+    fn settle_moonlight(&self, canvas: &mut Canvas) {
+        let (across, down) = (canvas.width(), canvas.height());
+        let (radius, centre, middle) = (
+            MOON.0 * down as f64,
+            MOON.1 * across as f64,
+            MOON.2 * down as f64,
+        );
+        let reach = radius * GLOW_REACH;
+        let cells = |from: f64, to: f64, size: usize, count: usize| {
+            let first = (from.max(0.0) as usize) / size * size;
+            (first..(to.max(0.0) as usize + 1).min(count)).step_by(size)
+        };
+        for top in cells(middle - reach, middle + reach, CELL_HEIGHT, down) {
+            for left in cells(centre - reach, centre + reach, CELL_WIDTH, across) {
+                if !Self::in_glow(left, top, across, down) {
+                    continue;
+                }
+                let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
+                let sky: Vec<(usize, usize, Color)> = (0..CELL_WIDTH * CELL_HEIGHT)
+                    .map(at)
+                    .filter_map(|(x, y)| {
+                        let colour = canvas.get(x, y)?;
+                        (self.backdrop.get(x, y) == Some(colour)).then_some((x, y, colour))
+                    })
+                    .collect();
+                if sky.is_empty() || sky.len() == CELL_WIDTH * CELL_HEIGHT {
+                    continue;
+                }
+                let most = sky
+                    .iter()
+                    .map(|(_, _, colour)| *colour)
+                    .max_by_key(|colour| sky.iter().filter(|(_, _, other)| other == colour).count())
+                    .unwrap_or(self.palette.base);
+                for (x, y, _) in sky {
+                    canvas.set(x, y, most);
+                }
+            }
+        }
+    }
+
+    /// Whether the cell with its top left pixel at (left, top) lies in the
+    /// glow of the moon.
+    fn in_glow(left: usize, top: usize, across: usize, down: usize) -> bool {
+        let (width, height) = (across as f64, down as f64);
+        let (radius, centre, middle) = (MOON.0 * height, MOON.1 * width, MOON.2 * height);
+        let x = centre.clamp(left as f64, (left + CELL_WIDTH) as f64);
+        let y = middle.clamp(top as f64, (top + CELL_HEIGHT) as f64);
+        (centre - x).hypot(middle - y) < radius * GLOW_REACH
     }
 
     /// The stars, each only in a cell that nothing else touches, because a
@@ -336,8 +521,7 @@ impl City {
                 .antennas
                 .iter()
                 .any(|antenna| antenna.x == left && bottom > antenna.light && top < antenna.roof);
-            let moon =
-                (top..bottom).any(|y| (left..right).any(|x| Self::in_moon(x, y, across, down)));
+            let moon = Self::in_glow(left, top, across, down);
             if !towers && !masts && !moon && bottom <= line {
                 canvas.set(column, row, self.palette.subtle);
             }
@@ -348,17 +532,24 @@ impl City {
     /// tower has a rim on its roof and on its right edge, the side of the
     /// moon, in a lighter tone than its wall, so towers side by side read
     /// apart.
+    /// The wall lightens a cell column at a time toward the moon, so a cell
+    /// keeps one shade of it.
     fn wall(&self, tower: &Tower, x: usize, y: usize) -> Color {
-        let (wall, rim) = if tower.near {
-            (self.palette.overlay, self.palette.pine)
+        let rim = if tower.near {
+            self.palette.pine
         } else {
-            (self.palette.surface, self.palette.overlay)
+            self.palette.overlay
         };
         if y < tower.top + THIN || x == tower.left + tower.width - 1 {
             rim
         } else {
-            wall
+            self.shades.walls[usize::from(tower.near)][Self::wall_shade(tower, x)]
         }
+    }
+
+    fn wall_shade(tower: &Tower, x: usize) -> usize {
+        let cells = (tower.width / CELL_WIDTH).max(2) - 1;
+        (x - tower.left) / CELL_WIDTH * (WALL_SHADES - 1) / cells
     }
 
     /// The far towers and their antennas, then the near ones in front.
@@ -395,6 +586,26 @@ impl City {
                 (false, _, true) => self.palette.surface,
                 (false, _, false) => continue,
             };
+            // A lit near window warms the wall of its cell, so the cell
+            // holds the window and its glow and no third colour.
+            if window.lit && window.near {
+                let tower = self.towers.iter().rev().find(|tower| {
+                    tower.near && (tower.left..tower.left + tower.width).contains(&window.x)
+                });
+                if let Some(tower) = tower {
+                    let glow = self.shades.glows[usize::from(window.warm)]
+                        [Self::wall_shade(tower, window.x)];
+                    let (left, top) = (
+                        window.x / CELL_WIDTH * CELL_WIDTH,
+                        window.y / CELL_HEIGHT * CELL_HEIGHT,
+                    );
+                    for y in top..top + CELL_HEIGHT {
+                        for x in left..left + CELL_WIDTH {
+                            canvas.set(x, y, glow);
+                        }
+                    }
+                }
+            }
             for y in window.y..window.y + THIN {
                 canvas.set(window.x, y, colour);
             }
@@ -463,16 +674,22 @@ impl City {
             .iter()
             .rev()
             .find(|tower| (tower.left..tower.left + tower.width).contains(&x) && y >= tower.top)
-            .map_or(self.palette.base, |tower| self.wall(tower, x, y))
+            .map_or_else(
+                || self.backdrop.get(x, y).unwrap_or(self.palette.base),
+                |tower| self.wall(tower, x, y),
+            )
     }
 
     /// The water line at the shore, and from a cell under the shore the near
     /// towers mirrored dim, as far below the shore's cell as they stand
     /// above it. The far towers are left out of the mirror, so the near
     /// roofs show their shapes in it. A lit window mirrors as a streak four
-    /// pixels wide. Each cell row of the water slides by whole cells with a
-    /// ripple that grows with depth, so no cell holds a streak, the dim city
-    /// and the water, and gaps that run along the rows break the streaks.
+    /// pixels wide, with an end on each side that fades into the open water,
+    /// on one of the two rows of its window, a row that turns now and then,
+    /// so the light shimmers in thin lines. Each cell row of the water slides
+    /// by whole cells with a ripple that grows with depth, so no cell holds a
+    /// streak, the dim city and the water, and gaps that run along the rows
+    /// break the streaks.
     fn draw_water(&self, canvas: &mut Canvas, shore: usize) {
         let (across, down) = (canvas.width(), canvas.height());
         for y in shore..shore + THIN {
@@ -509,13 +726,22 @@ impl City {
                 };
                 let lit = colour == self.palette.gold || colour == self.palette.rose;
                 let gap = (x / 4 + cell * 3 + (self.time / 5) as usize).is_multiple_of(4);
-                if !lit || gap {
+                let shimmer = (y + (self.time / SHIMMER) as usize).is_multiple_of(2);
+                if !lit || gap || !shimmer {
                     continue;
                 }
                 let at = x as i64 + ripple;
                 for spread in -1..=2 {
                     if let Ok(x) = usize::try_from(at + spread) {
                         canvas.set(x, y, colour);
+                    }
+                }
+                let end = self.shades.ends[usize::from(colour == self.palette.rose)];
+                for x in [at - 2, at + 3] {
+                    if let Ok(x) = usize::try_from(x)
+                        && canvas.get(x, y) == Some(self.palette.base)
+                    {
+                        canvas.set(x, y, end);
                     }
                 }
             }
@@ -576,14 +802,14 @@ impl City {
     }
 
     fn pixels(&self) -> Canvas {
-        let mut canvas = Canvas::new(self.width, self.height, self.palette);
+        let mut canvas = self.backdrop.clone();
         let down = canvas.height();
         let shore = Self::shore(down);
         if shore < 2 * CELL_HEIGHT {
             return canvas;
         }
-        self.draw_moon(&mut canvas, shore);
         self.draw_towers(&mut canvas, shore);
+        self.settle_moonlight(&mut canvas);
         if let Some(line) = Self::line(down, shore) {
             self.draw_line(&mut canvas, line, shore);
         }
@@ -600,6 +826,7 @@ impl Scene for City {
             self.width = area.width;
             self.height = area.height;
             self.build();
+            self.lay_backdrop();
         }
         self.turn_a_window();
         self.run_train();
