@@ -451,3 +451,123 @@ fn a_layer_that_joins_the_front_takes_its_colour() {
     assert_eq!(joined, expected(INK));
     assert_eq!(apart, expected(BASE));
 }
+
+/// The colours of Rose Pine, each role once.
+fn rose_pine() -> [Color; 12] {
+    let palette = PALETTE;
+    [
+        palette.base,
+        palette.surface,
+        palette.overlay,
+        palette.muted,
+        palette.subtle,
+        palette.text,
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.pine,
+        palette.foam,
+        palette.iris,
+    ]
+}
+
+/// A mix at either end is that end's colour exactly.
+/// Given: every pair of Rose Pine's colours.
+/// When: each pair mixes at 0 and at 1, and past each end.
+/// Then: 0 and below give the first colour, and 1 and above give the
+/// second, to the last bit.
+///
+/// Why it matters: a shape at full coverage must draw its own theme
+/// colour. A mix one step off at an end draws a colour that no theme has,
+/// and a two colour cell then holds three.
+#[test]
+fn a_mix_at_either_end_is_that_colour() {
+    for from in rose_pine() {
+        for to in rose_pine() {
+            // When, then:
+            assert_eq!(octant::mix(from, to, 0.0), from, "{from:?} to {to:?} at 0");
+            assert_eq!(
+                octant::mix(from, to, -0.5),
+                from,
+                "{from:?} to {to:?} below 0"
+            );
+            assert_eq!(octant::mix(from, to, 1.0), to, "{from:?} to {to:?} at 1");
+            assert_eq!(octant::mix(from, to, 1.5), to, "{from:?} to {to:?} above 1");
+        }
+    }
+}
+
+/// A mix between two colours is the point between them in OKLab.
+/// Given: black and white, love and foam, and the base and love.
+/// When: each pair mixes at a share between its ends.
+/// Then: each mix is the colour that coloraide 8.13, a colour library apart
+/// from this crate, gives for the same mix in OKLab, rounded to 8 bits.
+///
+/// Why it matters: a mix in sRGB makes the middle of a gradient too dark
+/// and too grey. OKLab keeps each step of a shade an even step to the eye.
+#[test]
+fn a_mix_is_the_point_between_in_oklab() {
+    let cases = [
+        (
+            Color::Rgb(0, 0, 0),
+            Color::Rgb(255, 255, 255),
+            0.5,
+            Color::Rgb(99, 99, 99),
+        ),
+        (PALETTE.love, PALETTE.foam, 0.5, Color::Rgb(206, 163, 181)),
+        (PALETTE.base, PALETTE.love, 0.25, Color::Rgb(72, 44, 61)),
+    ];
+    for (from, to, share, expected) in cases {
+        // When, then:
+        assert_eq!(
+            octant::mix(from, to, share),
+            expected,
+            "{from:?} to {to:?} at {share}"
+        );
+    }
+}
+
+/// A colour that is no RGB value takes the nearer end of a mix.
+/// Given: the terminal's own background and an ink.
+/// When: they mix at shares below a half, at a half, and above it.
+/// Then: below a half the mix is the first colour, and from a half on it
+/// is the second.
+///
+/// Why it matters: the terminal's own background has no value to mix
+/// with. A mix that guessed one would paint a colour the user's terminal
+/// does not show.
+#[test]
+fn a_colour_with_no_value_takes_the_nearer_end() {
+    for (from, to) in [(Color::Reset, INK), (INK, Color::Reset)] {
+        // When, then:
+        assert_eq!(octant::mix(from, to, 0.25), from, "{from:?} to {to:?}");
+        assert_eq!(octant::mix(from, to, 0.5), to, "{from:?} to {to:?}");
+        assert_eq!(octant::mix(from, to, 0.75), to, "{from:?} to {to:?}");
+    }
+}
+
+/// A ramp passes through each stop at its place, and mixes between two.
+/// Given: a ramp of the base, love and gold.
+/// When: it is read at 0, a quarter, a half and 1, and past each end.
+/// Then: 0 and below give the base, a half gives love, 1 and above give
+/// gold, and a quarter gives the mix of the base and love at a half.
+///
+/// Why it matters: a fire or a sky shades from heat or height through
+/// several theme colours. A ramp that missed a stop would draw a colour
+/// that is not in the theme where the scene asks for one that is.
+#[test]
+fn a_ramp_passes_through_each_stop() {
+    // Given:
+    let stops = [PALETTE.base, PALETTE.love, PALETTE.gold];
+
+    // When, then:
+    assert_eq!(octant::ramp(&stops, 0.0), PALETTE.base);
+    assert_eq!(octant::ramp(&stops, -1.0), PALETTE.base);
+    assert_eq!(octant::ramp(&stops, 0.5), PALETTE.love);
+    assert_eq!(octant::ramp(&stops, 1.0), PALETTE.gold);
+    assert_eq!(octant::ramp(&stops, 2.0), PALETTE.gold);
+    assert_eq!(
+        octant::ramp(&stops, 0.25),
+        octant::mix(PALETTE.base, PALETTE.love, 0.5)
+    );
+}

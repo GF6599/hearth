@@ -147,6 +147,14 @@ fn cell(pixels: [Color; 8], base: Color) -> (char, Color, Color) {
     (glyph(bits), fore, back)
 }
 
+pub fn mix(from: Color, _to: Color, _share: f32) -> Color {
+    from
+}
+
+pub fn ramp(_stops: &[Color], _at: f32) -> Color {
+    Color::Reset
+}
+
 /// What can lie on a pixel, ordered from the lowest layer to the highest.
 pub trait Layer: Ord + Copy {
     /// Whether a pixel of this layer shows the colour of `top`, the highest
