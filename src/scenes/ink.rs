@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::dither;
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -80,48 +80,72 @@ pub fn accents(palette: &Palette) -> [Color; 5] {
 /// slowly shows no bands.
 pub const TONES: usize = 16;
 
+/// The steps of the mix of two accents that share a pixel, by the share of
+/// the ink each holds.
 pub const BLENDS: usize = 8;
 
-/// The colour of each step of the mix from the water to each accent, mixed
-/// once from the palette, so a frame mixes no colour.
+/// The steps of a blend from an accent toward one with less ink, which
+/// holds a half of the two inks at the most.
+const HALF_BLENDS: usize = BLENDS / 2 + 1;
+
+/// The colour of each step of the mix from the water to each accent and to
+/// each blend of two accents, mixed once from the palette, so a frame mixes
+/// no colour.
 #[derive(Debug)]
 pub struct Tones {
-    tones: [[Color; TONES + 1]; 5],
+    /// By the accent with the most ink, the accent with the next most, the
+    /// step of the blend between them and the step from the water.
+    tones: Vec<[Color; TONES + 1]>,
 }
 
 impl Tones {
     /// Each step is the colour the canvas blends over the water, so a mix
     /// with a see-through base stays hard as the canvas keeps it.
     pub fn new(palette: &Palette) -> Self {
-        let tones = accents(palette).map(|accent| {
-            std::array::from_fn(|step| {
-                let mut water = Canvas::new(1, 1, palette);
-                water.blend(0, 0, accent, step as f32 / TONES as f32);
-                water.get(0, 0).unwrap_or(palette.base)
-            })
-        });
+        let accents = accents(palette);
+        let mut tones = Vec::with_capacity(accents.len() * accents.len() * HALF_BLENDS);
+        for first in accents {
+            for second in accents {
+                for blend in 0..HALF_BLENDS {
+                    let ink = octant::mix(first, second, blend as f32 / BLENDS as f32);
+                    tones.push(std::array::from_fn(|step| {
+                        let mut water = Canvas::new(1, 1, palette);
+                        water.blend(0, 0, ink, step as f32 / TONES as f32);
+                        water.get(0, 0).unwrap_or(palette.base)
+                    }));
+                }
+            }
+        }
         Self { tones }
     }
 
     /// The colour of one pixel that holds `inks`, one amount for each
-    /// accent. The total mixes the water toward an accent, all the way at
-    /// `FULL_INK`, and each accent takes the part of the tile its ink
-    /// holds. The choice of accent reads the tile two cells over, so it
-    /// does not follow the step of the mix.
+    /// accent. The accent with the most ink and the accent with the next
+    /// most mix by the shares of the ink they hold, the first of two with
+    /// the same ink taking the lead. The total mixes the water toward that
+    /// blend, all the way at `FULL_INK`.
     pub fn shade(&self, inks: &[f32; 5], x: usize, row: usize) -> Color {
         let total: f32 = inks.iter().sum();
         let share = (total / FULL_INK).min(1.0);
         let step = (share * TONES as f32 + (dither::rank(x, row) as f32 + 0.5) / SHADES) as usize;
         let step = step.min(TONES);
-        let pick = (dither::rank(x + 2, row + 2) as f32 + 0.5) / SHADES * total;
-        let mut reached = 0.0;
-        for (tones, amount) in self.tones.iter().zip(inks) {
-            reached += amount;
-            if pick < reached {
-                return tones[step];
-            }
-        }
-        self.tones[0][0]
+        let most = |skip: Option<usize>| {
+            (0..inks.len())
+                .filter(|index| Some(*index) != skip && inks[*index] > 0.0)
+                .fold(None, |best: Option<usize>, index| match best {
+                    Some(best) if inks[best] >= inks[index] => Some(best),
+                    _ => Some(index),
+                })
+        };
+        let first = most(None).unwrap_or(0);
+        let (second, blend) = most(Some(first)).map_or((first, 0), |second| {
+            let part = inks[second] / (inks[first] + inks[second]);
+            (
+                second,
+                ((part * BLENDS as f32).round() as usize).min(HALF_BLENDS - 1),
+            )
+        });
+        self.tones[(first * inks.len() + second) * HALF_BLENDS + blend][step]
     }
 }
 
