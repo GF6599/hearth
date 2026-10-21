@@ -560,7 +560,7 @@ fn places(city: &[(usize, usize, Color)]) -> Vec<(usize, usize)> {
 
 /// A far window that turns never changes the shape of what stands in front
 /// of it.
-/// Given: the scene at a hundred by thirty, from seeds 69 and 110, whose
+/// Given: the scene at a hundred by thirty, from seeds 4 and 69, whose
 /// skylines put the lamp of a near antenna beside a far window.
 /// When: it ticks over a few seconds.
 /// Then: the places of the towers and windows stay the same from a frame
@@ -571,7 +571,7 @@ fn places(city: &[(usize, usize, Color)]) -> Vec<(usize, usize)> {
 /// lit, and the wall seems to grow a pixel each time the window turns.
 #[test]
 fn a_far_window_never_shares_a_cell_with_a_lamp() {
-    for seed in [69, 110] {
+    for seed in [4, 69] {
         // Given:
         let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
         let mut before = None;
