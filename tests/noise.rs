@@ -240,8 +240,8 @@ fn noise_drifts_a_few_pixels_a_small_step_each_tick() {
 /// Given: the scene in the flat Rose Pine theme, whose base is the
 /// terminal's own background.
 /// When: it ticks once and renders.
-/// Then: no pixel is a mix of the base and overlay other than the two
-/// ends.
+/// Then: every pixel is the base, or a mix along overlay, muted, subtle
+/// and text, and none is a mix of the base and overlay.
 ///
 /// Why it matters: a mix with a see-through base paints an opaque colour
 /// that guesses the user's background. Over a background of another
@@ -263,8 +263,9 @@ fn noise_keeps_its_edges_hard_on_a_see_through_base() {
         if *colour == palette.base {
             continue;
         }
-        let place = place(*colour, &stops, &mut known)
-            .unwrap_or_else(|| panic!("{colour:?} is off the ramp"));
-        assert!(place >= 1.0, "{colour:?} mixes the base at {place}");
+        assert!(
+            place(*colour, &stops[1..], &mut known).is_some(),
+            "{colour:?} mixes the base"
+        );
     }
 }
