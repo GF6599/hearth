@@ -1,16 +1,15 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::embers::{BURN_TICKS, Embers, SETTLE_TICKS};
-use hearth::theme;
+use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 80, 24);
-
-const HALF_BLOCK: &str = "▀";
 
 fn ticked(seed: u64, area: Rect, ticks: usize) -> Embers {
     let mut scene = Embers::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
@@ -26,21 +25,125 @@ fn render(scene: &Embers, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The two pixels of every half-block cell, top first, by pixel row. A
-/// cell that holds a glyph instead gives `None` for both.
+/// The pixels across and down in each cell.
+const ACROSS: usize = octant::CELL_WIDTH;
+const DOWN: usize = octant::CELL_HEIGHT;
+
+/// The grate and the stones under it fill the lowest two cells.
+const BELOW_LOGS: usize = 2 * DOWN;
+
+/// The pixels of each cell, as its octant glyph and two colours draw them,
+/// by pixel row. A cell that holds a spark instead gives `None` for each.
 fn pixels(buffer: &Buffer) -> Vec<Vec<Option<Color>>> {
     let area = buffer.area;
-    let mut rows = vec![vec![None; usize::from(area.width)]; usize::from(area.height) * 2];
+    let width = usize::from(area.width) * ACROSS;
+    let mut rows = vec![vec![None; width]; usize::from(area.height) * DOWN];
     for position in area.positions() {
         let cell = &buffer[position];
-        if cell.symbol() == HALF_BLOCK {
-            let x = usize::from(position.x - area.x);
-            let upper = usize::from(position.y - area.y) * 2;
-            rows[upper][x] = Some(cell.fg);
-            rows[upper + 1][x] = Some(cell.bg);
+        let Some(bits) =
+            (0..=u8::MAX).find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
+        else {
+            continue;
+        };
+        let left = usize::from(position.x - area.x) * ACROSS;
+        let top = usize::from(position.y - area.y) * DOWN;
+        for pixel in 0..ACROSS * DOWN {
+            let colour = if bits >> pixel & 1 == 1 {
+                cell.fg
+            } else {
+                cell.bg
+            };
+            rows[top + pixel / ACROSS][left + pixel % ACROSS] = Some(colour);
         }
     }
     rows
+}
+
+const DARK: Color = Color::Rgb(0, 0, 0);
+const LIGHT: Color = Color::Rgb(255, 255, 255);
+
+/// Rose Pine with the colours of `set` in light and every other colour in
+/// dark.
+fn two_tone(set: &[Color]) -> &'static Palette {
+    let tone = |colour: Color| if set.contains(&colour) { LIGHT } else { DARK };
+    let rose_pine = &theme::ROSE_PINE;
+    Box::leak(Box::new(Palette {
+        base: tone(rose_pine.base),
+        surface: tone(rose_pine.surface),
+        overlay: tone(rose_pine.overlay),
+        muted: tone(rose_pine.muted),
+        subtle: tone(rose_pine.subtle),
+        text: tone(rose_pine.text),
+        love: tone(rose_pine.love),
+        gold: tone(rose_pine.gold),
+        rose: tone(rose_pine.rose),
+        pine: tone(rose_pine.pine),
+        foam: tone(rose_pine.foam),
+        iris: tone(rose_pine.iris),
+    }))
+}
+
+/// Scenes from one seed, each in two tones: one set of colours in light
+/// and the rest in dark. A palette changes no tick, so the scenes run in
+/// step. A cell of the whole palette can hold three colours and draws only
+/// two, but a cell of two tones draws each pixel as it is.
+struct Toned {
+    scenes: Vec<Embers>,
+}
+
+impl Toned {
+    fn new(seed: u64, sets: &[Vec<Color>]) -> Self {
+        Self {
+            scenes: sets
+                .iter()
+                .map(|set| Embers::new(Rng::seed_from_u64(seed), two_tone(set)))
+                .collect(),
+        }
+    }
+
+    /// A scene for each colour the fire draws in, so the one that draws a
+    /// pixel light names its colour.
+    fn each_colour(seed: u64) -> Self {
+        Self::new(seed, &colours().map(|colour| vec![colour]))
+    }
+
+    fn tick(&mut self, area: Rect) {
+        for scene in &mut self.scenes {
+            scene.tick(area);
+        }
+    }
+
+    /// For each set, whether each pixel is in it, or `None` under a spark.
+    fn sets(&self, area: Rect) -> Vec<Vec<Vec<Option<bool>>>> {
+        self.scenes
+            .iter()
+            .map(|scene| {
+                pixels(&render(scene, area, area))
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|pixel| pixel.map(|colour| colour == LIGHT))
+                            .collect()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The colour of each pixel, from the scenes of `each_colour`.
+    fn colours(&self, area: Rect) -> Vec<Vec<Option<Color>>> {
+        let sets = self.sets(area);
+        let mut rows = vec![vec![None; sets[0][0].len()]; sets[0].len()];
+        for (y, row) in rows.iter_mut().enumerate() {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                *pixel = sets
+                    .iter()
+                    .position(|set| set[y][x] == Some(true))
+                    .map(|index| colours()[index]);
+            }
+        }
+        rows
+    }
 }
 
 const fn glow() -> [Color; 3] {
@@ -51,9 +154,32 @@ const fn glow() -> [Color; 3] {
     ]
 }
 
+const fn wood() -> [Color; 3] {
+    [
+        theme::ROSE_PINE.subtle,
+        theme::ROSE_PINE.muted,
+        theme::ROSE_PINE.overlay,
+    ]
+}
+
+/// Each colour the fire draws in.
+const fn colours() -> [Color; 7] {
+    let [subtle, muted, overlay] = wood();
+    let [love, rose, gold] = glow();
+    [
+        theme::ROSE_PINE.base,
+        subtle,
+        muted,
+        overlay,
+        love,
+        rose,
+        gold,
+    ]
+}
+
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it ticks once and renders.
-/// Then: every half-block pixel in the top half is the base colour.
+/// Then: every pixel in the top half is the base colour.
 ///
 /// Why it matters: the fire sits low in a dark hearth, and a wall of colour
 /// up the screen reads as the doom fire, not as logs on a grate.
@@ -120,18 +246,19 @@ fn the_logs_rest_on_a_grate_over_hearth_stones() {
 #[test]
 fn only_the_glow_and_the_burn_change_the_picture() {
     // Given:
-    let mut scene = ticked(7, AREA, 1);
-    let before = pixels(&render(&scene, AREA, AREA));
+    let mut fire = Toned::each_colour(7);
+    fire.tick(AREA);
+    let before = fire.colours(AREA);
 
     // When:
     for _ in 0..39 {
-        scene.tick(AREA);
+        fire.tick(AREA);
     }
-    let after = pixels(&render(&scene, AREA, AREA));
+    let after = fire.colours(AREA);
 
     // Then:
     let palette = &theme::ROSE_PINE;
-    let grate = before.len() - 4;
+    let grate = before.len() - BELOW_LOGS;
     let mut changed = 0;
     for (y, (old, new)) in before.iter().zip(&after).enumerate() {
         for (x, (old, new)) in old.iter().zip(new).enumerate() {
@@ -154,20 +281,23 @@ fn only_the_glow_and_the_burn_change_the_picture() {
     assert!(changed > 0, "the glow held still");
 }
 
-/// Wood and glow pixels above the grate, from a render.
-fn wood_and_glow(buffer: &Buffer) -> (usize, usize) {
-    let palette = &theme::ROSE_PINE;
-    let wood = [palette.subtle, palette.muted, palette.overlay];
-    let shown = pixels(buffer);
-    let above_grate = &shown[..shown.len() - 4];
-    let count = |within: &[Color]| {
-        above_grate
+/// A scene in two tones for the wood and two for the glow.
+fn wood_and_glow_scenes(seed: u64) -> Toned {
+    Toned::new(seed, &[wood().to_vec(), glow().to_vec()])
+}
+
+/// Wood and glow pixels above the grate, from the scenes of
+/// `wood_and_glow_scenes`.
+fn wood_and_glow(fire: &Toned) -> (usize, usize) {
+    let sets = fire.sets(AREA);
+    let count = |set: &[Vec<Option<bool>>]| {
+        set[..set.len() - BELOW_LOGS]
             .iter()
             .flatten()
-            .filter(|pixel| pixel.is_some_and(|colour| within.contains(&colour)))
+            .filter(|pixel| **pixel == Some(true))
             .count()
     };
-    (count(&wood), count(&glow()))
+    (count(&sets[0]), count(&sets[1]))
 }
 
 /// Given: the scene on an eighty by twenty-four area.
@@ -179,16 +309,17 @@ fn wood_and_glow(buffer: &Buffer) -> (usize, usize) {
 #[test]
 fn a_log_burns_shorter_and_glows_more() {
     // Given:
-    let mut scene = ticked(7, AREA, 1);
-    let (wood_before, glow_before) = wood_and_glow(&render(&scene, AREA, AREA));
+    let mut fire = wood_and_glow_scenes(7);
+    fire.tick(AREA);
+    let (wood_before, glow_before) = wood_and_glow(&fire);
 
     // When:
     for _ in 0..*BURN_TICKS.start() / 2 {
-        scene.tick(AREA);
+        fire.tick(AREA);
     }
 
     // Then:
-    let (wood_after, glow_after) = wood_and_glow(&render(&scene, AREA, AREA));
+    let (wood_after, glow_after) = wood_and_glow(&fire);
     assert!(
         wood_after < wood_before,
         "wood {wood_before} to {wood_after}"
@@ -210,14 +341,15 @@ fn a_log_burns_shorter_and_glows_more() {
 #[test]
 fn a_burnt_log_gives_way_to_a_new_one_and_the_fire_never_goes_out() {
     // Given:
-    let mut scene = ticked(7, AREA, 1);
+    let mut fire = wood_and_glow_scenes(7);
+    fire.tick(AREA);
     let mut samples = Vec::new();
 
     // When:
     for tick in 0..*BURN_TICKS.end() + 600 {
-        scene.tick(AREA);
+        fire.tick(AREA);
         if tick % 10 == 0 {
-            samples.push(wood_and_glow(&render(&scene, AREA, AREA)));
+            samples.push(wood_and_glow(&fire));
         }
     }
 
@@ -243,8 +375,8 @@ fn a_burnt_log_gives_way_to_a_new_one_and_the_fire_never_goes_out() {
     );
 }
 
-/// Wood pixels that only a new log adds between two samples.
-const NEW_LOG_WOOD: usize = 40;
+/// Wood pixels that only a new log adds between two samples: ten cells.
+const NEW_LOG_WOOD: usize = 10 * ACROSS * DOWN;
 
 /// Given: seeds 1 to 5.
 /// When: each draws twice from the same seed, and once per seed.
@@ -395,7 +527,7 @@ const BURST_YOUNG: usize = 14;
 /// Given: the scene on an eighty by twenty-four area.
 /// When: it runs past the longest burn and a little more, so a new log
 /// has dropped in from above the pile.
-/// Then: every half-block pixel in the top half is the base colour again.
+/// Then: every pixel in the top half is the base colour again.
 ///
 /// Why it matters: a new log that does not fall hangs in the air over the
 /// fire.
@@ -413,4 +545,65 @@ fn a_new_log_falls_onto_the_pile() {
             }
         }
     }
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it ticks forty times and renders.
+/// Then: some cells draw an octant glyph that splits a half of the cell,
+/// across or down.
+///
+/// Why it matters: logs drawn only in half blocks have a quarter of the
+/// pixels the screen can show, and their glow looks coarse.
+#[test]
+fn the_fire_draws_in_octant_glyphs() {
+    // Given, when:
+    let buffer = render(&ticked(7, AREA, 40), AREA, AREA);
+
+    // Then:
+    let halves = [0x00, 0x0f, 0xf0, 0xff].map(octant::glyph);
+    let split = AREA
+        .positions()
+        .filter(|position| {
+            let symbol = buffer[*position].symbol();
+            (0..=u8::MAX).any(|bits| symbol.chars().eq([octant::glyph(bits)]))
+                && !symbol.chars().all(|glyph| halves.contains(&glyph))
+        })
+        .count();
+    assert!(split > 0, "every block is a half block or a space");
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it ticks forty times and renders.
+/// Then: some glowing pixel shows another colour of the glow than a pixel
+/// in the same half of its cell.
+///
+/// Why it matters: each pixel of a log glows on its own pulse. A glow that
+/// pulses in blocks of half a cell shows a coarse grain.
+#[test]
+fn the_glow_pulses_in_pixels_a_quarter_of_a_cell_tall() {
+    // Given:
+    let mut fire = Toned::each_colour(7);
+
+    // When:
+    for _ in 0..40 {
+        fire.tick(AREA);
+    }
+    let shown = fire.colours(AREA);
+
+    // Then:
+    let half = DOWN / 2;
+    let fine = (0..shown.len()).any(|y| {
+        (0..shown[y].len()).any(|x| {
+            let Some(colour) = shown[y][x].filter(|colour| glow().contains(colour)) else {
+                return false;
+            };
+            let (left, top) = (x - x % ACROSS, y - y % half);
+            (top..top + half).any(|row| {
+                (left..left + ACROSS)
+                    .filter_map(|column| shown[row][column])
+                    .any(|other| other != colour && glow().contains(&other))
+            })
+        })
+    });
+    assert!(fine, "each half of a cell glows in one colour");
 }
