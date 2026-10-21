@@ -1,12 +1,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::HashSet;
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
-use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::solar::Solar;
 use hearth::scenes::typing::Speed;
@@ -26,14 +28,15 @@ const MOON: usize = 8;
 /// The furthest Saturn's ring reaches from its middle, in dots, with room
 /// to spare.
 const SATURN_REACH: f32 = 10.0;
-/// How far a body's cells reach from its middle, across and down, in dots,
-/// with room to spare. A planet lights every cell its disc touches, so it
-/// reaches up to a cell further than its disc.
+/// How far a body reaches from its middle, across and down, in dots, with
+/// room to spare. A cell shows two colours, so a body can change a cell it
+/// shares with another, and the reach keeps a cell past its disc.
 const PLANET_SPAN: (f32, f32) = (6.0, 8.0);
 const EARTH_SPAN: (f32, f32) = (4.0, 6.0);
 const MOON_SPAN: (f32, f32) = (1.5, 1.5);
-/// A braille cell with all eight dots lit.
-const FULL: &str = "\u{28ff}";
+/// The furthest a pixel of a planet's disc lies from its middle, in dots,
+/// with room to spare. The largest planet's radius is 4.4.
+const BODY_REACH: f32 = 5.0;
 /// The planets that share their colour with no other body. Mercury shares
 /// subtle with the Moon, and Saturn shares gold with the sun.
 const OWN_COLOUR: [usize; 6] = [1, 2, 3, 4, 6, 7];
@@ -65,29 +68,36 @@ fn render(scene: &Solar, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The lit braille dots of a render, in dots from the top left of the
-/// area, each with the colour of its cell.
+/// The lit pixels of a render, those in any colour but the base, in dots
+/// from the top left of the area, each with its colour.
 fn dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
     let mut dots = Vec::new();
     for position in area.positions() {
-        let cell = &buffer[position];
-        let Some(code) = cell.symbol().chars().next().map(u32::from) else {
+        let Some(shown) = pixels::shown(&buffer[position]) else {
             continue;
         };
-        if !(0x2801..=0x28ff).contains(&code) {
-            continue;
-        }
-        for column in 0..CELL_WIDTH {
-            for row in 0..CELL_HEIGHT {
-                if (code - 0x2800) & braille::dot(column, row) != 0 {
-                    let x = usize::from(position.x - area.x) * CELL_WIDTH + column;
-                    let y = usize::from(position.y - area.y) * CELL_HEIGHT + row;
-                    dots.push(((x as f32, y as f32), cell.fg));
-                }
+        for (pixel, colour) in shown.into_iter().enumerate() {
+            if colour == PALETTE.base {
+                continue;
             }
+            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
+            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
+            dots.push(((x as f32, y as f32), colour));
         }
     }
     dots
+}
+
+/// The colour the pixel at a place in dots shows, in a render whose area
+/// starts at the top left of its buffer.
+fn colour_at(buffer: &Buffer, place: (f32, f32)) -> Option<Color> {
+    let (x, y) = (place.0 as usize, place.1 as usize);
+    let cell = (
+        u16::try_from(x / CELL_WIDTH).ok()?,
+        u16::try_from(y / CELL_HEIGHT).ok()?,
+    );
+    let shown = pixels::shown(buffer.cell(cell)?)?;
+    Some(shown[y % CELL_HEIGHT * CELL_WIDTH + x % CELL_WIDTH])
 }
 
 /// The sun's dots: the largest group of touching gold dots. Saturn, its
@@ -160,14 +170,6 @@ fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
     (to.0 - from.0).hypot(to.1 - from.1)
 }
 
-/// The cell a place in dots falls in.
-fn cell_of(place: (f32, f32)) -> (u16, u16) {
-    (
-        (place.0 / CELL_WIDTH as f32) as u16,
-        (place.1 / CELL_HEIGHT as f32) as u16,
-    )
-}
-
 /// The middle of the pane, in dots.
 fn middle(area: Rect) -> (f32, f32) {
     (
@@ -204,13 +206,8 @@ fn each_planet_keeps_to_its_own_ellipse() {
             if tick % 50 == 0 {
                 let buffer = render(&scene, AREA, AREA);
                 for (index, planet) in planets.iter().enumerate() {
-                    let cell = (
-                        (planet.0 / CELL_WIDTH as f32) as u16,
-                        (planet.1 / CELL_HEIGHT as f32) as u16,
-                    );
-                    let symbol = buffer[cell].symbol().chars().next().map(u32::from);
                     assert!(
-                        symbol.is_some_and(|code| (0x2801..=0x28ff).contains(&code)),
+                        colour_at(&buffer, *planet).is_some_and(|colour| colour != PALETTE.base),
                         "seed {seed}: planet {index} not drawn at tick {tick}"
                     );
                 }
@@ -405,9 +402,9 @@ fn solar_is_a_scene_by_name() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders for a minute and a half.
 /// Then: where a planet stands clear of the sun and of every other body,
-/// its cell shows its own colour. The Moon stays within a few dots of Earth,
-/// goes round it more than twice, and shows in its colour where it stands
-/// clear. Where Saturn stands clear of every other body, its gold reaches
+/// the pixel at its middle shows its own colour. The Moon stays within a
+/// few dots of Earth, goes round it more than twice, and shows in its
+/// colour where it stands clear. Where Saturn stands clear of every other body, its gold reaches
 /// past its body on both sides at its own height.
 ///
 /// Why it matters: planets in one colour read as dots and not as a solar
@@ -443,8 +440,11 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         let clear = |index: usize| stands_clear(&bodies, index, centre, reach);
         for (index, role) in roles().iter().enumerate() {
             if clear(index) {
-                let cell = cell_of(planets[index]);
-                assert_eq!(buffer[cell].fg, *role, "planet {index} at tick {tick}");
+                assert_eq!(
+                    colour_at(&buffer, planets[index]),
+                    Some(*role),
+                    "planet {index} at tick {tick}"
+                );
                 checked[index] += 1;
             }
         }
@@ -455,8 +455,8 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         );
         if clear(MOON) {
             assert_eq!(
-                buffer[cell_of(moon)].fg,
-                PALETTE.subtle,
+                colour_at(&buffer, moon),
+                Some(PALETTE.subtle),
                 "the Moon at tick {tick}"
             );
             moon_checked += 1;
@@ -504,14 +504,18 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
     );
 }
 
-/// Mercury passes in front of the sun and behind it.
+/// Mercury passes in front of the sun and behind it, and in front it shows
+/// with the sun in one cell.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders while Mercury goes round several times.
-/// Then: where Mercury stands well inside the sun's disc, its cell shows
-/// Mercury on the near side, the lower half, and the sun on the far side.
+/// Then: where Mercury stands well inside the sun's disc, the pixel at its
+/// middle shows Mercury on the near side, the lower half, and the sun on
+/// the far side. On the near side some cell at Mercury's edge shows both
+/// Mercury and the sun.
 ///
 /// Why it matters: a planet seen through the sun breaks the depth of the
-/// tilted view, and a planet that vanishes in front of it reads as a fault.
+/// tilted view, a planet that vanishes in front of it reads as a fault, and
+/// a cell in one colour cuts a square notch out of the sun round it.
 #[test]
 fn mercury_passes_in_front_of_the_sun_and_behind_it() {
     // Given:
@@ -522,7 +526,7 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
         .iter()
         .map(|dot| distance(*dot, centre))
         .fold(0.0, f32::max);
-    let (mut in_front, mut behind) = (0, 0);
+    let (mut in_front, mut behind, mut shared) = (0, 0, 0);
 
     for tick in 0..1000 {
         // When:
@@ -534,12 +538,28 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
         if distance(mercury, centre) > reach - 3.0 {
             continue;
         }
-        let shown = buffer[cell_of(mercury)].fg;
+        let shown = colour_at(&buffer, mercury);
         if mercury.1 > centre.1 {
-            assert_eq!(shown, PALETTE.subtle, "Mercury in front at tick {tick}");
+            assert_eq!(
+                shown,
+                Some(PALETTE.subtle),
+                "Mercury in front at tick {tick}"
+            );
             in_front += 1;
+            let both = AREA.positions().any(|position| {
+                let near = (
+                    (f32::from(position.x) + 0.5) * CELL_WIDTH as f32,
+                    (f32::from(position.y) + 0.5) * CELL_HEIGHT as f32,
+                );
+                let cell = pixels::shown(&buffer[position]);
+                distance(near, mercury) <= 4.0
+                    && cell.is_some_and(|cell| {
+                        cell.contains(&PALETTE.subtle) && cell.contains(&PALETTE.gold)
+                    })
+            });
+            shared += usize::from(both);
         } else {
-            assert_eq!(shown, PALETTE.gold, "Mercury behind at tick {tick}");
+            assert_eq!(shown, Some(PALETTE.gold), "Mercury behind at tick {tick}");
             behind += 1;
         }
     }
@@ -547,14 +567,15 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
         in_front > 0 && behind > 0,
         "{in_front} in front, {behind} behind"
     );
+    assert!(shared > 0, "Mercury never shared a cell with the sun");
 }
 
 /// Each planet leaves a short trail behind it that thins toward its end.
 /// Given: the scene at a hundred by thirty, ticked until Neptune has gone
 /// round once, so each orbit's size is known.
 /// When: it ticks and renders for a while longer.
-/// Then: every dot in a planet's own colour outside its full cells lies on
-/// its orbit, behind it, and within an eighth of a turn. The second quarter of
+/// Then: every dot in a planet's own colour outside its disc lies on its
+/// orbit, behind it, and within an eighth of a turn. The second quarter of
 /// the trail holds more than twice the dots of the last quarter, and the
 /// last quarter is not empty.
 ///
@@ -608,7 +629,7 @@ fn each_planet_leaves_a_trail_that_thins_behind_it() {
             let (centre, across, down) = orbits[index];
             for (dot, _) in lit
                 .iter()
-                .filter(|(dot, colour)| *colour == role && buffer[cell_of(*dot)].symbol() != FULL)
+                .filter(|(dot, colour)| *colour == role && distance(*dot, planet) > BODY_REACH)
             {
                 let at = angle(index, *dot);
                 let on_orbit = (centre.0 + across * at.cos(), centre.1 - down * at.sin());
@@ -635,17 +656,17 @@ fn each_planet_leaves_a_trail_that_thins_behind_it() {
     }
 }
 
-/// Each planet stands out from its trail as a solid cluster of full cells.
+/// Each planet stands out from its trail as a solid disc.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders for a minute and a half.
 /// Then: where a planet stands clear of the sun and of every other body,
-/// the cell at its middle is full, and its full cells span at least two
-/// columns and two rows.
+/// every pixel within two dots of its middle shows its colour, so its disc
+/// is solid and at least four dots across and down.
 ///
 /// Why it matters: a planet drawn as a few dots reads as one more dot of
 /// its own trail.
 #[test]
-fn each_planet_is_a_solid_cluster_of_full_cells() {
+fn each_planet_is_a_solid_disc() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
     let first = render(&scene, AREA, AREA);
@@ -669,30 +690,20 @@ fn each_planet_is_a_solid_cluster_of_full_cells() {
             if !stands_clear(&bodies, index, centre, reach) {
                 continue;
             }
-            let middle = cell_of(planets[index]);
-            assert_eq!(
-                buffer[middle].symbol(),
-                FULL,
-                "planet {index} at tick {tick}"
-            );
-            let full: Vec<(u16, u16)> = AREA
-                .positions()
-                .filter(|position| {
-                    position.x.abs_diff(middle.0) <= 4
-                        && position.y.abs_diff(middle.1) <= 3
-                        && buffer[*position].symbol() == FULL
-                        && buffer[*position].fg == *role
-                })
-                .map(|position| (position.x, position.y))
-                .collect();
-            let columns: HashSet<u16> = full.iter().map(|cell| cell.0).collect();
-            let rows: HashSet<u16> = full.iter().map(|cell| cell.1).collect();
-            assert!(
-                columns.len() >= 2 && rows.len() >= 2,
-                "planet {index} spans {} columns and {} rows at tick {tick}",
-                columns.len(),
-                rows.len()
-            );
+            let middle = planets[index];
+            for dy in -2..=2 {
+                for dx in -2..=2 {
+                    let place = (middle.0.floor() + dx as f32, middle.1.floor() + dy as f32);
+                    if distance(place, middle) > 2.0 {
+                        continue;
+                    }
+                    assert_eq!(
+                        colour_at(&buffer, place),
+                        Some(*role),
+                        "planet {index} at {middle:?} has a hole at {place:?} at tick {tick}"
+                    );
+                }
+            }
             checked[index] += 1;
         }
     }
