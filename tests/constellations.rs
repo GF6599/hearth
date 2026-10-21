@@ -582,3 +582,203 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
         assert!(streaks > 1, "seed {seed}: {streaks} shooting stars");
     }
 }
+
+/// The shares of a tick that the frames between two ticks show.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// The frame on a tick, the frames between it and the next tick, and the
+/// frame on the next tick, each read by `read`. The scene ticks once.
+fn glide<T>(scene: &mut Constellations, read: impl Fn(&Buffer) -> T) -> Vec<T> {
+    let mut frames = vec![read(&render(scene, AREA, AREA))];
+    for progress in BETWEEN {
+        scene.set_progress(progress);
+        frames.push(read(&render(scene, AREA, AREA)));
+    }
+    scene.set_progress(0.0);
+    scene.tick(AREA);
+    frames.push(read(&render(scene, AREA, AREA)));
+    frames
+}
+
+/// The furthest a line can pass from the centre of a cell and still cross
+/// it, in pixels, with room to spare.
+const STAR_REACH: f32 = 3.0;
+
+/// The least and the most of `pixels` along `heading`.
+fn ends_along(pixels: &[(f32, f32)], heading: (f32, f32)) -> (f32, f32) {
+    pixels
+        .iter()
+        .map(|pixel| pixel.0 * heading.0 + pixel.1 * heading.1)
+        .fold((f32::MAX, f32::MIN), |(least, most), along| {
+            (least.min(along), most.max(along))
+        })
+}
+
+/// A shooting star glides along its line between two ticks.
+/// Given: the scene at a hundred by thirty, for three minutes.
+/// When: on each tick with a shooting star, it renders at a quarter, a half
+/// and three quarters of the way to its next tick, then ticks.
+/// Then: where the shooting star still shows on the next tick and crosses
+/// no star, its head and the end of its trail never go back along its
+/// line. Where its head moves two pixels or more from one tick to the
+/// next, the head at half a tick lies strictly between the two. A star's
+/// glyph hides the pixels of its cell, so a shooting star that crosses a
+/// star can seem to step back.
+///
+/// Why it matters: at a quarter speed a shooting star that moves only on a
+/// tick jumps four pixels once every sixteen frames, and reads as a dotted
+/// line and not as a streak.
+#[test]
+fn a_shooting_star_glides_between_ticks() {
+    let mut moving = 0;
+    for seed in 0..3 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+
+        for tick in 0..SKY_RUN {
+            if gold_pixels(&render(&scene, AREA, AREA)).is_empty() {
+                scene.tick(AREA);
+                continue;
+            }
+
+            // When:
+            let frames = glide(&mut scene, gold_pixels);
+
+            // Then:
+            let (first, last) = (&frames[0], &frames[frames.len() - 1]);
+            if last.is_empty() {
+                continue;
+            }
+            let (from, to) = (centroid(first), centroid(last));
+            let moved = distance(from, to);
+            let heading = ((to.0 - from.0) / moved, (to.1 - from.1) / moved);
+            let ends: Vec<(f32, f32)> = frames
+                .iter()
+                .map(|frame| ends_along(frame, heading))
+                .collect();
+            let along = |pixel: &(f32, f32)| pixel.0 * heading.0 + pixel.1 * heading.1;
+            let tail = first
+                .iter()
+                .copied()
+                .min_by(|a, b| along(a).total_cmp(&along(b)))
+                .unwrap();
+            let head = last
+                .iter()
+                .copied()
+                .max_by(|a, b| along(a).total_cmp(&along(b)))
+                .unwrap();
+            let sky = stars(&render(&scene, AREA, AREA), AREA);
+            if sky
+                .keys()
+                .any(|star| distance_to_segment(centre(*star), tail, head) <= STAR_REACH)
+            {
+                continue;
+            }
+            for pair in ends.windows(2) {
+                assert!(
+                    pair[0].0 <= pair[1].0 && pair[0].1 <= pair[1].1,
+                    "seed {seed}: the shooting star goes back at tick {tick}: {ends:?}"
+                );
+            }
+            let (start, half, end) = (ends[0].1, ends[2].1, ends[4].1);
+            if end - start >= 2.0 {
+                assert!(
+                    start < half && half < end,
+                    "seed {seed}: the head not between its ticks at tick {tick}: {ends:?}"
+                );
+                moving += 1;
+            }
+        }
+    }
+    assert!(moving > 20, "{moving} shooting star heads moved two pixels");
+}
+
+/// A figure's line draws itself between two ticks.
+/// Given: the scene at a hundred by thirty, for a minute and a half.
+/// When: on each tick, it renders at a quarter, a half and three quarters
+/// of the way to its next tick, then ticks.
+/// Then: where the line grows from one tick to the next, each frame holds
+/// every pixel of the frame before it. Where it grows by two pixels or
+/// more, the line at half a tick holds more pixels than the first and
+/// fewer than the last in three frames of four or more. A star's glyph
+/// hides the pixels of its cell, so a line that reaches a star can seem to
+/// pause.
+///
+/// Why it matters: at a quarter speed a line that grows only on a tick
+/// jumps once every sixteen frames, and the pen reads as a stutter.
+#[test]
+fn a_figure_line_draws_itself_between_ticks() {
+    let (mut growing, mut between) = (0, 0);
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+
+        for tick in 0..RUN {
+            if scene.figure().is_none() {
+                scene.tick(AREA);
+                continue;
+            }
+
+            // When:
+            let frames = glide(&mut scene, |buffer| {
+                line_pixels(buffer, AREA)
+                    .into_iter()
+                    .filter(|(_, colour)| *colour == PALETTE.iris || *colour == PALETTE.foam)
+                    .map(|((x, y), _)| (x as i32, y as i32))
+                    .collect::<BTreeSet<(i32, i32)>>()
+            });
+
+            // Then:
+            let (first, last) = (&frames[0], &frames[frames.len() - 1]);
+            if first.is_empty() || last.len() <= first.len() {
+                continue;
+            }
+            for pair in frames.windows(2) {
+                assert!(
+                    pair[0].is_subset(&pair[1]),
+                    "seed {seed}: the line loses a pixel at tick {tick}"
+                );
+            }
+            if last.len() - first.len() >= 2 {
+                let half = frames[2].len();
+                between += usize::from(first.len() < half && half < last.len());
+                growing += 1;
+            }
+        }
+    }
+    assert!(growing > 50, "{growing} lines grew two pixels");
+    assert!(
+        between * 4 >= growing * 3,
+        "{between} of {growing} lines between their ticks at half a tick"
+    );
+}
+
+/// A frame on a tick is the frame the scene drew before it glided.
+/// Given: two scenes from one seed, one of them given a share of a tick
+/// before each tick and none after it.
+/// When: both tick and render for three minutes.
+/// Then: every frame of the two is the same.
+///
+/// Why it matters: the frame on a tick is the one every other test of the
+/// scene reads, so a glide must not move it.
+#[test]
+fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
+    // Given:
+    let mut glided = ticked(7, AREA, 1);
+    let mut still = ticked(7, AREA, 1);
+
+    for tick in 0..SKY_RUN {
+        // When:
+        glided.set_progress(0.5);
+        glided.set_progress(0.0);
+        glided.tick(AREA);
+        still.tick(AREA);
+
+        // Then:
+        assert_eq!(
+            render(&glided, AREA, AREA),
+            render(&still, AREA, AREA),
+            "tick {tick}"
+        );
+    }
+}
