@@ -126,6 +126,17 @@ pub struct Drive {
     traffic: Vec<f64>,
     /// How far the car has come when the next car ahead appears.
     next_car: f64,
+    /// How far the scene has run from its last tick towards its next.
+    progress: f64,
+}
+
+/// Where the parts that move stand at a moment between two ticks.
+#[derive(Debug, Clone, Copy)]
+struct Moment {
+    travelled: f64,
+    sky: f64,
+    /// How far each car ahead has come since the last tick.
+    traffic: f64,
 }
 
 impl Drive {
@@ -149,6 +160,7 @@ impl Drive {
             sky: 0.0,
             traffic: Vec::new(),
             next_car: 0.0,
+            progress: 0.0,
         };
         drive.next_car = drive.rng.random_range(FIRST_CAR.0..FIRST_CAR.1);
         drive.track.push_back(Segment {
@@ -208,20 +220,33 @@ impl Drive {
         HILLS * ((at * first + self.hills[0]).sin() + 0.6 * (at * second + self.hills[1]).sin())
     }
 
+    /// Each part that moves, the share `progress` of the way to where the
+    /// next tick puts it. The parts glide from their places and not across
+    /// the screen, so a star or a stripe that comes round again at the
+    /// other side draws no streak.
+    fn moment(&self) -> Moment {
+        Moment {
+            travelled: self.travelled + SPEED * self.progress,
+            // The next tick turns the sky by the curve where it puts the car.
+            sky: self.sky - self.curve(self.travelled + SPEED) * SKY * self.progress,
+            traffic: SPEED * TRAFFIC * self.progress,
+        }
+    }
+
     /// The stars, then the moon, in the sky above `horizon`. Both slide
     /// with the sky and come round again at the other side.
-    fn draw_sky(&self, canvas: &mut Canvas, horizon: usize) {
+    fn draw_sky(&self, canvas: &mut Canvas, horizon: usize, sky: f64) {
         let width = canvas.width() as f64;
         let height = canvas.height() as f64;
         let room = horizon.saturating_sub(CELL_HEIGHT) as f64;
         for &(x, y) in &self.stars {
-            let column = ((x + self.sky).rem_euclid(1.0) * width) as usize;
+            let column = ((x + sky).rem_euclid(1.0) * width) as usize;
             let row = (y * room) as usize;
             canvas.set(column, row, self.palette.subtle);
         }
         let (radius, middle) = (MOON.0 * height, MOON.1 * height);
         let span = width + 2.0 * radius;
-        let centre = (0.7 * width + self.sky * width).rem_euclid(span) - radius;
+        let centre = (0.7 * width + sky * width).rem_euclid(span) - radius;
         for y in 0..horizon.min(canvas.height()) {
             for x in 0..canvas.width() {
                 let (dx, dy) = (x as f64 + 0.5 - centre, y as f64 + 0.5 - middle);
@@ -244,10 +269,11 @@ impl Drive {
         if road_rows == 0 {
             return canvas;
         }
-        self.draw_sky(&mut canvas, horizon);
+        let now = self.moment();
+        self.draw_sky(&mut canvas, horizon, now.sky);
         let width = across as f64;
         let share = 1.0 / road_rows as f64;
-        let eye = self.altitude(self.travelled);
+        let eye = self.altitude(now.travelled);
         let (mut shift, mut drift) = (0.0, 0.0);
         let mut drawn = down;
         // The row, middle and half width of each stretch in view, by its
@@ -256,7 +282,7 @@ impl Drive {
         let mut shown: Option<(f64, f64)> = None;
         for step in (1..=road_rows).rev() {
             let near = step as f64 / road_rows as f64;
-            let ahead = self.travelled + 1.0 / near;
+            let ahead = now.travelled + 1.0 / near;
             drift += self.curve(ahead) * share;
             shift += drift * share;
             let rise = self.altitude(ahead) - eye;
@@ -307,22 +333,27 @@ impl Drive {
                 }
             }
         }
-        self.draw_posts(&mut canvas, &stretches);
-        self.draw_traffic(&mut canvas, &stretches, horizon, eye);
-        self.draw_car(&mut canvas);
+        self.draw_posts(&mut canvas, &stretches, now.travelled);
+        self.draw_traffic(&mut canvas, &stretches, horizon, eye, now);
+        self.draw_car(&mut canvas, now.travelled);
         canvas
     }
 
     /// The posts on both sides of the road, from far to near, so a nearer
     /// post stands in front. A post on a stretch hidden behind a crest is
     /// hidden with it.
-    fn draw_posts(&self, canvas: &mut Canvas, stretches: &[Option<(usize, f64, f64)>]) {
+    fn draw_posts(
+        &self,
+        canvas: &mut Canvas,
+        stretches: &[Option<(usize, f64, f64)>],
+        travelled: f64,
+    ) {
         let road_rows = stretches.len() - 1;
         let (down, across) = (canvas.height() as f64, canvas.width() as f64);
-        let first = (self.travelled + 1.0) / POST_GAP;
-        let last = (self.travelled + road_rows as f64) / POST_GAP;
+        let first = (travelled + 1.0) / POST_GAP;
+        let last = (travelled + road_rows as f64) / POST_GAP;
         for post in (first.ceil() as i64..=last.floor() as i64).rev() {
-            let ahead = post as f64 * POST_GAP - self.travelled;
+            let ahead = post as f64 * POST_GAP - travelled;
             let step = (road_rows as f64 / ahead).round() as usize;
             let Some(Some((ground, centre, half))) = stretches.get(step).copied() else {
                 continue;
@@ -366,13 +397,15 @@ impl Drive {
         stretches: &[Option<(usize, f64, f64)>],
         horizon: usize,
         eye: f64,
+        now: Moment,
     ) {
         let road_rows = stretches.len() - 1;
         let across = canvas.width() as f64;
         let (wide, lines) = (CAR[0].len() as f64, CAR.len() as f64);
         let tall = lines * CAR_LINE as f64;
         for &car in self.traffic.iter().rev() {
-            let near = 1.0 / (car - self.travelled);
+            let car = car + now.traffic;
+            let near = 1.0 / (car - now.travelled);
             let step = road_rows as f64 * near;
             // A car nearer than the bottom row stands on no stretch in
             // view. The road has not turned yet there, so it is centred.
@@ -431,13 +464,13 @@ impl Drive {
 
     /// The car at the bottom of the pane in the right lane. In a curve its
     /// roof leans two pixels toward it and its upper body one.
-    fn draw_car(&self, canvas: &mut Canvas) {
+    fn draw_car(&self, canvas: &mut Canvas, travelled: f64) {
         let (down, across) = (canvas.height(), canvas.width());
         let (wide, tall) = (CAR[0].len(), CAR.len() * CAR_LINE);
         if down < tall || across < wide {
             return;
         }
-        let curve = self.curve(self.travelled + 2.0);
+        let curve = self.curve(travelled + 2.0);
         let lean = if curve > 0.25 {
             1
         } else if curve < -0.25 {
@@ -498,5 +531,9 @@ impl Scene for Drive {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.pixels().render(area, buf);
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
     }
 }
