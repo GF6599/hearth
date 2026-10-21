@@ -18,6 +18,28 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
+/// Rose Pine's roles in two groups far apart in OKLab: the land, the posts
+/// and the roles the scene does not draw in near blacks, and the road, its
+/// marks, the lights and the cars in near whites. Each role keeps a colour of its own. A cell of three
+/// colours draws the pair nearest its pixels, and in Rose Pine the road
+/// lies so near the land that a cell with a mark in it can draw a pixel of
+/// land as road. Here a cell never moves a pixel across the road's edge,
+/// so a test reads the shape the scene draws.
+const APART: &Palette = &Palette {
+    base: Color::Rgb(0, 0, 0),
+    surface: Color::Rgb(4, 4, 4),
+    overlay: Color::Rgb(255, 255, 255),
+    muted: Color::Rgb(8, 8, 8),
+    subtle: Color::Rgb(251, 251, 251),
+    text: Color::Rgb(247, 247, 247),
+    love: Color::Rgb(243, 243, 243),
+    gold: Color::Rgb(239, 239, 239),
+    rose: Color::Rgb(235, 235, 235),
+    pine: Color::Rgb(12, 12, 12),
+    foam: Color::Rgb(231, 231, 231),
+    iris: Color::Rgb(227, 227, 227),
+    see_through: false,
+};
 /// Ticks enough for the track to run straights and curves both ways.
 const RUN: u32 = 3000;
 
@@ -37,12 +59,13 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
 }
 
 /// The left and right ends of the road in each pixel row that has road, from
-/// the top: the first and last pixel that is not land, sky or a post.
-fn road(rows: &[Vec<Color>]) -> Vec<(usize, usize, usize)> {
-    let off_road = |colour: &Color| [PALETTE.base, PALETTE.muted].contains(colour);
+/// the top: the first and last pixel that is not land, sky or a post, in
+/// the colours of `palette`.
+fn road(rows: &[Vec<Color>], palette: &Palette) -> Vec<(usize, usize, usize)> {
+    let off_road = |colour: &Color| [palette.base, palette.muted].contains(colour);
     rows.iter()
         .enumerate()
-        .filter(|(_, row)| row.contains(&PALETTE.overlay))
+        .filter(|(_, row)| row.contains(&palette.overlay))
         .filter_map(|(y, row)| {
             let left = row.iter().position(|colour| !off_road(colour))?;
             let right = row.iter().rposition(|colour| !off_road(colour))?;
@@ -72,7 +95,7 @@ fn the_road_edges_step_every_quarter_of_a_cell() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA));
+        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA), PALETTE);
 
         // Then:
         sampled += 1;
@@ -91,7 +114,7 @@ fn the_road_edges_step_every_quarter_of_a_cell() {
 }
 
 /// The road narrows from the bottom of the pane toward the horizon.
-/// Given: the scene at a hundred by thirty.
+/// Given: the scene at a hundred by thirty, in `APART`.
 /// When: it ticks and renders over straights and curves.
 /// Then: in every frame the road's width does not grow from one row to the
 /// next going up, it is over half the pane wide at the bottom, and under a
@@ -102,7 +125,7 @@ fn the_road_edges_step_every_quarter_of_a_cell() {
 #[test]
 fn the_road_narrows_toward_the_horizon() {
     // Given:
-    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let mut scene = Drive::new(Rng::seed_from_u64(7), APART);
     let width = usize::from(AREA.width) * 2;
 
     for tick in 0..RUN {
@@ -111,7 +134,7 @@ fn the_road_narrows_toward_the_horizon() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA));
+        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA), APART);
 
         // Then:
         let (_, bottom_left, bottom_right) = *rows.last().expect("road");
@@ -129,7 +152,7 @@ fn the_road_narrows_toward_the_horizon() {
 }
 
 /// The road runs straight and bends both ways as the track curves.
-/// Given: the scene at a hundred by thirty.
+/// Given: the scene at a hundred by thirty, in `APART`.
 /// When: it ticks and renders over the track.
 /// Then: some frames show the road straight ahead, with its centre in the
 /// same column from the bottom to the top, some bend it to the left and
@@ -141,7 +164,7 @@ fn the_road_narrows_toward_the_horizon() {
 #[test]
 fn the_road_bends_with_the_track_both_ways() {
     // Given:
-    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let mut scene = Drive::new(Rng::seed_from_u64(7), APART);
     let middle = f32::from(AREA.width);
     let (mut straight, mut left, mut right) = (0, 0, 0);
 
@@ -151,7 +174,7 @@ fn the_road_bends_with_the_track_both_ways() {
         if tick % 10 != 0 {
             continue;
         }
-        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA));
+        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA), APART);
 
         // Then:
         let centres: Vec<f32> = rows
@@ -190,7 +213,7 @@ fn the_road_bends_with_the_track_both_ways() {
 /// stripes, in the lower half of the road.
 fn stripe_ends(scene: &Drive) -> Vec<usize> {
     let rows = pixels(&render(scene, AREA, AREA), AREA);
-    let road = road(&rows);
+    let road = road(&rows, PALETTE);
     let lower = &road[road.len() / 2..];
     let centre: Vec<(usize, Color)> = lower
         .iter()
@@ -321,7 +344,7 @@ fn drive_is_a_scene_by_name() {
 
 /// The row of the topmost road pixel, the far end of the road in view.
 fn road_top(rows: &[Vec<Color>]) -> usize {
-    road(rows).first().expect("road").0
+    road(rows, PALETTE).first().expect("road").0
 }
 
 /// The moon and stars stay above the road, and the sky slides against a
@@ -417,7 +440,11 @@ fn the_road_rises_and_falls_over_hills() {
         let top = road_top(&rows);
         highest = highest.min(top);
         lowest = lowest.max(top);
-        assert_eq!(road(&rows).last().unwrap().0, bottom, "tick {tick}");
+        assert_eq!(
+            road(&rows, PALETTE).last().unwrap().0,
+            bottom,
+            "tick {tick}"
+        );
     }
     assert!(
         lowest - highest >= 2 * CELL_HEIGHT,
@@ -428,7 +455,7 @@ fn the_road_rises_and_falls_over_hills() {
 /// The bend of the road in a frame: how far its centre moves from the
 /// bottom row to the top, in pixels, positive to the right.
 fn bend(rows: &[Vec<Color>]) -> f32 {
-    let road = road(rows);
+    let road = road(rows, PALETTE);
     let middle = |(_, left, right): (usize, usize, usize)| (left + right) as f32 / 2.0;
     middle(road[0]) - middle(*road.last().unwrap())
 }
@@ -470,7 +497,7 @@ fn the_car_keeps_its_lane_and_leans_into_a_curve() {
             })
             .collect();
         assert!(!car.is_empty(), "tick {tick}: no car");
-        let road = road(&rows);
+        let road = road(&rows, PALETTE);
         for &(x, y) in &car {
             assert!(
                 y >= height * 4 / 5,
@@ -566,7 +593,7 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
                 posts.push((x, rows.len() - 1, run));
             }
         }
-        let road = road(&rows);
+        let road = road(&rows, PALETTE);
         let middle_at = |y: usize| {
             road.iter()
                 .find(|(row, _, _)| *row == y)
@@ -701,7 +728,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
         let cars = cars_ahead(&rows);
 
         // Then:
-        let road = road(&rows);
+        let road = road(&rows, PALETTE);
         for &(top, lowest, left, right) in cars.iter().filter(|car| width(**car) > 2) {
             let gold: Vec<usize> = rows[top..=lowest]
                 .iter()
@@ -808,7 +835,7 @@ fn the_land_beside_the_road_holds_still() {
         // When:
         scene.tick(AREA);
         let after = pixels(&render(&scene, AREA, AREA), AREA);
-        for &(y, left, right) in &road(&after) {
+        for &(y, left, right) in &road(&after, PALETTE) {
             for x in (0..left).chain(right + 1..after[y].len()) {
                 let (was, now) = (before[y][x], after[y][x]);
                 if land(was) && land(now) {
