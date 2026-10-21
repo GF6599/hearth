@@ -72,6 +72,9 @@ pub struct Tide {
     palette: &'static Palette,
     /// Ticks since the start.
     time: u32,
+    /// How far the scene has run towards its next tick, so the sea draws
+    /// where it is between two ticks.
+    progress: f32,
     /// Where in the tide the scene starts, as a share of one tide.
     tide_phase: f32,
     wave_ticks: f32,
@@ -101,6 +104,7 @@ impl Tide {
         Self {
             palette,
             time: 0,
+            progress: 0.0,
             tide_phase: rng.random_range(0.0..1.0),
             wave_ticks: rng.random_range(WAVE_TICKS),
             lag_length: rng.random_range(LAG_LENGTH),
@@ -126,17 +130,17 @@ impl Tide {
         }
     }
 
-    /// The still water now, as a share of the height.
-    fn level(&self) -> f32 {
-        let turn = self.time as f32 / TIDE_TICKS as f32 + self.tide_phase;
+    /// The still water at `time` ticks, as a share of the height.
+    fn level(&self, time: f32) -> f32 {
+        let turn = time / TIDE_TICKS as f32 + self.tide_phase;
         LOW_TIDE + (HIGH_TIDE - LOW_TIDE) * (1.0 - (TAU * turn).cos()) / 2.0
     }
 
-    /// How far the water reaches up pixel column `x` now, as a share of the
-    /// height.
-    fn reach(&self, x: f32) -> f32 {
+    /// How far the water reaches up pixel column `x` at `time` ticks, as a
+    /// share of the height.
+    fn reach(&self, x: f32, time: f32) -> f32 {
         let lag = LAG * (1.0 + (TAU * (x / self.lag_length + self.lag_phase)).sin()) / 2.0;
-        let waves = self.time as f32 / self.wave_ticks - lag;
+        let waves = time / self.wave_ticks - lag;
         let phase = waves.rem_euclid(1.0);
         let run = if phase < RUN_UP {
             (phase / RUN_UP * FRAC_PI_2).sin()
@@ -144,16 +148,17 @@ impl Tide {
             ((phase - RUN_UP) / (1.0 - RUN_UP) * FRAC_PI_2).cos()
         };
         let strength = self.strengths[(waves.floor() as i64).rem_euclid(SET as i64) as usize];
-        let drift = self.time as f32 * RIPPLE_DRIFT;
+        let drift = time * RIPPLE_DRIFT;
         let ripple =
             (1.0 + (TAU * (x / self.ripple_length + self.ripple_phase + drift)).sin()) / 2.0;
-        self.level() + SWASH * ((1.0 - RAGGED) * strength * run + RAGGED * ripple * run)
+        self.level(time) + SWASH * ((1.0 - RAGGED) * strength * run + RAGGED * ripple * run)
     }
 
-    /// How many pixels of each column, from the bottom, are sea.
-    fn waterlines(&self, columns: usize, rows: usize) -> Vec<usize> {
+    /// How many pixels of each column, from the bottom, are sea at `time`
+    /// ticks.
+    fn waterlines(&self, columns: usize, rows: usize, time: f32) -> Vec<usize> {
         (0..columns)
-            .map(|x| ((self.reach(x as f32) * rows as f32).round() as usize).clamp(1, rows))
+            .map(|x| ((self.reach(x as f32, time) * rows as f32).round() as usize).clamp(1, rows))
             .collect()
     }
 
@@ -276,7 +281,7 @@ impl Scene for Tide {
         if columns == 0 || rows == 0 {
             return;
         }
-        let waterlines = self.waterlines(columns, rows);
+        let waterlines = self.waterlines(columns, rows, self.time as f32);
         for (index, wetness) in self.wetness.iter_mut().enumerate() {
             let (x, row) = (index % columns, index / columns);
             *wetness = if rows - row <= waterlines[x] {
@@ -287,13 +292,17 @@ impl Scene for Tide {
         }
     }
 
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress as f32;
+    }
+
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
         let (columns, rows) = (canvas.width(), canvas.height());
         if columns == 0 || rows == 0 {
             return;
         }
-        let waterlines = self.waterlines(columns, rows);
+        let waterlines = self.waterlines(columns, rows, self.time as f32 + self.progress);
         for top in (0..rows).step_by(CELL_HEIGHT) {
             for left in (0..columns).step_by(CELL_WIDTH) {
                 let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
