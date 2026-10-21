@@ -17,6 +17,7 @@ use hearth::octant::{self, CELL_WIDTH};
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::FINDING;
 use hearth::theme::{self, Palette};
+use pixels::PIXELS;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -24,16 +25,9 @@ use ratatui::style::Color;
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const THEMES: [&str; 2] = ["rose-pine", "rose-pine-dawn"];
 
-/// Each quadrant glyph by its bits: the upper left, upper right, lower left
-/// and lower right quarters, from the lowest bit. A set bit draws in the
-/// foreground.
-const QUADRANTS: [&str; 16] = [
-    " ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
-];
-
-/// The top left pixel of each quarter of a cell, in the order of the
-/// quadrant bits. A quadrant glyph shows one colour in each quarter.
-const QUARTERS: [usize; 4] = [0, 1, 2 * CELL_WIDTH, 2 * CELL_WIDTH + 1];
+/// Pixel rows 1 and 3 of a cell, which lie between the lines that the
+/// typing minimap draws over the terminal's background.
+const BETWEEN: u8 = 0b11 << CELL_WIDTH | 0b11 << (3 * CELL_WIDTH);
 
 fn config(name: &str, text: &str) -> Config {
     let dir = std::env::temp_dir().join(format!("hearth-bg-{}-{name}", std::process::id()));
@@ -91,10 +85,10 @@ fn frame(args: &[&str], config: &Config) -> Buffer {
     render(&app)
 }
 
-/// The colours a cell shows, a quarter at a time for a quadrant glyph and
-/// as its glyph and two colours for any other, with every colour in
-/// `clear` read as the terminal's.
-fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; 4]>, String, Color, Color) {
+/// The colours a cell shows, a pixel at a time for an octant glyph and as
+/// its glyph and two colours for any other, with every colour in `clear`
+/// read as the terminal's.
+fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; PIXELS]>, String, Color, Color) {
     let shown = |colour: Color| {
         if clear.contains(&colour) {
             Color::Reset
@@ -102,11 +96,13 @@ fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; 4]>, String, Color, Col
             colour
         }
     };
-    match pixels::shown(cell).filter(|_| QUADRANTS.contains(&cell.symbol())) {
-        Some(colours) => {
-            let quarters = QUARTERS.map(|pixel| shown(colours[pixel]));
-            (Some(quarters), String::new(), Color::Reset, Color::Reset)
-        }
+    match pixels::shown(cell) {
+        Some(colours) => (
+            Some(colours.map(shown)),
+            String::new(),
+            Color::Reset,
+            Color::Reset,
+        ),
         None => (
             None,
             cell.symbol().to_string(),
@@ -165,8 +161,8 @@ fn the_terminal_background_leaves_no_theme_background() {
 /// background and one with the terminal's.
 /// When: hearth starts the picker, and then each scene, at one seed under
 /// each file, and runs a while.
-/// Then: every cell shows the same glyph and colours, and every quarter of
-/// a block glyph the same colour, when the theme's base and surface read as
+/// Then: every cell shows the same glyph and colours, and every pixel of an
+/// octant glyph the same colour, when the theme's base and surface read as
 /// the terminal's, and murmuration's overlay too, because its whole sky
 /// clears. The one other change is the typing scene's minimap: each cell
 /// it draws in blocks shows octant pixels in one of the block's colours,
@@ -202,11 +198,11 @@ fn the_terminal_background_keeps_every_picture() {
                 let at = format!("{name} {args:?} at {position:?}");
                 let painted = seen(&before[position], &behind);
                 let cell = &after[position];
-                if let (true, (Some(quarters), ..)) = (typing, &painted)
-                    && is_octant(cell.symbol())
-                    && quarters.iter().any(|colour| *colour != Color::Reset)
+                if let (true, (Some(colours), ..)) = (typing, &painted)
+                    && lit(cell)
+                    && colours.iter().any(|colour| *colour != Color::Reset)
                 {
-                    assert!(quarters.contains(&cell.fg), "fg {:?} {at}", cell.fg);
+                    assert!(colours.contains(&cell.fg), "fg {:?} {at}", cell.fg);
                     assert_eq!(cell.bg, Color::Reset, "{at}");
                     continue;
                 }
@@ -217,11 +213,8 @@ fn the_terminal_background_keeps_every_picture() {
 }
 
 /// An octant glyph that holds at least one pixel.
-fn is_octant(symbol: &str) -> bool {
-    symbol
-        .chars()
-        .next()
-        .is_some_and(|glyph| (1..=u8::MAX).any(|bits| octant::glyph(bits) == glyph))
+fn lit(cell: &Cell) -> bool {
+    pixels::bits(cell).is_some_and(|bits| bits != 0)
 }
 
 fn shows(buffer: &Buffer, colour: Color) -> bool {
@@ -290,8 +283,8 @@ fn the_whole_murmuration_sky_shows_the_terminal() {
 /// on Dawn.
 /// When: hearth starts the typing scene, and runs a while.
 /// Then: the minimap draws its lines in octant pixels, no cell of the
-/// scene is a block glyph, and no cell paints a background but the
-/// cursor's.
+/// scene lights a pixel between two lines, and no cell paints a background
+/// but the cursor's.
 ///
 /// Why it matters: lines of blocks two to a cell fill every cell they
 /// cross, so the outline of a long file reads as a solid panel over a
@@ -315,8 +308,8 @@ fn the_typing_minimap_shows_the_terminal_between_its_lines() {
             let cell = &buffer[position];
             let at = format!("{name} at {position:?}");
             assert!(
-                cell.symbol() == " " || !QUADRANTS.contains(&cell.symbol()),
-                "block {:?} {at}",
+                pixels::bits(cell).is_none_or(|bits| bits & BETWEEN == 0),
+                "between the lines {:?} {at}",
                 cell.symbol()
             );
             assert!(
@@ -324,7 +317,7 @@ fn the_typing_minimap_shows_the_terminal_between_its_lines() {
                 "bg {:?} {at}",
                 cell.bg
             );
-            lines += usize::from(is_octant(cell.symbol()));
+            lines += usize::from(lit(cell));
         }
         assert!(lines > 20, "{name}: {lines} cells of lines");
     }
