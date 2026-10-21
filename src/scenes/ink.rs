@@ -93,6 +93,23 @@ pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color 
     palette.base
 }
 
+pub const TONES: usize = 16;
+
+#[derive(Debug)]
+pub struct Tones {
+    palette: &'static Palette,
+}
+
+impl Tones {
+    pub fn new(palette: &'static Palette) -> Self {
+        Self { palette }
+    }
+
+    pub fn shade(&self, inks: &[f32; 5], x: usize, row: usize) -> Color {
+        shade(self.palette, inks, x, row)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Wave {
     across: f32,

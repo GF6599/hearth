@@ -7,9 +7,11 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
-use hearth::scenes::ink::{self, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME};
+use hearth::scenes::ink::{
+    self, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME, TONES, Tones,
+};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -53,19 +55,32 @@ fn tile() -> impl Iterator<Item = (usize, usize)> {
     (0..TILE).flat_map(|row| (0..TILE).map(move |x| (x, row)))
 }
 
+/// The colour of the water mixed `tone` steps of `TONES` toward `accent`.
+fn tone(palette: &Palette, accent: Color, tone: usize) -> Color {
+    octant::mix(palette.base, accent, tone as f32 / TONES as f32)
+}
+
+/// Every colour the ink can draw in `palette`: the water, each accent, and
+/// each step of the mix from the water toward one accent.
+fn tones(palette: &Palette) -> Vec<Color> {
+    ink::accents(palette)
+        .into_iter()
+        .flat_map(|accent| (0..=TONES).map(move |step| tone(palette, accent, step)))
+        .collect()
+}
+
 /// Given: the scene on a forty by twenty area, in a dark and a light theme.
 /// When: it renders after each of four hundred ticks.
-/// Then: every cell is an octant glyph whose eight pixels are the base or
-/// one of the five accents.
+/// Then: every cell is an octant glyph whose eight pixels are the water
+/// mixed some steps of `TONES` toward one accent, all the way at the most.
 ///
-/// Why it matters: thin ink is drawn by dither, not by a blend, so a blend
-/// would show as a colour that the theme does not have.
+/// Why it matters: a pixel that mixes the water with anything but one
+/// accent shows a colour that the theme and the drop do not have.
 #[test]
-fn every_cell_is_the_water_or_an_accent() {
+fn every_pixel_is_the_water_mixed_toward_an_accent() {
     let area = Rect::new(0, 0, 40, 20);
     for palette in [&theme::ROSE_PINE, &theme::ROSE_PINE_DAWN] {
-        let mut allowed = ink::accents(palette).to_vec();
-        allowed.push(palette.base);
+        let allowed = tones(palette);
         let mut scene = Ink::new(Rng::seed_from_u64(7), palette);
         for tick in 0..400 {
             // When:
@@ -88,6 +103,36 @@ fn every_cell_is_the_water_or_an_accent() {
                 }
             }
         }
+    }
+}
+
+/// A cloud fades out at its edges.
+/// Given: the scene on a hundred by thirty area, in three seeds.
+/// When: it renders after three hundred ticks.
+/// Then: over a fifth of the inked pixels are mixes, neither the water nor
+/// an accent.
+///
+/// Why it matters: a cloud of solid particles reads as a spray of blocks
+/// and not as ink that thins into the water.
+#[test]
+fn a_cloud_fades_out_at_its_edges() {
+    for seed in [1, 7, 42] {
+        // When:
+        let scene = ticked(seed, &theme::ROSE_PINE, AREA, 300);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let accents = ink::accents(&theme::ROSE_PINE);
+        let inked = pixels::showing(&buffer, AREA, |colour| colour != theme::ROSE_PINE.base);
+        let mixed = inked
+            .iter()
+            .filter(|(_, colour)| !accents.contains(colour))
+            .count();
+        assert!(
+            mixed * 5 > inked.len(),
+            "seed {seed}: {mixed} of {} inked pixels are mixes",
+            inked.len()
+        );
     }
 }
 
@@ -146,31 +191,47 @@ fn a_cell_draws_ink_at_a_quarter_of_its_height() {
     }
 }
 
-/// Given: a pixel with no ink, a pixel at `FULL_INK` of one accent, and a
-/// pixel at half of it.
+/// Given: pixels that hold one accent, at each step of `TONES` from no ink
+/// to `FULL_INK`, and half way between two steps.
 /// When: each shades every pixel of a four by four tile.
-/// Then: no ink is all water, full ink is all accent, and half of it
-/// colours half the tile and leaves the rest as water.
+/// Then: ink on a step mixes the whole tile that many steps from the water
+/// toward the accent, and ink half way between two steps mixes half the
+/// tile to each of them.
 ///
-/// Why it matters: this is the dither. Without it a thread of ink is
-/// either solid or gone, and the fade jumps instead of thinning.
+/// Why it matters: this is the fade. Ink that is either solid or gone
+/// jumps as a cloud thins, and a mix with no step between its tones shows
+/// bands across the cloud.
 #[test]
-fn thin_ink_colours_a_share_of_the_tile() {
+fn thin_ink_mixes_the_water_toward_its_accent() {
     let palette = &theme::ROSE_PINE;
     let love = ink::accents(palette)[0];
-    for (amount, inked) in [(0.0, 0), (FULL_INK, 16), (FULL_INK / 2.0, 8)] {
+    let shading = Tones::new(palette);
+    for step in 0..=TONES {
         // When:
-        let tile: Vec<Color> = tile()
-            .map(|(x, row)| ink::shade(palette, &[amount, 0.0, 0.0, 0.0, 0.0], x, row))
-            .collect();
+        let shade = |amount: f32| -> Vec<Color> {
+            tile()
+                .map(|(x, row)| shading.shade(&[amount, 0.0, 0.0, 0.0, 0.0], x, row))
+                .collect()
+        };
+        let on = shade(FULL_INK * step as f32 / TONES as f32);
+        let between = shade(FULL_INK * (step as f32 + 0.5) / TONES as f32);
 
         // Then:
-        let accent = tile.iter().filter(|colour| **colour == love).count();
-        let water = tile
-            .iter()
-            .filter(|colour| **colour == palette.base)
-            .count();
-        assert_eq!((accent, water), (inked, 16 - inked), "{amount}: {tile:?}");
+        let count =
+            |tile: &[Color], colour: Color| tile.iter().filter(|each| **each == colour).count();
+        assert_eq!(
+            count(&on, tone(palette, love, step)),
+            16,
+            "step {step}: {on:?}"
+        );
+        if step < TONES {
+            let (lower, upper) = (tone(palette, love, step), tone(palette, love, step + 1));
+            assert_eq!(
+                (count(&between, lower), count(&between, upper)),
+                (8, 8),
+                "half way past step {step}: {between:?}"
+            );
+        }
     }
 }
 
@@ -190,8 +251,9 @@ fn two_inks_in_one_pixel_mix_by_dither() {
     let half = FULL_INK / 2.0;
 
     // When:
+    let shading = Tones::new(palette);
     let tile: Vec<Color> = tile()
-        .map(|(x, row)| ink::shade(palette, &[half, 0.0, half, 0.0, 0.0], x, row))
+        .map(|(x, row)| shading.shade(&[half, 0.0, half, 0.0, 0.0], x, row))
         .collect();
 
     // Then:
