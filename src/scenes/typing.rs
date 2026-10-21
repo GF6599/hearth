@@ -495,7 +495,7 @@ impl Typing {
             cursor,
             self.palette,
         );
-        let mut canvas = Canvas::new(width, frame.height, self.palette.base);
+        let mut canvas = Canvas::new(width, frame.height, self.palette);
         // Over the terminal's own background each line takes one row of
         // pixels and leaves the row under it clear, because two full halves
         // of lines read as a solid panel there. Two lines of two colours

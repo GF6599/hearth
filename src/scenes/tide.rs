@@ -297,7 +297,7 @@ impl Scene for Tide {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         let (columns, rows) = (canvas.width(), canvas.height());
         if columns == 0 || rows == 0 {
             return;

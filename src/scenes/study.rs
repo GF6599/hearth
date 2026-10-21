@@ -499,7 +499,7 @@ impl Scene for Study {
         } else {
             WINDOW
         };
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         // The view is centred, so a pane too small for it cuts it evenly.
         // It starts on a whole letter, so each letter fills a half of a
         // cell and no cell holds parts of three. Past the view the room

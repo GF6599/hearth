@@ -262,7 +262,7 @@ impl Drive {
     /// a crest hides the road beyond it.
     fn pixels(&self) -> Canvas {
         let palette = self.palette;
-        let mut canvas = Canvas::new(self.width, self.height, palette.base);
+        let mut canvas = Canvas::new(self.width, self.height, palette);
         let (across, down) = (canvas.width(), canvas.height());
         let horizon = (down as f64 * HORIZON) as usize;
         let road_rows = down.saturating_sub(horizon + 1);

@@ -86,7 +86,7 @@ struct Pipe {
 pub struct Pipes {
     rng: Rng,
     colours: Vec<Color>,
-    base: Color,
+    palette: Palette,
     size: (u16, u16),
     canvas: Canvas,
     crossed: Vec<bool>,
@@ -100,9 +100,9 @@ impl Pipes {
         Self {
             rng,
             colours: colours(palette),
-            base: palette.base,
+            palette: *palette,
             size: (0, 0),
-            canvas: Canvas::new(0, 0, palette.base),
+            canvas: Canvas::new(0, 0, palette),
             crossed: Vec::new(),
             pipes: Vec::new(),
             drawn: 0,
@@ -144,7 +144,7 @@ impl Pipes {
 
     fn clear(&mut self) {
         let (width, height) = self.size;
-        self.canvas = Canvas::new(width, height, self.base);
+        self.canvas = Canvas::new(width, height, &self.palette);
         self.crossed = vec![false; usize::from(width) * usize::from(height)];
         self.drawn = 0;
         self.pipes.clear();

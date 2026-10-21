@@ -224,7 +224,6 @@ fn profile(along: f32) -> f32 {
 
 #[derive(Debug, Clone, Copy)]
 struct Colours {
-    base: Color,
     frame: Color,
     glass: Color,
     work: Color,
@@ -238,7 +237,6 @@ struct Colours {
 impl Colours {
     fn of(palette: &Palette) -> Self {
         Self {
-            base: palette.base,
             frame: palette.pine,
             glass: palette.subtle,
             work: palette.gold,
@@ -316,6 +314,7 @@ impl Phase {
 
 #[derive(Debug)]
 pub struct Hourglass {
+    palette: &'static Palette,
     colours: Colours,
     rng: Rng,
     clock: Clock,
@@ -343,6 +342,7 @@ pub struct Hourglass {
 impl Hourglass {
     pub fn new(rng: Rng, palette: &'static Palette, clock: Clock, lengths: Lengths) -> Self {
         Self {
+            palette,
             colours: Colours::of(palette),
             rng,
             clock,
@@ -658,7 +658,7 @@ impl Scene for Hourglass {
         let Some(glass) = self.glass else {
             return;
         };
-        let mut canvas = Canvas::new(area.width, area.height, self.colours.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         for (x, y) in glass.walls() {
             plot(&mut canvas, x, y, self.colours.glass);
             plot(&mut canvas, glass.mirror(x), y, self.colours.glass);

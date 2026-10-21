@@ -45,7 +45,7 @@ impl Noise {
             rng,
             palette,
             size: (0, 0),
-            canvas: Canvas::new(0, 0, palette.base),
+            canvas: Canvas::new(0, 0, palette),
         }
     }
 }
@@ -55,7 +55,7 @@ impl Scene for Noise {
         let resized = self.size != (area.width, area.height);
         if resized {
             self.size = (area.width, area.height);
-            self.canvas = Canvas::new(area.width, area.height, self.palette.base);
+            self.canvas = Canvas::new(area.width, area.height, self.palette);
         }
         let levels = levels(self.palette);
         for y in 0..self.canvas.height() {

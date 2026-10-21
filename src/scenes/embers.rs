@@ -758,7 +758,7 @@ impl Scene for Embers {
             glided = self.compose(&shifts);
             &glided
         };
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         for y in 0..self.rows.min(canvas.height()) {
             for x in 0..self.width.min(canvas.width()) {
                 canvas.set(x, y, self.colour(pixels[y * self.width + x], x, y));

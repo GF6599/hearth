@@ -484,7 +484,7 @@ impl Constellations {
         ) else {
             return;
         };
-        let mut canvas = Canvas::new(columns, rows, self.palette.base);
+        let mut canvas = Canvas::new(columns, rows, self.palette);
         for &((x, y), colour) in lines {
             let (Ok(x), Ok(y)) = (
                 usize::try_from(x - left * width),

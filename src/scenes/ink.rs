@@ -382,7 +382,7 @@ impl Scene for Ink {
         let width = u16::try_from(self.width).unwrap_or(u16::MAX);
         let height = u16::try_from(self.rows / UNITS_DOWN).unwrap_or(u16::MAX);
         let inks = self.inks();
-        let mut canvas = Canvas::new(width, height, self.palette.base);
+        let mut canvas = Canvas::new(width, height, self.palette);
         let columns = canvas.width();
         for (index, ink) in inks.iter().enumerate() {
             let (column, row) = (index % columns, index / columns);

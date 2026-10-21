@@ -147,7 +147,7 @@ impl Scene for Life {
     /// take one of them. So the live cells of a cell take one colour, the
     /// colour of most of them, and the cell keeps the shape of the board.
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         for top in (0..self.height.min(canvas.height())).step_by(CELL_HEIGHT) {
             for left in (0..self.width.min(canvas.width())).step_by(CELL_WIDTH) {
                 let age = |x: usize, y: usize| self.age[y * self.width + x];

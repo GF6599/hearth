@@ -7,6 +7,8 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
+use crate::theme::Palette;
+
 /// An octant cell is two pixels wide and four tall.
 pub const CELL_WIDTH: usize = 2;
 pub const CELL_HEIGHT: usize = 4;
@@ -203,16 +205,16 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    /// A canvas of `columns` by `rows` cells with every pixel in `base`.
-    /// The cells keep `base` behind them where they can, so it clears to
-    /// the terminal's own background.
-    pub fn new(columns: u16, rows: u16, base: Color) -> Self {
+    /// A canvas of `columns` by `rows` cells with every pixel in the base
+    /// of `palette`. The cells keep the base behind them where they can, so
+    /// it clears to the terminal's own background.
+    pub fn new(columns: u16, rows: u16, palette: &Palette) -> Self {
         let size = usize::from(columns) * CELL_WIDTH * usize::from(rows) * CELL_HEIGHT;
         Self {
             columns,
             rows,
-            base,
-            pixels: vec![base; size],
+            base: palette.base,
+            pixels: vec![palette.base; size],
         }
     }
 

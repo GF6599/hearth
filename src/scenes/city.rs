@@ -572,7 +572,7 @@ impl City {
     }
 
     fn pixels(&self) -> Canvas {
-        let mut canvas = Canvas::new(self.width, self.height, self.palette.base);
+        let mut canvas = Canvas::new(self.width, self.height, self.palette);
         let down = canvas.height();
         let shore = Self::shore(down);
         if shore < 2 * CELL_HEIGHT {

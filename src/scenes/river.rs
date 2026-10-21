@@ -474,7 +474,7 @@ impl Scene for River {
             }
         }
 
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         for (line, &(first, last)) in shores.iter().enumerate() {
             for column in 0..columns {
                 let empty = if (first..=last).contains(&(column as i64)) {

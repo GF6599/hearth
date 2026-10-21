@@ -192,7 +192,7 @@ impl Scene for Solar {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let (centre, across) = self.frame();
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         let (width, height) = (canvas.width(), canvas.height());
         let mut layers: Vec<Option<(Layer, Color)>> = vec![None; width * height];
         let mut plot = |x: i32, y: i32, layer: Layer, colour: Color| {

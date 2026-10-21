@@ -464,7 +464,7 @@ impl Scene for Murmuration {
         let rows = usize::from(area.height);
         let sky_rows = rows.saturating_sub(self.tree_rows);
         let bands = self.sky_bands();
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         let fill = |canvas: &mut Canvas, column: usize, rows: Range<usize>, colour: Color| {
             for y in rows {
                 for x in column * CELL_WIDTH..(column + 1) * CELL_WIDTH {

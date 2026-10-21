@@ -4,13 +4,17 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
+use hearth::theme::{self, Palette};
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-const BASE: Color = Color::Rgb(0x19, 0x17, 0x24);
-const INK: Color = Color::Rgb(0xeb, 0x6f, 0x92);
-const OTHER: Color = Color::Rgb(0x9c, 0xcf, 0xd8);
+/// The canvas tests draw in Rose Pine. The base, love and foam are three
+/// colours far apart.
+const PALETTE: &Palette = &theme::ROSE_PINE;
+const BASE: Color = PALETTE.base;
+const INK: Color = PALETTE.love;
+const OTHER: Color = PALETTE.foam;
 
 /// The Unicode name of each glyph an octant cell can draw. Python's
 /// `unicodedata` wrote the file, so the names do not come from the table
@@ -104,7 +108,7 @@ fn pixels(name: &str) -> u8 {
 
 /// One cell of `pixels`, in the order of the glyph's bits, as drawn.
 fn draw(pixels: [Color; 8]) -> Cell {
-    let mut canvas = Canvas::new(1, 1, BASE);
+    let mut canvas = Canvas::new(1, 1, PALETTE);
     for (pixel, colour) in pixels.into_iter().enumerate() {
         canvas.set(pixel % CELL_WIDTH, pixel / CELL_WIDTH, colour);
     }
@@ -310,7 +314,7 @@ fn a_tie_goes_to_the_first_pixel() {
 #[test]
 fn a_canvas_covers_its_cells_in_the_base() {
     // Given:
-    let canvas = Canvas::new(3, 2, BASE);
+    let canvas = Canvas::new(3, 2, PALETTE);
 
     // When, then:
     assert_eq!((canvas.width(), canvas.height()), (6, 8));
@@ -334,7 +338,7 @@ fn a_canvas_covers_its_cells_in_the_base() {
 #[test]
 fn a_pixel_past_an_edge_is_dropped() {
     // Given:
-    let mut canvas = Canvas::new(1, 1, BASE);
+    let mut canvas = Canvas::new(1, 1, PALETTE);
 
     // When:
     canvas.set(1, 2, INK);
@@ -364,7 +368,7 @@ fn a_pixel_past_an_edge_is_dropped() {
 #[test]
 fn each_cell_lands_in_its_place_in_the_area() {
     // Given:
-    let mut canvas = Canvas::new(3, 3, BASE);
+    let mut canvas = Canvas::new(3, 3, PALETTE);
     canvas.set(1, 4, INK);
     canvas.set(5, 7, INK);
     let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 6));

@@ -108,7 +108,7 @@ impl Scene for Fire {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
         for y in 0..self.rows.min(canvas.height()) {
             for x in 0..self.width.min(canvas.width()) {
                 let heat = self.heat[y * self.width + x];
