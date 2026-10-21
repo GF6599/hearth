@@ -2,12 +2,12 @@
 
 mod pixels;
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::murmuration::{
     FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration, PIXELS_PER_BIRD,
@@ -21,12 +21,9 @@ use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 
-/// The colours a bird draws in, faint and bright, and the hawk's.
-const FLIGHT: [Color; 3] = [
-    theme::ROSE_PINE.subtle,
-    theme::ROSE_PINE.text,
-    theme::ROSE_PINE.love,
-];
+/// The steps of a share at which a test reads a mix, fine enough that a
+/// share between two steps rounds to a colour one level from either.
+const SHARE_STEPS: u16 = 4096;
 
 fn ticked(seed: u64, area: Rect, ticks: usize) -> Murmuration {
     let mut scene = Murmuration::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE);
@@ -51,10 +48,109 @@ fn pixels_in(buffer: &Buffer, area: Rect, colours: &[Color]) -> BTreeSet<(usize,
         .collect()
 }
 
-/// Every lit pixel of a render, a bird or the hawk, in pixels from the top left
-/// of the area.
-fn lit_pixels(buffer: &Buffer, area: Rect) -> BTreeSet<(usize, usize)> {
-    pixels_in(buffer, area, &FLIGHT)
+/// How far `colour` lies along the mix from `from` toward `to`, from 0 to
+/// 1, or none for a colour off it.
+fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
+    static MIXES: OnceLock<Mutex<HashMap<(Color, Color), HashMap<Color, u16>>>> = OnceLock::new();
+    let mut mixes = MIXES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    let mixes = mixes.entry((from, to)).or_insert_with(|| {
+        let mut steps = HashMap::new();
+        for step in 0..=SHARE_STEPS {
+            let mix = octant::mix(from, to, f32::from(step) / f32::from(SHARE_STEPS));
+            steps.entry(mix).or_insert(step);
+        }
+        steps
+    });
+    let Color::Rgb(r, g, b) = colour else {
+        return None;
+    };
+    if let Some(step) = mixes.get(&colour) {
+        return Some(f32::from(*step) / f32::from(SHARE_STEPS));
+    }
+    let near = |channel: u8| channel.saturating_sub(1)..=channel.saturating_add(1);
+    near(r)
+        .flat_map(|r| near(g).flat_map(move |g| near(b).map(move |b| Color::Rgb(r, g, b))))
+        .find_map(|near| mixes.get(&near))
+        .map(|step| f32::from(*step) / f32::from(SHARE_STEPS))
+}
+
+/// Whether `colour` shows a bird: lighter than the lightest role of the
+/// sky by an eighth of the way to subtle, the faintest a bird draws in.
+fn lit_by_a_bird(colour: Color) -> bool {
+    let (sky, faint) = (
+        luma(theme::ROSE_PINE.overlay),
+        luma(theme::ROSE_PINE.subtle),
+    );
+    luma(colour) * 8 >= sky * 8 + (faint - sky)
+}
+
+/// Every pixel of the sky a bird lights, in pixels from the top left of
+/// the area, with its lightness.
+fn lit_pixels(buffer: &Buffer, area: Rect) -> BTreeMap<(usize, usize), u32> {
+    let sky = usize::from(tree_rows(buffer, &theme::ROSE_PINE)[0] - area.y) * CELL_HEIGHT;
+    pixels::showing(buffer, area, lit_by_a_bird)
+        .into_iter()
+        .filter(|((_, y), _)| *y < sky)
+        .map(|(place, colour)| (place, luma(colour)))
+        .collect()
+}
+
+/// The colour most pixels of each row of pixels show, from the top.
+fn rows_of(buffer: &Buffer, area: Rect) -> Vec<Color> {
+    let grid = pixels::grid(buffer, area, |_, cell| {
+        pixels::shown(cell).unwrap_or([Color::Reset; pixels::PIXELS])
+    });
+    grid.iter()
+        .map(|row| {
+            let mut counts: Vec<(Color, usize)> = Vec::new();
+            for colour in row {
+                match counts.iter_mut().find(|(each, _)| each == colour) {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((*colour, 1)),
+                }
+            }
+            counts
+                .into_iter()
+                .max_by_key(|(_, count)| *count)
+                .map_or(Color::Reset, |(colour, _)| colour)
+        })
+        .collect()
+}
+
+/// Each pixel of the hawk, flying at `height` pixels from the top, with
+/// how far it lies along the mix from the sky of its row toward love: every
+/// pixel within a cell of its height a quarter of the way or more along
+/// that mix. Near the sky every mix comes close to every other, so a faint
+/// bird would read as the hawk too.
+fn hawk_pixels(buffer: &Buffer, area: Rect, height: f32) -> BTreeMap<(usize, usize), f32> {
+    let skies = rows_of(buffer, area);
+    let rows =
+        (height - CELL_HEIGHT as f32).max(0.0) as usize..=(height + CELL_HEIGHT as f32) as usize;
+    pixels::showing(buffer, area, |_| true)
+        .into_iter()
+        .filter(|((_, y), _)| rows.contains(y))
+        .filter_map(|((x, y), colour)| {
+            let sky = skies[y];
+            if colour == sky {
+                return None;
+            }
+            let share = share_on(colour, sky, theme::ROSE_PINE.love)?;
+            (share >= 0.25).then_some(((x, y), share))
+        })
+        .collect()
+}
+
+/// The pixels of the cell that holds `pixel`.
+fn cell_of(pixel: (usize, usize)) -> impl Iterator<Item = (usize, usize)> {
+    let (left, top) = (
+        pixel.0 - pixel.0 % CELL_WIDTH,
+        pixel.1 - pixel.1 % CELL_HEIGHT,
+    );
+    (0..CELL_WIDTH * CELL_HEIGHT)
+        .map(move |index| (left + index % CELL_WIDTH, top + index / CELL_WIDTH))
 }
 
 fn pixels_of(area: Rect) -> (f32, f32) {
@@ -96,13 +192,16 @@ fn the_flock_grows_with_the_pane_within_its_bounds() {
 
 /// Given: the scene on a hundred by thirty area, fifty ticks in.
 /// When: it renders.
-/// Then: the pixels lit in a bird's colour are the pixels the birds sit on,
-/// no more and no fewer.
+/// Then: every bird lights the pixel it sits on or one beside it, and every
+/// pixel a bird lights lies in a cell with a pixel within one pixel of a
+/// bird. A bird shares its light between the four pixels nearest its
+/// middle, and a cell shows two colours, so its light can fall on any pixel
+/// of the cell.
 ///
-/// Why it matters: a wrong bit in the octant table draws a bird one pixel
-/// off, and the folds of the flock smear.
+/// Why it matters: a wrong bit in the octant table draws a bird away from
+/// its place, and the folds of the flock smear.
 #[test]
-fn every_bird_shows_as_a_pixel_and_every_pixel_is_a_bird() {
+fn every_bird_shows_where_it_sits_and_every_light_is_a_bird() {
     // Given:
     let scene = ticked(7, AREA, 50);
 
@@ -110,49 +209,64 @@ fn every_bird_shows_as_a_pixel_and_every_pixel_is_a_bird() {
     let shown = lit_pixels(&render(&scene, AREA, AREA), AREA);
 
     // Then:
-    let birds: BTreeSet<(usize, usize)> = scene
-        .birds()
-        .map(|(x, y)| (x as usize, y as usize))
-        .collect();
-    assert_eq!(shown, birds);
+    let birds: Vec<(f32, f32)> = scene.birds().collect();
+    let near = |place: (usize, usize), bird: (f32, f32)| {
+        (place.0 as f32 - bird.0.floor()).abs() <= 1.0
+            && (place.1 as f32 - bird.1.floor()).abs() <= 1.0
+    };
+    for bird in &birds {
+        assert!(
+            shown.keys().any(|pixel| near(*pixel, *bird)),
+            "no light at the bird at {bird:?}"
+        );
+    }
+    for pixel in shown.keys() {
+        assert!(
+            cell_of(*pixel).any(|place| birds.iter().any(|bird| near(place, *bird))),
+            "a light at {pixel:?} with no bird"
+        );
+    }
 }
 
 /// Given: the scene on a hundred by thirty area, a hundred ticks in.
 /// When: it renders.
-/// Then: every cell above the trees is octant pixels, with the birds of a
-/// cell in one shade over the sky: subtle for one or two birds, and text
-/// for three or more.
+/// Then: every cell above the trees is octant pixels, and the lightest
+/// pixel of a cell with three birds or more is lighter on average than
+/// that of a cell with one or two.
 ///
 /// Why it matters: a cell holds the sky and one shade, so the birds in it
 /// are what shades the flock from a faint edge to a bright core.
 #[test]
 fn a_cell_with_more_birds_is_brighter() {
     // Given, when:
-    let buffer = render(&ticked(7, AREA, 100), AREA, AREA);
+    let scene = ticked(7, AREA, 100);
+    let buffer = render(&scene, AREA, AREA);
 
     // Then:
-    let mut shades = BTreeSet::new();
     let first_tree = tree_rows(&buffer, &theme::ROSE_PINE)[0];
+    let mut birds: HashMap<(usize, usize), usize> = HashMap::new();
+    for (x, y) in scene.birds() {
+        *birds
+            .entry((x as usize / CELL_WIDTH, y as usize / CELL_HEIGHT))
+            .or_insert(0) += 1;
+    }
+    let (mut faint, mut bright) = ((0_u64, 0_u64), (0_u64, 0_u64));
     for position in AREA.positions().filter(|position| position.y < first_tree) {
         let shown = pixels::shown(&buffer[position])
             .unwrap_or_else(|| panic!("{:?} at {position:?}", buffer[position].symbol()));
-        let birds: Vec<Color> = shown
-            .into_iter()
-            .filter(|colour| FLIGHT.contains(colour))
-            .collect();
-        let expected: Color = match birds.len() {
-            0 => continue,
-            1 | 2 => theme::ROSE_PINE.subtle,
-            _ => theme::ROSE_PINE.text,
+        let lightest = u64::from(shown.into_iter().map(luma).max().unwrap_or(0));
+        let sum = match birds.get(&(usize::from(position.x), usize::from(position.y))) {
+            None => continue,
+            Some(1 | 2) => &mut faint,
+            Some(_) => &mut bright,
         };
-        assert!(
-            birds.iter().all(|colour| *colour == expected),
-            "{} birds in {birds:?} at {position:?}",
-            birds.len()
-        );
-        shades.insert(birds.len() > 2);
+        *sum = (sum.0 + lightest, sum.1 + 1);
     }
-    assert_eq!(shades.len(), 2, "the frame shows only one shade");
+    assert!(faint.1 > 0 && bright.1 > 0, "{faint:?} {bright:?}");
+    assert!(
+        bright.0 * faint.1 > faint.0 * bright.1,
+        "cells of three birds or more {bright:?}, of one or two {faint:?}"
+    );
 }
 
 /// Given: the scene on a hundred by thirty area.
@@ -293,51 +407,71 @@ fn tree_rows(buffer: &Buffer, palette: &Palette) -> Vec<u16> {
 
 /// Given: the scene on a hundred by thirty area.
 /// When: it ticks once and renders.
-/// Then: down the rows above the trees, the cell backgrounds go from base
-/// through surface to overlay, a row holds one colour or two neighbouring
-/// ones, no row goes back to a darker band, and each edge between two
-/// bands is a row that mixes them.
+/// Then: above the trees, away from the cells within a pixel of a bird,
+/// each row of pixels shows one colour, no row is darker than the row
+/// above it, the top row is base and the row over the trees is overlay,
+/// and the sky shows more colours than its three roles.
 ///
 /// Why it matters: the sky is dusk, light low over the trees and dark
-/// above, and a hard line between two bands reads as a fault in the
-/// terminal, not as a sky.
+/// above, and a sky in bands or in a checkered dither reads as stripes in
+/// the terminal, not as a sky.
 #[test]
-fn the_sky_lightens_in_dithered_bands_toward_the_trees() {
+fn the_sky_lightens_smoothly_toward_the_trees() {
     // Given, when:
-    let buffer = render(&ticked(7, AREA, 1), AREA, AREA);
+    let scene = ticked(7, AREA, 1);
+    let buffer = render(&scene, AREA, AREA);
 
     // Then:
     let palette = &theme::ROSE_PINE;
-    let bands = [palette.base, palette.surface, palette.overlay];
-    let trees = tree_rows(&buffer, palette);
-    let sky = 0..*trees.first().expect("no trees");
+    let flown: BTreeSet<(usize, usize)> = scene
+        .birds()
+        .flat_map(|(x, y)| {
+            let (x, y) = (x.floor() as usize, y.floor() as usize);
+            [
+                (x.saturating_sub(1), y.saturating_sub(1)),
+                (x + 1, y + 1),
+                (x.saturating_sub(1), y + 1),
+                (x + 1, y.saturating_sub(1)),
+            ]
+        })
+        .map(|(x, y)| (x / CELL_WIDTH, y / CELL_HEIGHT))
+        .collect();
+    let sky = usize::from(tree_rows(&buffer, palette)[0]) * CELL_HEIGHT;
+    let grid = pixels::grid(&buffer, AREA, |_, cell| {
+        pixels::shown(cell).unwrap_or([Color::Reset; pixels::PIXELS])
+    });
     let mut rows = Vec::new();
-    for y in sky {
-        let used: BTreeSet<usize> = (0..AREA.width)
-            .map(|x| {
-                let bg = buffer[(x, y)].bg;
-                bands
-                    .iter()
-                    .position(|band| *band == bg)
-                    .unwrap_or_else(|| panic!("{bg:?} at ({x}, {y})"))
+    for (y, row) in grid.iter().enumerate().take(sky) {
+        let colours: BTreeSet<(u8, u8, u8)> = row
+            .iter()
+            .enumerate()
+            .filter(|(x, _)| !flown.contains(&(x / CELL_WIDTH, y / CELL_HEIGHT)))
+            .map(|(_, colour)| match colour {
+                Color::Rgb(r, g, b) => (*r, *g, *b),
+                other => panic!("{other:?} in row {y}"),
             })
             .collect();
-        let (low, high) = (*used.first().unwrap(), *used.last().unwrap());
-        assert!(high - low <= 1, "row {y}: {used:?}");
-        rows.push((low, high));
+        assert_eq!(colours.len(), 1, "row {y}: {colours:?}");
+        let (r, g, b) = colours.into_iter().next().unwrap();
+        rows.push(Color::Rgb(r, g, b));
     }
-    assert!(rows.windows(2).all(|pair| pair[0] <= pair[1]), "{rows:?}");
-    assert_eq!(rows.first(), Some(&(0, 0)), "{rows:?}");
-    assert_eq!(rows.last(), Some(&(2, 2)), "{rows:?}");
-    assert!(rows.contains(&(0, 1)) && rows.contains(&(1, 2)), "{rows:?}");
+    assert!(
+        rows.windows(2).all(|pair| luma(pair[0]) <= luma(pair[1])),
+        "{rows:?}"
+    );
+    assert_eq!(rows.first(), Some(&palette.base), "{rows:?}");
+    assert_eq!(rows.last(), Some(&palette.overlay), "{rows:?}");
+    let shades: BTreeSet<u32> = rows.iter().map(|colour| luma(*colour)).collect();
+    assert!(shades.len() > 3, "{} shades", shades.len());
 }
 
 /// Given: the scene on a hundred by thirty area.
 /// When: it ticks once and renders.
-/// Then: the tree rows hold pixels of muted trees or overlay sky, each
-/// column of pixels is sky above and tree below, the lowest row of pixels
-/// is all tree, and the trees stand at three or more heights, none of them
-/// filling every tree row.
+/// Then: the tree rows hold pixels on the mix from the overlay sky toward
+/// the muted trees, each column of pixels turns toward the trees from top
+/// to bottom and never back, the lowest row of pixels is all tree, and the
+/// trees, counted to the pixels at least half way to muted, stand at three
+/// or more heights, none of them filling every tree row.
 ///
 /// Why it matters: a pixel of tree with sky under it floats, and a tree
 /// line of one height reads as a wall, not as woods at dusk.
@@ -351,7 +485,7 @@ fn trees_rise_from_the_ground_in_muted() {
     let trees = tree_rows(&buffer, palette);
     let mut heights = BTreeSet::new();
     for x in 0..usize::from(AREA.width) * CELL_WIDTH {
-        let pixels: Vec<Color> = trees
+        let shares: Vec<f32> = trees
             .iter()
             .flat_map(|&y| {
                 let position = ((x / CELL_WIDTH) as u16, y);
@@ -359,20 +493,55 @@ fn trees_rise_from_the_ground_in_muted() {
                     .unwrap_or_else(|| panic!("{:?} at {position:?}", buffer[position].symbol()));
                 (0..CELL_HEIGHT).map(move |row| shown[row * CELL_WIDTH + x % CELL_WIDTH])
             })
+            .map(|colour| {
+                share_on(colour, palette.overlay, palette.muted)
+                    .unwrap_or_else(|| panic!("column {x}: {colour:?}"))
+            })
             .collect();
-        let sky = pixels.iter().take_while(|p| **p == palette.overlay).count();
         assert!(
-            pixels[sky..].iter().all(|p| *p == palette.muted),
-            "column {x}: {pixels:?}"
+            shares.windows(2).all(|pair| pair[0] <= pair[1]),
+            "column {x}: {shares:?}"
         );
-        assert!(sky < pixels.len(), "column {x} has no ground");
-        heights.insert(pixels.len() - sky);
+        let ground = buffer[((x / CELL_WIDTH) as u16, *trees.last().unwrap())].clone();
+        assert_eq!(
+            pixels::shown(&ground).map(|shown| shown[pixels::PIXELS - CELL_WIDTH + x % CELL_WIDTH]),
+            Some(palette.muted),
+            "column {x} has no ground"
+        );
+        heights.insert(shares.iter().filter(|share| **share >= 0.5).count());
     }
     assert!(heights.len() >= 3, "{heights:?}");
     assert!(
         heights.iter().all(|h| *h < trees.len() * CELL_HEIGHT),
         "a tree fills every row: {heights:?}"
     );
+}
+
+/// The tops of the trees mix into the sky.
+/// Given: the scene on a hundred by thirty area.
+/// When: it ticks once and renders.
+/// Then: some pixel of the tree rows lies part way along the mix from the
+/// overlay sky toward the muted trees, neither of them.
+///
+/// Why it matters: a crown of whole pixels steps up in blocks, and reads as
+/// a stair and not as a rounded tree.
+#[test]
+fn the_tops_of_the_trees_mix_into_the_sky() {
+    // Given, when:
+    let buffer = render(&ticked(7, AREA, 1), AREA, AREA);
+
+    // Then:
+    let palette = &theme::ROSE_PINE;
+    let first = usize::from(tree_rows(&buffer, palette)[0]) * CELL_HEIGHT;
+    let soft = pixels::showing(&buffer, AREA, |colour| {
+        colour != palette.overlay && colour != palette.muted
+    })
+    .into_iter()
+    .filter(|((_, y), colour)| {
+        *y >= first && share_on(*colour, palette.overlay, palette.muted).is_some()
+    })
+    .count();
+    assert!(soft > 0, "no pixel of the trees mixes into the sky");
 }
 
 /// Given: the scene on a hundred by thirty area.
@@ -412,8 +581,8 @@ fn luma(colour: Color) -> u32 {
 
 /// Given: the scene in each theme.
 /// When: it ticks once and renders.
-/// Then: the top row of the sky is the darkest of base, surface and
-/// overlay, and the row above the trees is the lightest.
+/// Then: the top row of pixels of the sky is the darkest of base, surface
+/// and overlay, and the row of pixels over the trees is the lightest.
 ///
 /// Why it matters: dusk is light low over the trees. A light theme orders
 /// its three roles another way, and a sky that is brightest in the middle
@@ -430,10 +599,13 @@ fn every_theme_lights_the_sky_low_over_the_trees() {
         let roles = [palette.base, palette.surface, palette.overlay];
         let darkest = roles.iter().copied().min_by_key(|c| luma(*c)).unwrap();
         let lightest = roles.iter().copied().max_by_key(|c| luma(*c)).unwrap();
-        let low = tree_rows(&buffer, palette)[0] - 1;
-        for x in 0..AREA.width {
-            assert_eq!(buffer[(x, 0)].bg, darkest, "{name}: top at {x}");
-            assert_eq!(buffer[(x, low)].bg, lightest, "{name}: low at {x}");
+        let low = usize::from(tree_rows(&buffer, palette)[0]) * CELL_HEIGHT - 1;
+        let grid = pixels::grid(&buffer, AREA, |_, cell| {
+            pixels::shown(cell).unwrap_or([Color::Reset; pixels::PIXELS])
+        });
+        for x in 0..usize::from(AREA.width) * CELL_WIDTH {
+            assert_eq!(grid[0][x], darkest, "{name}: top at {x}");
+            assert_eq!(grid[low][x], lightest, "{name}: low at {x}");
         }
     }
 }
@@ -531,8 +703,11 @@ fn the_flock_opens_around_the_hawk() {
 /// Given: the scene on a hundred by thirty area, ticked until the hawk is
 /// in the middle third of the pane.
 /// When: it renders.
-/// Then: some pixels are in love, and every one of them is within four
-/// pixels across and two up or down of the hawk.
+/// Then: some pixels lie on the mix from the sky of their row toward love,
+/// one of them at least half way, and every one of them lies in a cell
+/// with a pixel within four pixels across and two up or down of the hawk.
+/// A cell shows two colours, so the hawk's colour can fall on any pixel of
+/// a cell it crosses.
 ///
 /// Why it matters: a pixel in love away from the hawk reads as a smear of
 /// it or as a second hawk.
@@ -554,35 +729,119 @@ fn the_hawk_draws_in_love_over_the_flock() {
     let buffer = render(&scene, AREA, AREA);
 
     // Then:
-    let love = pixels_in(&buffer, AREA, &[theme::ROSE_PINE.love]);
-    for (x, y) in &love {
-        let (x, y) = (*x as f32, *y as f32);
+    let love = hawk_pixels(&buffer, AREA, hy);
+    for pixel in love.keys() {
         assert!(
-            (x - hx).abs() <= 4.0 && (y - hy).abs() <= 2.0,
-            "pixel ({x}, {y}) in love, the hawk at ({hx}, {hy})"
+            cell_of(*pixel)
+                .any(|(x, y)| { (x as f32 - hx).abs() <= 4.0 && (y as f32 - hy).abs() <= 2.0 }),
+            "pixel {pixel:?} toward love, the hawk at ({hx}, {hy})"
         );
     }
-    assert!(!love.is_empty(), "the hawk is not drawn");
+    assert!(
+        love.values().any(|share| *share >= 0.5),
+        "the hawk is not drawn: {love:?}"
+    );
+}
+
+/// A bird alone shares its light between the pixels it overlaps.
+/// Given: the scene on a hundred by thirty area, a hundred ticks in.
+/// When: it ticks and renders for half a minute.
+/// Then: birds fly alone, with no other bird within `ALONE` pixels, and
+/// some of them light two pixels or more round their places.
+///
+/// Why it matters: a bird that lights one whole pixel jumps from pixel to
+/// pixel, and the flock reads as a grid of dots and not as birds in the
+/// air.
+#[test]
+fn a_bird_alone_shares_its_light_between_the_pixels_it_overlaps() {
+    // Given:
+    let mut scene = ticked(7, AREA, 100);
+    let (mut most, mut seen) = (0, 0);
+
+    for _ in 0..500 {
+        // When:
+        scene.tick(AREA);
+        let lit = lit_pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let birds: Vec<(f32, f32)> = scene.birds().collect();
+        for (index, bird) in birds.iter().enumerate() {
+            let alone = birds.iter().enumerate().all(|(other, near)| {
+                other == index || (near.0 - bird.0).hypot(near.1 - bird.1) > ALONE
+            });
+            if !alone {
+                continue;
+            }
+            seen += 1;
+            let (x, y) = (bird.0.floor(), bird.1.floor());
+            let round = lit
+                .keys()
+                .filter(|(px, py)| (*px as f32 - x).abs() <= 1.0 && (*py as f32 - y).abs() <= 1.0)
+                .count();
+            most = most.max(round);
+        }
+    }
+    assert!(seen > 0, "no bird flew alone");
+    assert!(most >= 2, "a bird alone lights at most {most} pixels");
+}
+
+/// The hawk mixes into the sky at its edges.
+/// Given: the scene on a hundred by thirty area, ticked until the hawk is
+/// in the middle third of the pane.
+/// When: it renders.
+/// Then: the hawk's pixels lie at three or more places along the mix from
+/// the sky toward love.
+///
+/// Why it matters: a hawk of whole pixels in one colour reads as a stamp
+/// that steps across the sky, and not as a bird.
+#[test]
+fn the_hawk_mixes_into_the_sky_at_its_edges() {
+    // Given:
+    let (width, _) = pixels_of(AREA);
+    let mut scene = Murmuration::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+    let (_, hy) = (0..HAWK_EVERY.end() + 600)
+        .find_map(|_| {
+            scene.tick(AREA);
+            scene
+                .hawk()
+                .filter(|(x, _)| *x > width / 3.0 && *x < width * 2.0 / 3.0)
+        })
+        .expect("no hawk reached the middle third");
+
+    // When:
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let shares: BTreeSet<u32> = hawk_pixels(&buffer, AREA, hy)
+        .values()
+        .map(|share| (share * f32::from(SHARE_STEPS)) as u32)
+        .collect();
+    assert!(shares.len() >= 3, "the hawk shows {shares:?}");
 }
 
 /// The shares of a tick that the frames between two ticks show.
 const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
-/// The colours a bird draws in, faint and bright.
-const BIRDS: [Color; 2] = [theme::ROSE_PINE.subtle, theme::ROSE_PINE.text];
 /// No other bird comes this close to a bird that a test follows alone, in
 /// pixels, on either tick. A bird moves less than two pixels a tick, so
 /// the two never share a pixel between the ticks.
 const ALONE: f32 = 8.0;
 
-/// The pixels a place can show in from one tick to the next: every pixel
-/// from the pixel of the first place to the pixel of the second, on both
-/// axes.
+/// The pixels a bird can light from one tick to the next: every pixel from
+/// the pixel of the first place to the pixel of the second, on both axes,
+/// and one beside them, as a bird shares its light with the pixels nearest
+/// its middle.
 fn span(from: (f32, f32), to: (f32, f32)) -> ((usize, usize), (usize, usize)) {
     let (a, b) = (
         (from.0 as usize, from.1 as usize),
         (to.0 as usize, to.1 as usize),
     );
-    ((a.0.min(b.0), a.1.min(b.1)), (a.0.max(b.0), a.1.max(b.1)))
+    (
+        (
+            a.0.min(b.0).saturating_sub(1),
+            a.1.min(b.1).saturating_sub(1),
+        ),
+        (a.0.max(b.0) + 1, a.1.max(b.1) + 1),
+    )
 }
 
 fn within(pixel: (usize, usize), span: ((usize, usize), (usize, usize))) -> bool {
@@ -593,10 +852,13 @@ fn within(pixel: (usize, usize), span: ((usize, usize), (usize, usize))) -> bool
 /// Given: the scene on a hundred by thirty area, a hundred ticks in.
 /// When: on each tick for half a minute, it renders at a quarter, a half
 /// and three quarters of the way to its next tick, then ticks.
-/// Then: every pixel in a bird's colour lies between the pixels of some bird
-/// on the two ticks, and between its two pixels each bird shows. Of the
-/// birds that fly alone and change pixel from one tick to the next, more
-/// than half show in a new pixel before the tick.
+/// Then: every pixel a bird lights lies in a cell with a pixel between the
+/// pixels of some bird on the two ticks, and between its two pixels each
+/// bird that flies alone shows. A cell shows two colours, so a bird's light
+/// can fall on any pixel of a cell it crosses, and in a fold of the flock a
+/// faint bird takes the colour of the brighter birds round it. Of the birds
+/// that fly alone and change pixel from one tick to the next, more than
+/// half show their lightest pixel in a new pixel before the tick.
 ///
 /// Why it matters: at a quarter speed a bird that moves only on a tick
 /// jumps once every sixteen frames, and the flock reads as a stutter and
@@ -611,11 +873,11 @@ fn each_bird_glides_between_ticks() {
         let before: Vec<(f32, f32)> = scene.birds().collect();
 
         // When:
-        let frames: Vec<BTreeSet<(usize, usize)>> = BETWEEN
+        let frames: Vec<BTreeMap<(usize, usize), u32>> = BETWEEN
             .iter()
             .map(|&progress| {
                 scene.set_progress(progress);
-                pixels_in(&render(&scene, AREA, AREA), AREA, &BIRDS)
+                lit_pixels(&render(&scene, AREA, AREA), AREA)
             })
             .collect();
         scene.set_progress(0.0);
@@ -628,36 +890,43 @@ fn each_bird_glides_between_ticks() {
             .zip(&after)
             .map(|(from, to)| span(*from, *to))
             .collect();
+        let alone = |index: usize| {
+            let (from, to) = (before[index], after[index]);
+            before.iter().zip(&after).enumerate().all(|(other, near)| {
+                other == index
+                    || ((near.0.0 - from.0).hypot(near.0.1 - from.1) > ALONE
+                        && (near.1.0 - to.0).hypot(near.1.1 - to.1) > ALONE)
+            })
+        };
         for (progress, shown) in BETWEEN.iter().zip(&frames) {
-            for pixel in shown {
+            for pixel in shown.keys() {
                 assert!(
-                    spans.iter().any(|span| within(*pixel, *span)),
+                    cell_of(*pixel).any(|place| spans.iter().any(|span| within(place, *span))),
                     "tick {tick}: a bird at {pixel:?} at {progress} of a tick, between no two places"
                 );
             }
             for (index, span) in spans.iter().enumerate() {
+                if !alone(index) {
+                    continue;
+                }
                 assert!(
-                    shown.iter().any(|pixel| within(*pixel, *span)),
+                    shown.keys().any(|pixel| within(*pixel, *span)),
                     "tick {tick}: bird {index} not between {span:?} at {progress} of a tick"
                 );
             }
         }
         for (index, (from, to)) in before.iter().zip(&after).enumerate() {
-            let alone = before.iter().zip(&after).enumerate().all(|(other, near)| {
-                other == index
-                    || ((near.0.0 - from.0).hypot(near.0.1 - from.1) > ALONE
-                        && (near.1.0 - to.0).hypot(near.1.1 - to.1) > ALONE)
-            });
             let first = (from.0 as usize, from.1 as usize);
-            if !alone || first == (to.0 as usize, to.1 as usize) {
+            if !alone(index) || first == (to.0 as usize, to.1 as usize) {
                 continue;
             }
             moved += 1;
-            let shown_at = |shown: &BTreeSet<(usize, usize)>| {
+            let shown_at = |shown: &BTreeMap<(usize, usize), u32>| {
                 shown
                     .iter()
-                    .copied()
-                    .find(|pixel| within(*pixel, spans[index]))
+                    .filter(|(pixel, _)| within(**pixel, spans[index]))
+                    .max_by_key(|(_, light)| **light)
+                    .map(|(pixel, _)| *pixel)
             };
             early += usize::from(frames.iter().any(|shown| shown_at(shown) != Some(first)));
         }
@@ -673,9 +942,14 @@ fn each_bird_glides_between_ticks() {
 /// Given: the scene on a hundred by thirty area.
 /// When: on each tick of a pass of the hawk, it renders at a quarter, a half
 /// and three quarters of the way to its next tick, then ticks.
-/// Then: while the hawk is well inside the pane on both ticks, its front
-/// pixel never goes back. Of the ticks on which its front changes pixel,
-/// more than half show the new pixel before the tick.
+/// Then: while the hawk is well inside the pane on both ticks, the middle
+/// of its pixels, each weighed by how far it lies toward love, never goes
+/// back from a frame to the frame half a tick later. Of the ticks on which
+/// that middle moves, more than half show it moved at three quarters of a
+/// tick. The hawk mixes into the sky at its edges, so its middle moves with
+/// it by less than a pixel, and a cell of two colours moves the middle of
+/// a shape by a few hundredths of a pixel from frame to frame, less than
+/// the hawk moves in half a tick.
 ///
 /// Why it matters: at a quarter speed a hawk that moves only on a tick
 /// jumps once every sixteen frames, and its pass reads as a stutter.
@@ -685,11 +959,14 @@ fn the_hawk_glides_between_ticks() {
     let (width, _) = pixels_of(AREA);
     let mut scene = Murmuration::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
     let (mut moved, mut early) = (0, 0);
-    let front = |buffer: &Buffer, heading: f32| {
-        pixels_in(buffer, AREA, &[theme::ROSE_PINE.love])
-            .into_iter()
-            .map(|(x, _)| heading * x as f32)
-            .fold(f32::MIN, f32::max)
+    let front = |buffer: &Buffer, heading: f32, height: f32| {
+        let pixels = hawk_pixels(buffer, AREA, height);
+        let weight: f32 = pixels.values().sum();
+        pixels
+            .iter()
+            .map(|((x, _), share)| heading * *x as f32 * share)
+            .sum::<f32>()
+            / weight.max(f32::MIN_POSITIVE)
     };
 
     for tick in 0..HAWK_EVERY.end() * 2 + 600 {
@@ -713,10 +990,13 @@ fn the_hawk_glides_between_ticks() {
 
         // Then:
         let heading = (to.0 - from.0).signum();
-        let fronts: Vec<f32> = frames.iter().map(|frame| front(frame, heading)).collect();
-        for pair in fronts.windows(2) {
+        let fronts: Vec<f32> = frames
+            .iter()
+            .map(|frame| front(frame, heading, from.1))
+            .collect();
+        for (earlier, later) in fronts.iter().zip(&fronts[2..]) {
             assert!(
-                pair[0] <= pair[1],
+                earlier <= later,
                 "tick {tick}: the hawk goes back from {from:?} to {to:?}: {fronts:?}"
             );
         }
