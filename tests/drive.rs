@@ -2,11 +2,12 @@
 
 mod pixels;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::drive::Drive;
 use hearth::scenes::typing::Speed;
@@ -42,6 +43,66 @@ const APART: &Palette = &Palette {
 };
 /// Ticks enough for the track to run straights and curves both ways.
 const RUN: u32 = 3000;
+/// The steps of a share at which a test reads a mix, fine enough that a
+/// share between two steps rounds to a colour one level from either.
+const SHARE_STEPS: u16 = 4096;
+
+/// The colours of a mix: each step a share rounds to, and each colour a
+/// test has asked about with what it found, so a colour seen on every frame
+/// is looked up once.
+#[derive(Default)]
+struct Mixes {
+    steps: HashMap<Color, u16>,
+    found: HashMap<Color, Option<u16>>,
+}
+
+/// How far `colour` lies along the mix from `from` toward `to`, from 0 to
+/// 1, or none for a colour off it.
+fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
+    static MIXES: OnceLock<Mutex<HashMap<(Color, Color), Mixes>>> = OnceLock::new();
+    let mut mixes = MIXES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    let mixes = mixes.entry((from, to)).or_insert_with(|| {
+        let mut steps = HashMap::new();
+        for step in 0..=SHARE_STEPS {
+            let mix = octant::mix(from, to, f32::from(step) / f32::from(SHARE_STEPS));
+            steps.entry(mix).or_insert(step);
+        }
+        Mixes {
+            steps,
+            found: HashMap::new(),
+        }
+    });
+    let Mixes { steps, found } = mixes;
+    let step =
+        *found.entry(colour).or_insert_with(|| {
+            let Color::Rgb(r, g, b) = colour else {
+                return None;
+            };
+            let near = |channel: u8| channel.saturating_sub(1)..=channel.saturating_add(1);
+            std::iter::once(colour)
+                .chain(near(r).flat_map(|r| {
+                    near(g).flat_map(move |g| near(b).map(move |b| Color::Rgb(r, g, b)))
+                }))
+                .find_map(|near| steps.get(&near).copied())
+        });
+    step.map(|step| f32::from(step) / f32::from(SHARE_STEPS))
+}
+
+/// How many pixels out from the road's edge a post stands at the least. A
+/// post keeps two pixels clear of the road's true edge, which lies up to
+/// half a pixel past the edge a test reads, and the road's soft edge
+/// reaches under two pixels out, in a colour near the post's.
+const POST_CLEAR: usize = 3;
+
+/// Whether `colour` shows a post: at least half way from the land toward
+/// muted.
+fn in_a_post(colour: Color) -> bool {
+    colour != PALETTE.base
+        && share_on(colour, PALETTE.base, PALETTE.muted).is_some_and(|share| share >= 0.5)
+}
 
 fn render(scene: &Drive, area: Rect, canvas: Rect) -> Buffer {
     let mut buffer = Buffer::empty(canvas);
@@ -59,10 +120,22 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
 }
 
 /// The left and right ends of the road in each pixel row that has road, from
-/// the top: the first and last pixel that is not land, sky or a post, in
-/// the colours of `palette`.
+/// the top: the first and last pixel that is not land or a post, in the
+/// colours of `palette`. The land, the posts and their soft edges lie on
+/// the mix from the base toward muted.
 fn road(rows: &[Vec<Color>], palette: &Palette) -> Vec<(usize, usize, usize)> {
-    let off_road = |colour: &Color| [palette.base, palette.muted].contains(colour);
+    let marks = [
+        palette.overlay,
+        palette.text,
+        palette.love,
+        palette.gold,
+        palette.iris,
+    ];
+    let off_road = |colour: &Color| {
+        *colour == palette.base
+            || *colour == palette.muted
+            || (!marks.contains(colour) && share_on(*colour, palette.base, palette.muted).is_some())
+    };
     rows.iter()
         .enumerate()
         .filter(|(_, row)| row.contains(&palette.overlay))
@@ -551,10 +624,11 @@ fn the_car_keeps_its_lane_and_leans_into_a_curve() {
 /// The posts beside the road grow as they come near and move outward.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over the track.
-/// Then: posts, upright runs of muted pixels, stand in every frame on both
-/// sides of the road. A post's height is the shorter of the pair at its
-/// row, because in a sharp bend a post can touch a farther one in its
-/// column. On each side a post two cells or more lower on the screen is no
+/// Then: posts, upright runs of pixels at least half way from the land
+/// toward muted and `POST_CLEAR` pixels or more clear of the road's edge,
+/// stand in every frame on both sides of the road. A post's height is the
+/// shorter of the pair at its row, because in a sharp bend a post can
+/// touch a farther one in its column. On each side a post two cells or more lower on the screen is no
 /// shorter by over half a cell and no nearer the road's middle than one
 /// above it, and when four cells or more lie between the lowest and the
 /// highest, the lowest is taller and further out. The lowest post on the
@@ -578,11 +652,17 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
         let rows = pixels(&render(&scene, AREA, AREA), AREA);
 
         // Then:
+        let road = road(&rows, PALETTE);
+        let clear = |x: usize, y: usize| {
+            road.iter()
+                .find(|(row, _, _)| *row == y)
+                .is_none_or(|(_, left, right)| x + POST_CLEAR <= *left || x >= right + POST_CLEAR)
+        };
         let mut posts: Vec<(usize, usize, usize)> = Vec::new();
         for x in 0..rows[0].len() {
             let mut run = 0;
             for (y, row) in rows.iter().enumerate() {
-                if row[x] == PALETTE.muted {
+                if in_a_post(row[x]) && clear(x, y) {
                     run += 1;
                 } else if run > 0 {
                     posts.push((x, y - 1, run));
@@ -593,7 +673,6 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
                 posts.push((x, rows.len() - 1, run));
             }
         }
-        let road = road(&rows, PALETTE);
         let middle_at = |y: usize| {
             road.iter()
                 .find(|(row, _, _)| *row == y)
@@ -987,32 +1066,59 @@ fn the_stripes_glide_between_ticks() {
     );
 }
 
-/// The middle of the moon across the pane, in pixels, when all of it
-/// shows: over five cells of pixels, clear of the sides of the pane and a
-/// cell or more above the road. The rows of the road are left out, because
-/// its stripes and the plates of the cars share the moon's colour.
+/// The middle of the moon's light across the pane, in pixels, when all of
+/// it shows: its pixels on the mix from the sky of their row toward text,
+/// each weighed by how far along it lies, with over five cells of them at
+/// least half way, clear of the sides of the pane and a cell or more above
+/// the road. The rows of the road are left out, because its stripes and
+/// the plates of the cars share the moon's colour.
 fn moon(rows: &[Vec<Color>]) -> Option<f32> {
-    let moon: Vec<(usize, usize)> = rows
+    let moon: Vec<(usize, usize, f32)> = rows
         .iter()
         .enumerate()
         .filter(|(_, row)| !row.contains(&PALETTE.overlay))
         .flat_map(|(y, row)| {
-            row.iter()
-                .enumerate()
-                .filter(|(_, colour)| **colour == PALETTE.text)
-                .map(move |(x, _)| (x, y))
+            let sky = sky_of(row);
+            row.iter().enumerate().filter_map(move |(x, colour)| {
+                let share = (*colour != sky)
+                    .then(|| share_on(*colour, sky, PALETTE.text))
+                    .flatten()?;
+                (share > 0.0).then_some((x, y, share))
+            })
         })
         .collect();
-    let lowest = moon.iter().map(|(_, y)| *y).max()?;
+    let lowest = moon.iter().map(|(_, y, _)| *y).max()?;
     let (left, right) = (
-        moon.iter().map(|(x, _)| *x).min()?,
-        moon.iter().map(|(x, _)| *x).max()?,
+        moon.iter().map(|(x, _, _)| *x).min()?,
+        moon.iter().map(|(x, _, _)| *x).max()?,
     );
-    let whole = moon.len() > 5 * CELL_WIDTH * CELL_HEIGHT
+    let bright = moon.iter().filter(|(_, _, share)| *share >= 0.5).count();
+    let whole = bright > 5 * CELL_WIDTH * CELL_HEIGHT
         && left > 0
         && right + 1 < rows[0].len()
         && lowest + CELL_HEIGHT < road_top(rows);
-    whole.then(|| moon.iter().map(|(x, _)| *x as f32).sum::<f32>() / moon.len() as f32)
+    let weight: f32 = moon.iter().map(|(_, _, share)| share).sum();
+    whole.then(|| {
+        moon.iter()
+            .map(|(x, _, share)| *x as f32 * share)
+            .sum::<f32>()
+            / weight
+    })
+}
+
+/// The colour most pixels of a row show, the sky in a row of the sky.
+fn sky_of(row: &[Color]) -> Color {
+    let mut counts: Vec<(Color, usize)> = Vec::new();
+    for colour in row {
+        match counts.iter_mut().find(|(each, _)| each == colour) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((*colour, 1)),
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map_or(Color::Reset, |(colour, _)| colour)
 }
 
 /// The moon and the cars ahead move on between ticks.
@@ -1105,4 +1211,235 @@ fn the_moon_and_the_cars_ahead_glide_between_ticks() {
         car_moved > 30 && car_early * 2 > car_moved,
         "a car ahead moved before the next tick in {car_early} of {car_moved} ticks"
     );
+}
+
+/// The sky lightens from the top toward the horizon.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders.
+/// Then: down the rows of the sky above the cell of the road's top, the
+/// colour most pixels of a row show starts at base, never gets darker, and
+/// takes more than three shades.
+///
+/// Why it matters: a flat black sky over the road reads as a hole, and a
+/// sky that glows low over the horizon reads as dusk.
+#[test]
+fn the_sky_lightens_toward_the_horizon() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    scene.tick(AREA);
+
+    // When:
+    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+    // Then:
+    let sky: Vec<Color> = rows[..road_top(&rows) / CELL_HEIGHT * CELL_HEIGHT]
+        .iter()
+        .map(|row| sky_of(row))
+        .collect();
+    assert_eq!(sky.first(), Some(&PALETTE.base), "{sky:?}");
+    let lightness = |colour: Color| match colour {
+        Color::Rgb(r, g, b) => 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b),
+        _ => 0,
+    };
+    assert!(
+        sky.windows(2)
+            .all(|pair| lightness(pair[0]) <= lightness(pair[1])),
+        "{sky:?}"
+    );
+    let shades: Vec<Color> = sky.iter().fold(Vec::new(), |mut shades, colour| {
+        if shades.last() != Some(colour) {
+            shades.push(*colour);
+        }
+        shades
+    });
+    assert!(shades.len() > 3, "{shades:?}");
+}
+
+/// The moon has a soft edge and a halo.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders over straights and curves.
+/// Then: on every frame where the moon shows whole, its pixels lie at
+/// three or more places part way along the mix from the sky of their row
+/// toward text, neither of them.
+///
+/// Why it matters: a moon of whole pixels in one colour reads as a
+/// stamped disc with a stair for an edge, and not as a light in the sky.
+#[test]
+fn the_moon_has_a_soft_edge_and_a_halo() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let mut shown = 0;
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        if moon(&rows).is_none() {
+            continue;
+        }
+
+        // Then:
+        let road = road_top(&rows);
+        let mut shares: Vec<u32> = rows[..road]
+            .iter()
+            .flat_map(|row| {
+                let sky = sky_of(row);
+                row.iter().filter_map(move |colour| {
+                    let share = share_on(*colour, sky, PALETTE.text)?;
+                    (*colour != sky && *colour != PALETTE.text)
+                        .then_some((share * f32::from(SHARE_STEPS)) as u32)
+                })
+            })
+            .collect();
+        shares.sort_unstable();
+        shares.dedup();
+        assert!(shares.len() >= 3, "tick {tick}: the moon shows {shares:?}");
+        shown += 1;
+    }
+    assert!(shown > 10, "the moon showed whole in {shown} frames");
+}
+
+/// The road's edges mix into the land.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders over straights and curves.
+/// Then: on every frame some pixel lies part way along the mix from the
+/// land toward the red of the rumble strip, neither of them.
+///
+/// Why it matters: an edge of whole pixels steps down the screen in
+/// stairs, and the stairs crawl as the road bends.
+#[test]
+fn the_road_edges_mix_into_the_land() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let soft = rows.iter().flatten().any(|colour| {
+            *colour != PALETTE.base
+                && *colour != PALETTE.love
+                && share_on(*colour, PALETTE.base, PALETTE.love).is_some()
+        });
+        assert!(soft, "tick {tick}: no pixel mixes the land and the rumble");
+    }
+}
+
+/// The car is drawn a pixel row at a time.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders.
+/// Then: some row of the car's pixels in iris differs from both the row
+/// above it and the row below it.
+///
+/// Why it matters: a car drawn in rows two pixels tall shows half the
+/// detail a cell holds, and its roof steps down in stairs.
+#[test]
+fn the_car_is_drawn_a_pixel_row_at_a_time() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    scene.tick(AREA);
+
+    // When:
+    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+    // Then:
+    let car: Vec<Vec<usize>> = rows
+        .iter()
+        .map(|row| (0..row.len()).filter(|x| row[*x] == PALETTE.iris).collect())
+        .filter(|row: &Vec<usize>| !row.is_empty())
+        .collect();
+    assert!(
+        car.windows(3)
+            .any(|three| three[1] != three[0] && three[1] != three[2]),
+        "{car:?}"
+    );
+}
+
+/// The car's taillights glow on the road beside its tail.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders.
+/// Then: in the rows of the car's pixels in iris, some pixel beside the
+/// car lies part way along the mix from the road toward love, neither of
+/// them.
+///
+/// Why it matters: lights that cast no glow read as red paint, and the
+/// car as a sticker on the road.
+#[test]
+fn the_taillights_glow_on_the_road() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    scene.tick(AREA);
+
+    // When:
+    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+    // Then:
+    let glow = rows
+        .iter()
+        .filter(|row| row.contains(&PALETTE.iris))
+        .any(|row| {
+            let (left, right) = (
+                row.iter()
+                    .position(|colour| *colour == PALETTE.iris)
+                    .unwrap(),
+                row.iter()
+                    .rposition(|colour| *colour == PALETTE.iris)
+                    .unwrap(),
+            );
+            row.iter().enumerate().any(|(x, colour)| {
+                (x < left || x > right)
+                    && *colour != PALETTE.overlay
+                    && *colour != PALETTE.love
+                    && share_on(*colour, PALETTE.overlay, PALETTE.love).is_some()
+            })
+        });
+    assert!(glow, "no glow beside the car");
+}
+
+/// The top of a post mixes into what stands behind it.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders over the track.
+/// Then: on some frame, `POST_CLEAR` pixels or more clear of the road's
+/// edge, the top pixel of a post lies part way along the mix from the land
+/// toward muted, neither of them.
+///
+/// Why it matters: a post that grows by whole cells jumps as it comes near,
+/// where a post that grows by a share of a pixel comes on smoothly.
+#[test]
+fn the_top_of_a_post_mixes_into_the_land() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let mut soft = 0;
+
+    for tick in 0..RUN {
+        // When:
+        scene.tick(AREA);
+        if tick % 25 != 0 {
+            continue;
+        }
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let road = road(&rows, PALETTE);
+        for (y, left, right) in road {
+            for x in
+                (0..left.saturating_sub(POST_CLEAR - 1)).chain(right + POST_CLEAR..rows[y].len())
+            {
+                let (colour, below) = (rows[y][x], rows.get(y + 1).map(|row| row[x]));
+                let part_way = colour != PALETTE.base
+                    && colour != PALETTE.muted
+                    && share_on(colour, PALETTE.base, PALETTE.muted).is_some();
+                soft += usize::from(part_way && below == Some(PALETTE.muted));
+            }
+        }
+    }
+    assert!(soft > 0, "no post's top mixes into the land");
 }
