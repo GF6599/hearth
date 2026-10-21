@@ -388,3 +388,62 @@ fn each_cell_lands_in_its_place_in_the_area() {
         }
     }
 }
+
+/// What lies on a pixel in the settle tests, from the lowest layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Liquid {
+    Water,
+    Foam,
+}
+
+impl octant::Layer for Liquid {
+    fn joins(self, top: Self) -> bool {
+        self == Liquid::Water && top == Liquid::Foam
+    }
+}
+
+/// The same layers, with no layer that joins another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Apart(Liquid);
+
+impl octant::Layer for Apart {}
+
+/// A layer that joins the layer in front takes its colour, and one that
+/// does not takes the colour behind.
+/// Given: a cell whose top row is foam, whose middle rows are water, and
+/// whose bottom row is empty, once with water that joins the foam and once
+/// with water that does not.
+/// When: each cell settles.
+/// Then: the joined water shows the foam's colour, the other water shows
+/// the empty colour, and the empty row shows the empty colour in both.
+///
+/// Why it matters: water that drops to the bed behind a band of foam
+/// draws a gap through its lane.
+#[test]
+fn a_layer_that_joins_the_front_takes_its_colour() {
+    // Given:
+    let layer = |pixel: usize| match pixel / CELL_WIDTH {
+        0 => Some(Liquid::Foam),
+        1 | 2 => Some(Liquid::Water),
+        _ => None,
+    };
+    let colour = |liquid: Liquid| if liquid == Liquid::Foam { INK } else { OTHER };
+    let joined: [Option<(Liquid, Color)>; 8] =
+        std::array::from_fn(|pixel| layer(pixel).map(|liquid| (liquid, colour(liquid))));
+    let apart = joined.map(|pixel| pixel.map(|(liquid, colour)| (Apart(liquid), colour)));
+
+    // When:
+    let joined = octant::settle(joined, BASE);
+    let apart = octant::settle(apart, BASE);
+
+    // Then:
+    let expected = |water: Color| -> [Color; 8] {
+        std::array::from_fn(|pixel| match layer(pixel) {
+            Some(Liquid::Foam) => INK,
+            Some(Liquid::Water) => water,
+            None => BASE,
+        })
+    };
+    assert_eq!(joined, expected(INK));
+    assert_eq!(apart, expected(BASE));
+}
