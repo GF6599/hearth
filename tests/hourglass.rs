@@ -1,14 +1,16 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hearth::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::clock::Clock;
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::hourglass::{Hourglass, Lengths};
 use hearth::scenes::typing::Speed;
@@ -25,6 +27,7 @@ const FRAME: Color = PALETTE.pine;
 const WORK_SAND: Color = PALETTE.gold;
 const BREAK_SAND: Color = PALETTE.foam;
 const DONE: Color = PALETTE.iris;
+const TO_DO: Color = PALETTE.muted;
 const WORK: Duration = Lengths::DEFAULT.work;
 const BREAK: Duration = Lengths::DEFAULT.r#break;
 const LONG_BREAK: Duration = Lengths::DEFAULT.long_break;
@@ -53,29 +56,29 @@ fn render(scene: &Hourglass, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The lit braille dots of a render, in dots from the top left of the
-/// area, each with the colour of its cell.
+/// The lit pixels of a render, those in any colour but the base, in dots
+/// from the top left of the area, each with its colour.
 fn dots(buffer: &Buffer, area: Rect) -> Vec<((usize, usize), Color)> {
     let mut dots = Vec::new();
     for position in area.positions() {
-        let cell = &buffer[position];
-        let Some(code) = cell.symbol().chars().next().map(u32::from) else {
+        let Some(shown) = pixels::shown(&buffer[position]) else {
             continue;
         };
-        if !(0x2801..=0x28ff).contains(&code) {
-            continue;
-        }
-        for column in 0..CELL_WIDTH {
-            for row in 0..CELL_HEIGHT {
-                if (code - 0x2800) & braille::dot(column, row) != 0 {
-                    let x = usize::from(position.x - area.x) * CELL_WIDTH + column;
-                    let y = usize::from(position.y - area.y) * CELL_HEIGHT + row;
-                    dots.push(((x, y), cell.fg));
-                }
+        for (pixel, colour) in shown.into_iter().enumerate() {
+            if colour == PALETTE.base {
+                continue;
             }
+            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
+            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
+            dots.push(((x, y), colour));
         }
     }
     dots
+}
+
+/// Whether a cell draws a pixel in `colour`.
+fn shows(buffer: &Buffer, position: (u16, u16), colour: Color) -> bool {
+    pixels::shown(&buffer[position]).is_some_and(|shown| shown.contains(&colour))
 }
 
 /// The work sand above the neck and below it.
@@ -126,7 +129,7 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
             }
             let row = u16::try_from(y / CELL_HEIGHT).unwrap();
             let column = u16::try_from(x / CELL_WIDTH).unwrap();
-            let wall = |other: u16| buffer[(other, row)].fg == GLASS;
+            let wall = |other: u16| shows(&buffer, (other, row), GLASS);
             assert!(
                 (0..column).any(wall) && (column + 1..AREA.width).any(wall),
                 "a grain at {:?} outside the glass at {step:?}",
@@ -156,7 +159,7 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
     let held = |x: usize, y: usize| {
         let row = u16::try_from(y / CELL_HEIGHT).unwrap();
         let column = u16::try_from(x / CELL_WIDTH).unwrap();
-        buffer[(column, row)].fg == GLASS
+        shows(&buffer, (column, row), GLASS)
             || lit
                 .iter()
                 .any(|(dot, colour)| *dot == (x, y) && *colour == WORK_SAND)
@@ -288,28 +291,22 @@ fn the_glass_has_round_bulbs_in_a_frame() {
     let buffer = render(&scene, AREA, AREA);
 
     // Then:
+    // The hint's words can share the glass colour, and only the pixels of
+    // the canvas draw the glass. The posts are glyphs and not pixels.
     let cells = |row: u16, colour: Color| -> Vec<u16> {
         (0..AREA.width)
             .filter(|&column| {
-                buffer[(column, row)].fg == colour && buffer[(column, row)].symbol() != " "
+                let cell = &buffer[(column, row)];
+                match pixels::shown(cell) {
+                    Some(shown) => shown.contains(&colour),
+                    None => cell.fg == colour && colour != GLASS,
+                }
             })
             .collect()
     };
-    let braille = |row: u16, column: &u16| {
-        buffer[(*column, row)]
-            .symbol()
-            .chars()
-            .next()
-            .is_some_and(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
-    };
-    // The hint's words can share the glass colour, and only the glass is
-    // drawn in braille.
     let glass: Vec<(u16, u16, u16)> = (0..AREA.height)
         .filter_map(|row| {
-            let walls: Vec<u16> = cells(row, GLASS)
-                .into_iter()
-                .filter(|column| braille(row, column))
-                .collect();
+            let walls = cells(row, GLASS);
             Some((row, *walls.first()?, *walls.last()?))
         })
         .collect();
@@ -373,11 +370,24 @@ fn sand_in(buffer: &Buffer, area: Rect, colour: Color) -> (usize, usize) {
         })
 }
 
-/// The finished rounds the marks beside the glass show: full cells in the
+/// The finished rounds the marks beside the glass show: cells solid in the
 /// colour of a finished round.
 fn rounds_done(buffer: &Buffer, area: Rect) -> usize {
     area.positions()
-        .filter(|position| buffer[*position].fg == DONE && buffer[*position].symbol() == "\u{28ff}")
+        .filter(|position| pixels::shown(&buffer[*position]) == Some([DONE; 8]))
+        .count()
+}
+
+/// The rounds to come that the marks show: cells whose middle two rows of
+/// pixels are in the colour of a round to come, with the base above and
+/// below.
+fn rounds_to_do(buffer: &Buffer, area: Rect) -> usize {
+    let (base, mark) = (PALETTE.base, TO_DO);
+    area.positions()
+        .filter(|position| {
+            pixels::shown(&buffer[*position])
+                == Some([base, base, mark, mark, mark, mark, base, base])
+        })
         .count()
 }
 
@@ -426,9 +436,10 @@ fn the_glass_turns_at_the_end_of_a_phase_to_break_sand() {
 /// When: the clock runs through four work rounds, their breaks, the long
 /// break and into the next round, and the glass is read halfway through
 /// several phases.
-/// Then: the marks show the work rounds finished in the cycle, and the sand
-/// is in the work colour in work and the break colour in a break, also ten
-/// seconds after a short break after the fourth round would have ended.
+/// Then: the marks show the work rounds finished in the cycle as solid
+/// cells and the rest of the four as smaller blocks, and the sand is in the
+/// work colour in work and the break colour in a break, also ten seconds
+/// after a short break after the fourth round would have ended.
 ///
 /// Why it matters: the long break is the point of counting rounds, and
 /// marks that count wrong lose the cycle.
@@ -453,6 +464,11 @@ fn the_marks_count_the_rounds_and_the_long_break_follows_the_fourth() {
         // Then:
         let buffer = render(&scene, AREA, AREA);
         assert_eq!(rounds_done(&buffer, AREA), done, "rounds done at {at:?}");
+        assert_eq!(
+            rounds_to_do(&buffer, AREA),
+            4 - done,
+            "rounds to come at {at:?}"
+        );
         let (top, bottom) = sand_in(&buffer, AREA, colour);
         assert!(top + bottom > 100, "no sand in its colour at {at:?}");
     }
@@ -566,17 +582,19 @@ fn colour_of(buffer: &Buffer, area: Rect, glyph: &str) -> Color {
 }
 
 /// The colour of the glass's walls and of its sand. On each row between
-/// the two posts the outermost braille cell is wall. Near a cap or the neck
-/// the wall spans more cells of a row, so the sand is the colour most cells
-/// between the walls take apart from the wall's, or the wall's when no
-/// other shows.
+/// the two posts the outermost cell with a lit pixel is wall. Near a cap or
+/// the neck the wall spans more cells of a row, so the sand is the colour
+/// most cells between the walls show apart from the wall's, or the wall's
+/// when no other shows.
 fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
-    let braille = |position: (u16, u16)| {
-        buffer[position]
-            .symbol()
-            .chars()
-            .next()
-            .is_some_and(|glyph| ('\u{2801}'..='\u{28ff}').contains(&glyph))
+    let lit = |position: (u16, u16)| -> Vec<Color> {
+        let mut colours: Vec<Color> = pixels::shown(&buffer[position])
+            .into_iter()
+            .flatten()
+            .filter(|colour| *colour != PALETTE.base)
+            .collect();
+        colours.dedup();
+        colours
     };
     let mut glass = None;
     let mut inner: Vec<Color> = Vec::new();
@@ -588,17 +606,17 @@ fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
             continue;
         };
         let inside: Vec<u16> = (left + 1..right)
-            .filter(|&column| braille((column, row)))
+            .filter(|&column| !lit((column, row)).is_empty())
             .collect();
         let (Some(first), Some(last)) = (inside.first(), inside.last()) else {
             continue;
         };
-        glass.get_or_insert(buffer[(*first, row)].fg);
+        glass.get_or_insert_with(|| lit((*first, row))[0]);
         inner.extend(
             inside
                 .iter()
                 .filter(|column| *column != first && *column != last)
-                .map(|column| buffer[(*column, row)].fg),
+                .flat_map(|column| lit((*column, row))),
         );
     }
     let glass = glass.expect("no glass");
