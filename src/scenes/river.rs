@@ -9,7 +9,7 @@ use ratatui::style::{Color, Style};
 
 use crate::corpus::Corpus;
 use crate::history::{Commit, History};
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{self, Rng, Scene};
 use crate::splitmix;
 use crate::theme::Palette;
@@ -73,49 +73,20 @@ enum Layer {
     Stone,
 }
 
+/// The bed or the ground shows behind a cell with an empty pixel, so a
+/// stone covers the water in a cell with the bed in it. Water takes the
+/// colour of foam in front of it, so a band of foam leaves no gap in its
+/// lane.
+impl octant::Layer for Layer {
+    fn joins(self, top: Self) -> bool {
+        self.is_liquid() && top.is_liquid()
+    }
+}
+
 impl Layer {
     fn is_liquid(self) -> bool {
         matches!(self, Layer::Water | Layer::Foam)
     }
-}
-
-/// The colour of each pixel of one cell, from what lies on it, over the
-/// bed of the river or the ground beside it. A cell shows two colours: the
-/// colour of its highest layer, and behind it the bed or the ground where
-/// any pixel is empty, or else the colour most of the rest takes. A pixel
-/// of a third colour takes the colour behind, so a stone covers the water
-/// in a cell with the bed in it, and no empty pixel draws. Water takes the
-/// colour of foam in front of it instead, so a band of foam leaves no gap
-/// in its lane.
-fn settle(pixels: [Option<(Layer, Color)>; 8], empty: Color) -> [Color; 8] {
-    let Some((top, front)) = pixels
-        .iter()
-        .flatten()
-        .max_by_key(|(layer, _)| *layer)
-        .copied()
-    else {
-        return [empty; 8];
-    };
-    let colours = pixels.map(|pixel| pixel.map_or(empty, |(_, colour)| colour));
-    let behind = if pixels.contains(&None) {
-        empty
-    } else {
-        colours
-            .iter()
-            .filter(|colour| **colour != front)
-            .max_by_key(|colour| {
-                let count = colours.iter().filter(|other| other == colour).count();
-                let first = colours.iter().position(|other| other == *colour);
-                (count, std::cmp::Reverse(first))
-            })
-            .copied()
-            .unwrap_or(empty)
-    };
-    pixels.map(|pixel| match pixel {
-        Some((_, colour)) if colour == front => front,
-        Some((layer, _)) if layer.is_liquid() && top.is_liquid() => front,
-        _ => behind,
-    })
 }
 
 /// One commit in the river: the lane its stone is in, and the lines from
@@ -500,7 +471,7 @@ impl Scene for River {
                     let (x, y) = at(pixel);
                     layers[y * width + x]
                 });
-                for (pixel, colour) in settle(pixels, empty).into_iter().enumerate() {
+                for (pixel, colour) in octant::settle(pixels, empty).into_iter().enumerate() {
                     let (x, y) = at(pixel);
                     canvas.set(x, y, colour);
                 }

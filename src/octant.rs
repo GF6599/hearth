@@ -145,6 +145,53 @@ fn cell(pixels: [Color; 8], base: Color) -> (char, Color, Color) {
     (glyph(bits), fore, back)
 }
 
+/// What can lie on a pixel, ordered from the lowest layer to the highest.
+pub trait Layer: Ord + Copy {
+    /// Whether a pixel of this layer shows the colour of `top`, the highest
+    /// layer in its cell, rather than the colour behind.
+    fn joins(self, _top: Self) -> bool {
+        false
+    }
+}
+
+/// The colour of each pixel of one cell, in the order of the glyph's bits,
+/// from the layer and the colour that lie on it. A cell shows two colours:
+/// the colour of its highest layer in front, and behind it `empty` where
+/// any pixel is empty, or else the colour most of the rest takes, the
+/// first pixel's of two with the same count. A pixel of a third colour
+/// takes the colour behind, so an empty pixel never draws in an ink. A
+/// pixel whose layer joins the highest takes the colour in front instead.
+pub fn settle<L: Layer>(pixels: [Option<(L, Color)>; 8], empty: Color) -> [Color; 8] {
+    let Some((top, front)) = pixels
+        .iter()
+        .flatten()
+        .max_by_key(|(layer, _)| *layer)
+        .copied()
+    else {
+        return [empty; 8];
+    };
+    let colours = pixels.map(|pixel| pixel.map_or(empty, |(_, colour)| colour));
+    let behind = if pixels.contains(&None) {
+        empty
+    } else {
+        colours
+            .iter()
+            .filter(|colour| **colour != front)
+            .max_by_key(|colour| {
+                let count = colours.iter().filter(|other| other == colour).count();
+                let first = colours.iter().position(|other| other == *colour);
+                (count, Reverse(first))
+            })
+            .copied()
+            .unwrap_or(empty)
+    };
+    pixels.map(|pixel| match pixel {
+        Some((_, colour)) if colour == front => front,
+        Some((layer, _)) if layer.joins(top) => front,
+        _ => behind,
+    })
+}
+
 /// The pixels of a frame, `CELL_WIDTH` across and `CELL_HEIGHT` down in
 /// each cell, that draw into a buffer one glyph to a cell.
 #[derive(Debug, Clone)]

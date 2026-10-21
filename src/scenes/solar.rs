@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -165,35 +165,9 @@ fn disc(middle: (f32, f32), radius: f32) -> Vec<(i32, i32)> {
     dots
 }
 
-/// The colour of each pixel of one cell, from what lies on it. A cell
-/// shows two colours: the colour of its highest layer, and behind it the
-/// base where any pixel is empty, or else the colour most of the rest
-/// takes. A pixel of a third colour takes the colour behind, so no empty
-/// pixel draws. A dot of an orbit or a trail beside a body drops out, and so
-/// does the part of a body that shares a cell of sky with a nearer one.
-fn settle(pixels: [Option<(Layer, Color)>; 8], base: Color) -> [Color; 8] {
-    let front = pixels
-        .iter()
-        .flatten()
-        .max_by_key(|(layer, _)| *layer)
-        .map_or(base, |(_, colour)| *colour);
-    let colours = pixels.map(|pixel| pixel.map_or(base, |(_, colour)| colour));
-    let behind = if pixels.contains(&None) {
-        base
-    } else {
-        colours
-            .iter()
-            .filter(|colour| **colour != front)
-            .max_by_key(|colour| {
-                let count = colours.iter().filter(|other| other == colour).count();
-                let first = colours.iter().position(|other| other == *colour);
-                (count, std::cmp::Reverse(first))
-            })
-            .copied()
-            .unwrap_or(base)
-    };
-    colours.map(|colour| if colour == front { front } else { behind })
-}
+/// A pixel of an orbit or a trail beside a body drops out of its cell, and
+/// so does the part of a body that shares a cell of sky with a nearer one.
+impl octant::Layer for Layer {}
 
 impl Scene for Solar {
     fn tick(&mut self, area: Rect) {
@@ -308,7 +282,10 @@ impl Scene for Solar {
                     let (x, y) = at(pixel);
                     layers[y * width + x]
                 });
-                for (pixel, colour) in settle(pixels, self.palette.base).into_iter().enumerate() {
+                for (pixel, colour) in octant::settle(pixels, self.palette.base)
+                    .into_iter()
+                    .enumerate()
+                {
                     let (x, y) = at(pixel);
                     canvas.set(x, y, colour);
                 }
