@@ -145,6 +145,46 @@ impl Toned {
     }
 }
 
+/// The distance between two colours in RGB.
+fn distance(one: Color, other: Color) -> f32 {
+    match (one, other) {
+        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
+            .into_iter()
+            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
+            .sum::<f32>()
+            .sqrt(),
+        _ => f32::INFINITY,
+    }
+}
+
+/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
+/// one to the other, to a step of rounding, and a twentieth of the way or
+/// more from each, so a colour a step from either is no mix.
+fn between(colour: Color, one: Color, other: Color) -> bool {
+    let (span, near, far) = (
+        distance(one, other),
+        distance(one, colour),
+        distance(colour, other),
+    );
+    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
+}
+
+/// Every role of Rose Pine.
+const ROLES: [Color; 12] = [
+    PALETTE.base,
+    PALETTE.surface,
+    PALETTE.overlay,
+    PALETTE.muted,
+    PALETTE.subtle,
+    PALETTE.text,
+    PALETTE.love,
+    PALETTE.gold,
+    PALETTE.rose,
+    PALETTE.pine,
+    PALETTE.foam,
+    PALETTE.iris,
+];
+
 /// The scene in each colour of Rose Pine, ticked once.
 fn toned() -> Toned {
     let mut scenes = Toned::new(PALETTE);
@@ -152,17 +192,29 @@ fn toned() -> Toned {
     scenes
 }
 
-/// Where a view of `size` letters starts on a pane of `cells`, in pixels:
-/// half the room left over, which is less than none when the view is cut.
-/// It starts on a whole letter, so each letter fills a half of a cell.
-fn offset(cells: (u16, u16), size: (usize, usize)) -> (isize, isize) {
+/// The whole picture as a part of itself.
+const WHOLE: (usize, usize, usize, usize) = (0, 0, PICTURE.0, PICTURE.1);
+
+/// Where a view of a part of the picture starts on a pane of `cells`, in
+/// pixels: half the room left over, which is less than none when the view
+/// is cut. A letter is a cell across, so across it starts on a whole cell.
+/// Down, a letter is half a cell, and a cell draws two colours of its
+/// pixels, so the picture starts on a whole cell, half a cell higher where
+/// the room left over leaves it on a half, and each cell holds the same
+/// pixels of the picture at every size.
+fn offset(
+    cells: (u16, u16),
+    (_, from_y, wide, tall): (usize, usize, usize, usize),
+) -> (isize, isize) {
     let room = (
         usize::from(cells.0) * ACROSS / LETTER,
         usize::from(cells.1) * DOWN / LETTER,
     );
+    let first = (from_y as isize - (room.1 as isize - tall as isize) / 2) * LETTER as isize;
+    let first = first.div_euclid(DOWN as isize) * DOWN as isize;
     (
-        (room.0 as isize - size.0 as isize) / 2 * LETTER as isize,
-        (room.1 as isize - size.1 as isize) / 2 * LETTER as isize,
+        (room.0 as isize - wide as isize) / 2 * LETTER as isize,
+        (from_y * LETTER) as isize - first,
     )
 }
 
@@ -518,8 +570,8 @@ fn the_rain_runs_on_between_two_ticks() {
 /// of the way to the next tick.
 /// Then: each pixel of rain in a frame between that was not rain on the
 /// tick lies at most two letters under rain of the tick in its column, or
-/// under the frame or the cat, which hide the rain behind them, or under
-/// the top of the glass.
+/// under the frame or the cat, its light in text and its shade in subtle,
+/// which hide the rain behind them, or under the top of the glass.
 ///
 /// Why it matters: a drop that starts again at the top of the glass must
 /// not draw a streak across the glass on its way there.
@@ -534,9 +586,11 @@ fn a_drop_that_starts_again_draws_no_streak_between_ticks() {
     let room = toned();
     let bars = room.shows(PALETTE.muted, FITTED.width, FITTED.height);
     let text = room.shows(PALETTE.text, FITTED.width, FITTED.height);
-    // The moon is in text too, but it is in the upper half, and the rain
-    // runs over it.
-    let hides = |x: usize, y: usize| bars[y][x] || (text[y][x] && 2 * y > top + bottom);
+    let shade = room.shows(PALETTE.subtle, FITTED.width, FITTED.height);
+    // The moon is in text and the stars in subtle too, but they are in the
+    // upper half, and the rain runs over them.
+    let hides =
+        |x: usize, y: usize| bars[y][x] || ((text[y][x] || shade[y][x]) && 2 * y > top + bottom);
 
     for tick in 0..400 {
         scene.tick(FITTED);
@@ -636,9 +690,10 @@ fn the_room_draws_in_octant_glyphs() {
 /// Given: the scene on a pane of a hundred by thirty, and on one ten cells
 /// wider and three rows taller.
 /// When: both render.
-/// Then: the larger pane shows the same pixels five cells further right
-/// and three letters further down, so the picture keeps the middle of each.
-/// The picture holds at least eight colours of the theme.
+/// Then: the larger pane shows the same pixels five cells further right and
+/// two cells further down, so the picture keeps the middle of each: the
+/// room is three letters further down, and the picture starts on the whole
+/// cell under that. The picture holds at least eight colours of the theme.
 ///
 /// Why it matters: a picture stuck at a corner of a large terminal reads
 /// as a fault.
@@ -652,12 +707,8 @@ fn the_picture_is_centred_in_a_larger_pane() {
     let (smaller, larger) = (scenes.view(100, 30), scenes.view(110, 33));
 
     // Then:
-    shows_from(
-        &smaller,
-        &larger,
-        (5 * ACROSS as isize, 3 * LETTER as isize),
-    );
-    let (left, top) = offset((100, 30), PICTURE);
+    shows_from(&smaller, &larger, (5 * ACROSS as isize, 2 * DOWN as isize));
+    let (left, top) = offset((100, 30), WHOLE);
     let (_, _, wide, tall) = in_pixels((0, 0, PICTURE.0, PICTURE.1));
     let mut colours: Vec<Color> = Vec::new();
     for row in &smaller[top as usize..top as usize + tall] {
@@ -690,8 +741,8 @@ fn a_smaller_pane_shows_the_middle_of_the_picture() {
     let (smaller, larger) = (scenes.view(small.0, small.1), scenes.view(100, 30));
 
     // Then:
-    let (large_left, large_top) = offset((100, 30), PICTURE);
-    let (small_left, small_top) = offset(small, PICTURE);
+    let (large_left, large_top) = offset((100, 30), WHOLE);
+    let (small_left, small_top) = offset(small, WHOLE);
     shows_from(
         &smaller,
         &larger,
@@ -702,16 +753,13 @@ fn a_smaller_pane_shows_the_middle_of_the_picture() {
 /// The window part of the picture on a pane under the least size, and the
 /// pixel of the pane where it starts.
 fn window_on(small: (u16, u16)) -> (Vec<Vec<Color>>, (isize, isize)) {
-    (
-        toned().view(small.0, small.1),
-        offset(small, (WINDOW.2, WINDOW.3)),
-    )
+    (toned().view(small.0, small.1), offset(small, WINDOW))
 }
 
 /// Where the window part starts on a hundred by thirty, where the whole
 /// room shows.
 fn window_in_room() -> (Vec<Vec<Color>>, (isize, isize)) {
-    let (left, top) = offset((100, 30), PICTURE);
+    let (left, top) = offset((100, 30), WHOLE);
     let (from_x, from_y, _, _) = in_pixels(WINDOW);
     (
         toned().view(100, 30),
@@ -859,7 +907,8 @@ fn the_window_shows_a_night_sky() {
 /// of the lamp's area that differ between the first frame and the dimmest,
 /// the light, reach from the shade to the desk, twelve letters or more,
 /// show on the wall within four to seven letters of the shade's top, and
-/// are all warm in the first frame: gold, rose, or the bulb's text.
+/// are all warm in the first frame: gold, rose, the bulb's text, or a mix
+/// along the light from the wall through rose and gold to text.
 ///
 /// Why it matters: a lamp that throws no light reads as a picture of a
 /// lamp, and a glow that stays bright while the bulb dims reads as a
@@ -916,13 +965,13 @@ fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
     for y in top..top + tall {
         for x in left..left + wide {
             if first[y][x] != dim[y][x] {
-                let warm = [PALETTE.gold, PALETTE.rose, PALETTE.text];
-                assert!(
-                    warm.contains(&first[y][x]),
-                    "the light at {:?} is {:?}",
-                    (x, y),
-                    first[y][x]
-                );
+                let light = [PALETTE.overlay, PALETTE.rose, PALETTE.gold, PALETTE.text];
+                let colour = first[y][x];
+                let warm = light[1..].contains(&colour)
+                    || light
+                        .windows(2)
+                        .any(|pair| between(colour, pair[0], pair[1]));
+                assert!(warm, "the light at {:?} is {:?}", (x, y), first[y][x]);
             }
         }
     }
@@ -989,4 +1038,121 @@ fn study_is_a_scene_by_name() {
     let rows = pixels(&buffer, AREA);
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.gold));
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.text));
+}
+
+/// The pixels of a pane the size of the picture that lie outside every
+/// layer, by column and row, so they show the room that stays still.
+fn still(rows: &[Vec<Color>]) -> Vec<(usize, usize)> {
+    (0..rows.len())
+        .flat_map(|y| (0..rows[y].len()).map(move |x| (x, y)))
+        .filter(|&(x, y)| layer_at(x, y).is_none())
+        .collect()
+}
+
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks once and renders.
+/// Then: outside every layer, some letter of the picture, two pixels
+/// across and two down, holds two colours.
+///
+/// Why it matters: a picture drawn a letter to a colour has a quarter of
+/// the detail the screen shows, and its edges step in squares of two
+/// pixels.
+#[test]
+fn the_room_has_detail_at_the_size_of_a_pixel() {
+    // Given, when:
+    let rows = view(&scene(), FITTED.width, FITTED.height);
+
+    // Then:
+    let fine = still(&rows).iter().any(|&(x, y)| {
+        let (left, top) = (x - x % LETTER, y - y % LETTER);
+        (top..top + LETTER)
+            .any(|row| (left..left + LETTER).any(|column| rows[row][column] != rows[y][x]))
+    });
+    assert!(fine, "every letter of the room is one colour");
+}
+
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks once and renders.
+/// Then: outside every layer, some pixel is a mix of two roles of the
+/// theme.
+///
+/// Why it matters: a room in flat roles has no light and shade, and a mix
+/// of two of its own colours lights or shades a part and keeps to the
+/// theme.
+#[test]
+fn the_room_is_shaded_with_mixes_of_its_colours() {
+    // Given, when:
+    let rows = view(&scene(), FITTED.width, FITTED.height);
+
+    // Then:
+    let shaded = still(&rows).iter().any(|&(x, y)| {
+        let colour = rows[y][x];
+        !ROLES.contains(&colour)
+            && ROLES
+                .iter()
+                .any(|one| ROLES.iter().any(|other| between(colour, *one, *other)))
+    });
+    assert!(shaded, "the room shows no mix of two of its colours");
+}
+
+/// Given: the scene on a pane the size of the picture, before the lamp
+/// first flickers.
+/// When: it ticks once and renders.
+/// Then: on the wall under the bulb, in the lamp's area, some pixels are
+/// mixes of the wall and rose or of rose and gold, and those within three
+/// pixels of the bulb, its text, lie further from the wall on average than
+/// those further out.
+///
+/// Why it matters: light drawn in flat gold and rose reads as a pattern on
+/// the wall, and a glow that fades out from the bulb reads as light.
+#[test]
+fn the_lamp_glows_on_the_wall_and_fades_from_the_bulb() {
+    // Given, when:
+    let rows = view(&scene(), FITTED.width, FITTED.height);
+
+    // Then:
+    let (left, top, wide, tall) =
+        in_pixels(LAYERS.iter().find(|(name, _)| *name == "lamp").unwrap().1);
+    let lamp: Vec<(usize, usize)> = (top..top + tall)
+        .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
+        .collect();
+    let bulb: Vec<(usize, usize)> = lamp
+        .iter()
+        .copied()
+        .filter(|&(x, y)| rows[y][x] == PALETTE.text)
+        .collect();
+    assert!(!bulb.is_empty(), "no bulb");
+    let centre = |pick: fn(&(usize, usize)) -> usize| {
+        bulb.iter().map(pick).sum::<usize>() as f32 / bulb.len() as f32
+    };
+    let (bx, by) = (centre(|(x, _)| *x), centre(|(_, y)| *y));
+    let wall = PALETTE.overlay;
+    let glow: Vec<(f32, f32)> = lamp
+        .iter()
+        .filter(|&&(_, y)| y as f32 > by)
+        .filter_map(|&(x, y)| {
+            let colour = rows[y][x];
+            let mixed =
+                between(colour, wall, PALETTE.rose) || between(colour, PALETTE.rose, PALETTE.gold);
+            mixed.then(|| {
+                let far = (x as f32 - bx).hypot(y as f32 - by);
+                (far, distance(wall, colour))
+            })
+        })
+        .collect();
+    assert!(!glow.is_empty(), "no glow of the lamp on the wall");
+    let mean = |values: Vec<f32>| values.iter().sum::<f32>() / values.len().max(1) as f32;
+    let light = |near: bool| {
+        mean(
+            glow.iter()
+                .filter(|(far, _)| (*far <= 3.0) == near)
+                .map(|(_, light)| *light)
+                .collect(),
+        )
+    };
+    let (near, out) = (light(true), light(false));
+    assert!(
+        near > out,
+        "the glow near the bulb lies {near} from the wall and further out {out}"
+    );
 }
