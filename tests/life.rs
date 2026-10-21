@@ -267,16 +267,18 @@ const BLOCK: &[&str] = &[
     "..........",
 ];
 
-/// A live cell turns from the young colour to the settled colour as it
-/// ages.
+/// A live cell turns from the young colour to the settled colour in its
+/// first two generations.
 /// Given: a block of cells two generations old.
-/// When: it renders, and again after ten generations.
+/// When: it renders, and again one generation later.
 /// Then: first its pixels are a mix of rose and iris, part of the way to
 /// iris, and then they are iris.
 ///
 /// Why it matters: the colour tells a birth from a cell that stays. A mix
 /// by age shows how long each cell has lived at the grain of a pixel, so
-/// a growing edge glows and a settled body rests.
+/// a growing edge glows and a settled body rests. Most cells of a busy
+/// board live a few generations, so a slower turn leaves the board mostly
+/// rose and the settled shapes no longer stand out.
 #[test]
 fn a_live_cell_turns_from_the_young_colour_to_the_settled_colour() {
     // Given:
@@ -286,7 +288,7 @@ fn a_live_cell_turns_from_the_young_colour_to_the_settled_colour() {
 
     // When:
     let young = pixel(&scene, area, (6, 8));
-    let scene = ticked(scene, area, 10);
+    let scene = ticked(scene, area, 1);
     let settled = pixel(&scene, area, (6, 8));
 
     // Then:
