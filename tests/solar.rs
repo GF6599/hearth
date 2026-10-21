@@ -780,3 +780,143 @@ fn the_planets_move_evenly_after_a_week() {
         }
     }
 }
+
+/// A pane wide enough that Mercury moves about four pixels a tick, so a
+/// frame between two ticks has room to show it between them.
+const GLIDE_AREA: Rect = Rect::new(0, 0, 400, 120);
+/// The shares of a tick that the frames between two ticks show.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// How far the front of a planet's disc reaches along `heading`, among
+/// the lit pixels in the planet's colour near `from`. A trail lies behind
+/// its planet, so the front is the disc's.
+fn front(
+    lit: &[((f32, f32), Color)],
+    role: Color,
+    from: (f32, f32),
+    reach: f32,
+    heading: (f32, f32),
+) -> f32 {
+    lit.iter()
+        .copied()
+        .filter(|(pixel, colour)| *colour == role && distance(*pixel, from) <= reach)
+        .map(|(pixel, _)| pixel.0 * heading.0 + pixel.1 * heading.1)
+        .fold(f32::MIN, f32::max)
+}
+
+/// Each planet glides along its orbit between two ticks.
+/// Given: the scene at four hundred by a hundred and twenty, where the
+/// inner planets move two pixels or more a tick.
+/// When: it renders at a quarter, a half and three quarters of the way to
+/// its next tick, then ticks.
+/// Then: where a planet other than Saturn stands clear of the sun and of
+/// every other body, the front of its disc never goes back, so it stays
+/// between its fronts at the two ticks. Where the front moves two pixels
+/// or more from one tick to the next, the front at half a tick lies
+/// strictly between the two. Saturn's
+/// ring is a dotted ellipse wider than its disc, so its front does not
+/// mark the disc.
+///
+/// Why it matters: at a quarter speed a planet that moves only on a tick
+/// jumps once every sixteen frames, and the orbit reads as a stutter.
+#[test]
+fn each_planet_glides_along_its_orbit_between_ticks() {
+    // Given:
+    let mut scene = ticked(7, GLIDE_AREA, 1);
+    let first = render(&scene, GLIDE_AREA, GLIDE_AREA);
+    let centre = sun(&first, GLIDE_AREA);
+    let reach = sun_pixels(&first, GLIDE_AREA)
+        .iter()
+        .map(|pixel| distance(*pixel, centre))
+        .fold(0.0, f32::max);
+    let (mut checked, mut moving) = (0, 0);
+
+    for _ in 0..40 {
+        for _ in 0..37 {
+            scene.tick(GLIDE_AREA);
+        }
+        let before = lit_pixels(&render(&scene, GLIDE_AREA, GLIDE_AREA), GLIDE_AREA);
+        let mut bodies = scene.planets();
+        bodies.push(scene.moon());
+
+        // When:
+        let glides: Vec<Vec<((f32, f32), Color)>> = BETWEEN
+            .iter()
+            .map(|&progress| {
+                scene.set_progress(progress);
+                lit_pixels(&render(&scene, GLIDE_AREA, GLIDE_AREA), GLIDE_AREA)
+            })
+            .collect();
+        scene.set_progress(0.0);
+        scene.tick(GLIDE_AREA);
+        let after = lit_pixels(&render(&scene, GLIDE_AREA, GLIDE_AREA), GLIDE_AREA);
+        let mut next = scene.planets();
+        next.push(scene.moon());
+
+        // Then:
+        for (index, role) in roles().iter().enumerate() {
+            if index == SATURN
+                || !stands_clear(&bodies, index, centre, reach)
+                || !stands_clear(&next, index, centre, reach)
+            {
+                continue;
+            }
+            let (from, to) = (bodies[index], next[index]);
+            let moved = distance(from, to);
+            let heading = ((to.0 - from.0) / moved, (to.1 - from.1) / moved);
+            let near = BODY_REACH + moved;
+            let fronts: Vec<f32> = std::iter::once(&before)
+                .chain(&glides)
+                .chain(std::iter::once(&after))
+                .map(|lit| front(lit, *role, from, near, heading))
+                .collect();
+            for pair in fronts.windows(2) {
+                assert!(
+                    pair[0] <= pair[1],
+                    "planet {index} goes back from {from:?} to {to:?}: {fronts:?}"
+                );
+            }
+            checked += 1;
+            let (start, half, end) = (fronts[0], fronts[2], fronts[4]);
+            if end - start >= 2.0 {
+                assert!(
+                    start < half && half < end,
+                    "planet {index} not between {from:?} and {to:?} at half a tick: {fronts:?}"
+                );
+                moving += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "{checked} planets checked");
+    assert!(moving > 20, "{moving} planets moved two pixels");
+}
+
+/// A frame on a tick is the frame the scene drew before it glided.
+/// Given: two scenes from one seed, one of them given a share of a tick
+/// before each tick and none after it.
+/// When: both tick and render.
+/// Then: every frame of the two is the same.
+///
+/// Why it matters: the frame on a tick is the one every other test of the
+/// scene reads, so a glide must not move it.
+#[test]
+fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
+    // Given:
+    let mut glided = ticked(7, AREA, 1);
+    let mut still = ticked(7, AREA, 1);
+
+    for tick in 0..200 {
+        // When:
+        glided.set_progress(0.5);
+        glided.set_progress(0.0);
+        glided.tick(AREA);
+        still.tick(AREA);
+
+        // Then:
+        assert_eq!(
+            render(&glided, AREA, AREA),
+            render(&still, AREA, AREA),
+            "tick {tick}"
+        );
+    }
+}
