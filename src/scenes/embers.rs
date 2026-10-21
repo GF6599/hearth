@@ -1,31 +1,33 @@
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
-
-/// Draws a cell as two pixels: the foreground is the upper one and the
-/// background the lower one.
-const HALF_BLOCK: char = '▀';
 
 /// The fire takes this share of the width, and no more than the widest
 /// span, so a wide terminal shows a hearth and not a bonfire.
 const FIRE_SHARE: (usize, usize) = (3, 5);
-const WIDEST_FIRE: usize = 72;
-const NARROWEST_FIRE: usize = 12;
+const WIDEST_FIRE: usize = 72 * CELL_WIDTH;
+const NARROWEST_FIRE: usize = 12 * CELL_WIDTH;
+
+/// The rows of pixels in each band of the hearth below the logs, and in
+/// the lit top and the shadowed underside of a log: half a cell.
+const BAND: usize = CELL_HEIGHT / 2;
 
 /// Pixel rows below the logs: the grate bar, its legs, and two rows of
 /// stones. A pane with no room for a log over them draws nothing.
-const BELOW_LOGS: usize = 4;
-const LEAST_ROWS: usize = BELOW_LOGS + 2;
+const BELOW_LOGS: usize = 4 * BAND;
+const LEAST_ROWS: usize = BELOW_LOGS + 2 * BAND;
 
-/// Pixels in a stone, with one pixel of mortar after it.
-const STONE: usize = 6;
-const GRATE_LEG_EVERY: usize = 8;
+/// Pixels in a stone, with a cell of mortar after it.
+const STONE: usize = 6 * CELL_WIDTH;
+const MORTAR: usize = CELL_WIDTH;
+const GRATE_LEG_EVERY: usize = 8 * CELL_WIDTH;
 
 /// Ticks for one pulse of a glowing pixel, so neighbours pulse out of step.
 const GLOW_PERIODS: RangeInclusive<u8> = 48..=96;
@@ -33,11 +35,11 @@ const GLOW_PERIODS: RangeInclusive<u8> = 48..=96;
 /// Ticks between two settles, about 20 to 40 seconds at the normal rate.
 pub const SETTLE_TICKS: RangeInclusive<u32> = 320..=640;
 const BURST: RangeInclusive<usize> = 20..=30;
-/// A burst fans out this many columns either side, so its sparks fill
+/// A burst fans out this many pixels either side, so its sparks fill
 /// cells of their own at once.
-const BURST_REACH: usize = 4;
+const BURST_REACH: usize = 4 * CELL_WIDTH;
 /// A settle lights the glow within this many pixels for this many ticks.
-const FLARE_REACH: usize = 4;
+const FLARE_REACH: usize = 4 * CELL_WIDTH;
 const FLARE_TICKS: u32 = 32;
 
 /// Ticks one log burns, about three to five minutes at the normal rate.
@@ -50,12 +52,25 @@ const CHARRED: f32 = 0.5;
 /// A coal glows for most of its life and cools to ash for its last
 /// quarter.
 const COAL_TICKS: RangeInclusive<u32> = 600..=1200;
-/// A new log drops from this many pixels above the pile.
-const DROP_HEIGHT: usize = 8;
+/// A new log drops from this many pixels above the pile, and falls this
+/// many a tick.
+const DROP_HEIGHT: usize = 4 * CELL_HEIGHT;
+const FALL: usize = BAND;
+/// A log glows this many pixels in from each end, where the fire eats into
+/// it.
+const ENDS: usize = 2 * CELL_WIDTH;
 
 /// The chance that a tick lets one spark go, outside a settle.
 const SPARK_ODDS: f64 = 0.2;
 const SPARK_LIFE: RangeInclusive<u16> = 30..=70;
+/// How far a spark climbs and drifts in a tick, in cells, as pixels.
+const BURST_RISE: Range<f32> = 0.2 * DOWN..0.6 * DOWN;
+const SPARK_RISE: Range<f32> = 0.125 * DOWN..0.3 * DOWN;
+const DRIFT: f32 = 0.3 * ACROSS;
+const DRIFT_START: f32 = 0.15 * ACROSS;
+const DRIFT_STEP: f32 = 0.03 * ACROSS;
+const ACROSS: f32 = CELL_WIDTH as f32;
+const DOWN: f32 = CELL_HEIGHT as f32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pixel {
@@ -113,7 +128,7 @@ impl Log {
 
     fn depth(&self) -> usize {
         let kept = self.thickness as f32 * (1.0 - BURNT_THICKNESS * self.burnt());
-        (kept.ceil() as usize).max(1)
+        (kept.ceil() as usize).max(BAND)
     }
 
     fn bottom(&self, x: usize) -> usize {
@@ -134,12 +149,12 @@ impl Log {
                     continue;
                 };
                 let grain = self.grain[(x - self.start) * self.thickness + up];
-                let pixel = if x <= start + 1 || x + 1 >= end || burnt >= grain.ignite {
+                let pixel = if x < start + ENDS || x + ENDS > end || burnt >= grain.ignite {
                     Pixel::Glow {
                         phase: grain.phase,
                         period: grain.period,
                     }
-                } else if up + 1 == depth {
+                } else if up + BAND >= depth {
                     Pixel::Bark
                 } else {
                     grain.wood
@@ -238,7 +253,7 @@ impl Embers {
 
     /// Sparks from the top of the stack over column `x`, fanned out when
     /// there are many.
-    fn throw(&mut self, x: usize, count: usize, rise: std::ops::Range<f32>) {
+    fn throw(&mut self, x: usize, count: usize, rise: Range<f32>) {
         for _ in 0..count {
             let spread = if count > 1 {
                 self.rng.random_range(0..=2 * BURST_REACH)
@@ -254,7 +269,7 @@ impl Embers {
                 x: column as f32 + 0.5,
                 y: top as f32 - 0.5,
                 rise: self.rng.random_range(rise.clone()),
-                drift: self.rng.random_range(-0.15..0.15),
+                drift: self.rng.random_range(-DRIFT_START..DRIFT_START),
                 age: 0,
                 life: self.rng.random_range(SPARK_LIFE),
             };
@@ -267,7 +282,8 @@ impl Embers {
         for spark in &mut self.sparks {
             spark.age += 1;
             spark.y -= spark.rise;
-            spark.drift = (spark.drift + self.rng.random_range(-0.03..0.03)).clamp(-0.3, 0.3);
+            spark.drift =
+                (spark.drift + self.rng.random_range(-DRIFT_STEP..DRIFT_STEP)).clamp(-DRIFT, DRIFT);
             spark.x += spark.drift;
         }
         self.sparks.retain(|spark| {
@@ -279,7 +295,7 @@ impl Embers {
     /// glow around it flares.
     fn settle(&mut self, x: usize, y: usize) {
         let count = self.rng.random_range(BURST);
-        self.throw(x, count, 0.4..1.2);
+        self.throw(x, count, BURST_RISE);
         self.flare = Some((x, y, self.ticks + FLARE_TICKS));
         self.settle_in = self.rng.random_range(SETTLE_TICKS);
     }
@@ -297,20 +313,25 @@ impl Embers {
         }
         let mut ground = std::mem::take(&mut self.ground);
         let mut set = |x: usize, y: usize, pixel| ground[y * width + x] = pixel;
-        for (offset, y) in [(0, rows - 2), (STONE / 2, rows - 1)] {
-            for x in 0..width {
-                let stone = (x + offset) % (STONE + 1) != STONE;
-                set(x, y, if stone { Pixel::Stone } else { Pixel::Shadow });
+        for (offset, top) in [(0, rows - 2 * BAND), (STONE / 2, rows - BAND)] {
+            for y in top..top + BAND {
+                for x in 0..width {
+                    let stone = (x + offset) % (STONE + MORTAR) < STONE;
+                    set(x, y, if stone { Pixel::Stone } else { Pixel::Shadow });
+                }
             }
         }
         self.span = (width * FIRE_SHARE.0 / FIRE_SHARE.1)
             .clamp(NARROWEST_FIRE.min(width), WIDEST_FIRE.min(width));
         self.left = (width - self.span) / 2;
         self.floor = rows - BELOW_LOGS - 1;
-        for x in self.left..self.left + self.span {
-            set(x, rows - BELOW_LOGS, Pixel::Grate);
-            if (x - self.left).is_multiple_of(GRATE_LEG_EVERY) || x + 1 == self.left + self.span {
-                set(x, rows - BELOW_LOGS + 1, Pixel::Grate);
+        let (bar, legs) = (rows - BELOW_LOGS, rows - BELOW_LOGS + BAND);
+        let right = self.left + self.span;
+        for x in self.left..right {
+            let leg = (x - self.left) % GRATE_LEG_EVERY < CELL_WIDTH || x + CELL_WIDTH >= right;
+            let bottom = if leg { legs + BAND } else { legs };
+            for y in bar..bottom {
+                set(x, y, Pixel::Grate);
             }
         }
         self.ground = ground;
@@ -336,29 +357,31 @@ impl Embers {
             self.add_log(tenth(0), a_end, floor, floor, thickness);
             self.add_log(b_start, tenth(10) - 1, floor, floor, thickness);
             let top = floor.saturating_sub(thickness);
-            let tilt = self.rng.random_range(0..=1);
+            let tilt = self.rng.random_range(0..=BAND);
             self.add_log(tenth(2), tenth(8), top, top.saturating_sub(tilt), thickness);
         }
     }
 
     fn thickness(&self) -> usize {
-        (self.rows / 8).clamp(3, 8)
+        (self.rows / 8).clamp(3 * BAND, 8 * BAND)
     }
 
     /// One log from column `start` to `end`, its bottom row going from
     /// `from` to `to`. A few cracks and part of the underside, where the
     /// coals are, glow from the start, and the rest catches as it burns.
     fn add_log(&mut self, start: usize, end: usize, from: usize, to: usize, thickness: usize) {
-        if end <= start + 2 {
+        if end <= start + ENDS {
             return;
         }
         let length = end - start;
-        let cracks: Vec<(usize, usize, usize)> = (0..length / 6)
+        let middle = start + ENDS..end - CELL_WIDTH;
+        let count = if middle.is_empty() { 0 } else { length / 6 };
+        let cracks: Vec<(usize, usize, usize)> = (0..count)
             .map(|_| {
                 (
-                    self.rng.random_range(start + 2..end - 1),
+                    self.rng.random_range(middle.clone()),
                     self.rng.random_range(1..thickness.max(2)),
-                    self.rng.random_range(2..=4),
+                    self.rng.random_range(2 * CELL_WIDTH..=4 * CELL_WIDTH),
                 )
             })
             .collect();
@@ -368,13 +391,17 @@ impl Embers {
                 let cracked = cracks
                     .iter()
                     .any(|&(cx, cd, run)| up == cd && (cx..cx + run).contains(&x));
-                let underside = up == 0 && self.rng.random_bool(0.35);
+                let underside = up < BAND && self.rng.random_bool(0.35);
                 let ignite = if cracked || underside {
                     0.0
                 } else {
                     self.rng.random_range(0.15..1.0)
                 };
-                let wood = if up == 0 { Pixel::Shadow } else { Pixel::Heart };
+                let wood = if up < BAND {
+                    Pixel::Shadow
+                } else {
+                    Pixel::Heart
+                };
                 grain.push(Grain {
                     wood,
                     ignite,
@@ -409,15 +436,17 @@ impl Embers {
         let log = self.logs.swap_remove(gone);
         let (start, end) = log.span();
         for x in start..=end {
-            let life = self.rng.random_range(COAL_TICKS);
-            self.coals.push(Coal {
-                x,
-                y: self.floor,
-                life,
-                left: life,
-                phase: self.rng.random(),
-                period: self.rng.random_range(GLOW_PERIODS),
-            });
+            for y in self.floor + 1 - BAND..=self.floor {
+                let life = self.rng.random_range(COAL_TICKS);
+                self.coals.push(Coal {
+                    x,
+                    y,
+                    life,
+                    left: life,
+                    phase: self.rng.random(),
+                    period: self.rng.random_range(GLOW_PERIODS),
+                });
+            }
         }
         let length = self.span * self.rng.random_range(5..=7) / 10;
         let start = self.left + self.rng.random_range(0..=self.span - length);
@@ -427,7 +456,7 @@ impl Embers {
             .min()
             .unwrap_or(self.floor);
         let from = pile.saturating_sub(DROP_HEIGHT);
-        let to = from.saturating_sub(self.rng.random_range(0..=1));
+        let to = from.saturating_sub(self.rng.random_range(0..=BAND));
         let thickness = self.thickness();
         self.add_log(start, end, from, to, thickness);
         if let Some(new) = self.logs.last_mut() {
@@ -442,9 +471,15 @@ impl Embers {
         self.coals.retain(|coal| coal.left > 0);
     }
 
-    /// A log with nothing under it falls a pixel a tick, and one that lands
-    /// settles with a burst.
+    /// A log with nothing under it falls `FALL` pixels a tick, one at a
+    /// time, and one that lands settles with a burst.
     fn fall(&mut self) {
+        for _ in 0..FALL {
+            self.fall_a_pixel();
+        }
+    }
+
+    fn fall_a_pixel(&mut self) {
         let mut landed = None;
         for index in 0..self.logs.len() {
             let log = &self.logs[index];
@@ -561,16 +596,24 @@ impl Embers {
     /// A spark shows only in a cell with nothing else in it, so it never
     /// cuts a hole in a log.
     fn render_spark(&self, spark: &Spark, area: Rect, buf: &mut Buffer) {
-        let (column, row) = (spark.x as usize, spark.y as usize);
-        let cell = row / 2;
-        let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(cell)) else {
+        let (column, row) = (
+            spark.x as usize / CELL_WIDTH,
+            spark.y as usize / CELL_HEIGHT,
+        );
+        let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(row)) else {
             return;
         };
-        if x >= area.width || y >= area.height || cell * 2 + 1 >= self.rows {
+        let (left, top) = (column * CELL_WIDTH, row * CELL_HEIGHT);
+        if x >= area.width
+            || y >= area.height
+            || left + CELL_WIDTH > self.width
+            || top + CELL_HEIGHT > self.rows
+        {
             return;
         }
-        let empty = |row| self.pixel(column, row) == Pixel::Empty;
-        if !(empty(cell * 2) && empty(cell * 2 + 1)) {
+        let empty = (top..top + CELL_HEIGHT)
+            .all(|y| (left..left + CELL_WIDTH).all(|x| self.pixel(x, y) == Pixel::Empty));
+        if !empty {
             return;
         }
         let third = spark.life / 3;
@@ -590,8 +633,8 @@ impl Embers {
 
 impl Scene for Embers {
     fn tick(&mut self, area: Rect) {
-        let width = usize::from(area.width);
-        let rows = usize::from(area.height) * 2;
+        let width = usize::from(area.width) * CELL_WIDTH;
+        let rows = usize::from(area.height) * CELL_HEIGHT;
         if (width, rows) != (self.width, self.rows) {
             self.width = width;
             self.rows = rows;
@@ -612,7 +655,7 @@ impl Scene for Embers {
         }
         if self.rng.random_bool(SPARK_ODDS) {
             let (x, _) = self.glows[self.rng.random_range(0..self.glows.len())];
-            self.throw(x, 1, 0.25..0.6);
+            self.throw(x, 1, SPARK_RISE);
         }
         self.settle_in = self.settle_in.saturating_sub(1);
         if self.settle_in == 0 {
@@ -622,22 +665,13 @@ impl Scene for Embers {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        for y in 0..area.height {
-            let upper = usize::from(y) * 2;
-            if upper + 1 >= self.rows {
-                break;
-            }
-            for x in 0..area.width {
-                let column = usize::from(x);
-                if column >= self.width {
-                    break;
-                }
-                buf[(area.x + x, area.y + y)]
-                    .set_char(HALF_BLOCK)
-                    .set_fg(self.colour(column, upper))
-                    .set_bg(self.colour(column, upper + 1));
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        for y in 0..self.rows.min(canvas.height()) {
+            for x in 0..self.width.min(canvas.width()) {
+                canvas.set(x, y, self.colour(x, y));
             }
         }
+        canvas.render(area, buf);
         for spark in &self.sparks {
             self.render_spark(spark, area, buf);
         }
