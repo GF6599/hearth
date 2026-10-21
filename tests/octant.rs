@@ -255,24 +255,96 @@ fn the_base_stays_behind_one_ink() {
     }
 }
 
-/// A third colour in one cell is drawn as the ink, not the base.
-/// Given: four pixels of the base, two of an ink and two of another ink.
-/// When: the cell is drawn.
-/// Then: the base pixels show the base, and the other four show an ink.
+/// A cell of more than two colours draws each pixel in the nearer colour
+/// of the pair that lies nearest all its pixels.
+/// Given: a cell that shades from the base to the ink, with three pixels
+/// of each and one pixel each of the mixes at three tenths and seven
+/// tenths, and a cell that shades from the ink to foam, with three pixels
+/// of each and two of their mix at six tenths.
+/// When: each cell is drawn.
+/// Then: the first cell shows the base where its colours are nearer the
+/// base and the ink where they are nearer the ink, with the base behind.
+/// The second shows the ink in its three ink pixels and foam in the rest.
 ///
-/// Why it matters: a thin trail of colour beside another would vanish into
-/// the background where the two meet.
+/// Why it matters: a gradient puts three or more colours in a cell. The
+/// rule before gave every colour past the two most common to the
+/// foreground, so a gradient drew a band of the foreground colour through
+/// colours nearer the background. Each pixel in the nearer colour keeps
+/// the shade even across the cell.
 #[test]
-fn a_third_colour_shows_as_ink() {
+fn a_cell_of_more_colours_takes_the_pair_nearest_its_pixels() {
     // Given:
-    let pixels = [BASE, INK, OTHER, BASE, BASE, INK, OTHER, BASE];
+    let low = octant::mix(BASE, INK, 0.3);
+    let high = octant::mix(BASE, INK, 0.7);
+    let dusk = [BASE, BASE, BASE, low, high, INK, INK, INK];
+    let middle = octant::mix(INK, OTHER, 0.6);
+    let sea = [INK, INK, INK, middle, middle, OTHER, OTHER, OTHER];
 
     // When:
-    let drawn = shown(&draw(pixels));
+    let dusk_cell = draw(dusk);
+    let sea_cell = draw(sea);
 
     // Then:
-    for (pixel, (colour, shows)) in pixels.into_iter().zip(drawn).enumerate() {
-        assert_eq!(colour == BASE, shows == BASE, "pixel {pixel}: {drawn:?}");
+    assert_eq!(
+        shown(&dusk_cell),
+        [BASE, BASE, BASE, BASE, INK, INK, INK, INK]
+    );
+    assert_eq!(dusk_cell.bg, BASE);
+    assert_eq!(
+        shown(&sea_cell),
+        [INK, INK, INK, OTHER, OTHER, OTHER, OTHER, OTHER]
+    );
+}
+
+/// A cell keeps the base behind when the base is one of its pair.
+/// Given: a cell of one pixel of the base, three of a colour near the
+/// ink, the mix of the ink and foam at three tenths, and four of the ink.
+/// When: the cell is drawn.
+/// Then: the base pixel shows the base, the other seven show the ink, and
+/// the base is behind.
+///
+/// Why it matters: with the terminal's own background the base clears.
+/// The rule before put the two most common colours in the cell, so the
+/// base pixel took the ink and hid the terminal. The base lies far from
+/// both other colours, so the pair nearest the pixels holds it.
+#[test]
+fn a_cell_keeps_the_base_behind_in_its_pair() {
+    // Given:
+    let near = octant::mix(INK, OTHER, 0.3);
+    let pixels = [BASE, near, near, near, INK, INK, INK, INK];
+
+    // When:
+    let cell = draw(pixels);
+
+    // Then:
+    assert_eq!(shown(&cell), [BASE, INK, INK, INK, INK, INK, INK, INK]);
+    assert_eq!(cell.bg, BASE);
+}
+
+/// Of two pairs that lie as near a cell's pixels, the pair whose colours
+/// come first in the cell wins.
+/// Given: four pixels of the base, two of the ink and two of rose, which
+/// lies near the ink, once with the ink first and once with rose first.
+/// When: each cell is drawn.
+/// Then: the colour that comes first of the ink and rose fills all four
+/// of their pixels, with the base behind.
+///
+/// Why it matters: the base with the ink and the base with rose lie
+/// exactly as near these pixels. A tie broken by chance draws a seeded
+/// replay with other colours than the first run.
+#[test]
+fn a_tie_between_two_pairs_goes_to_the_first_colours() {
+    for (first, second) in [(INK, PALETTE.rose), (PALETTE.rose, INK)] {
+        // Given:
+        let pixels = [first, second, BASE, BASE, first, second, BASE, BASE];
+
+        // When:
+        let cell = draw(pixels);
+
+        // Then:
+        let expected = pixels.map(|colour| if colour == BASE { BASE } else { first });
+        assert_eq!(shown(&cell), expected, "{first:?} first");
+        assert_eq!(cell.bg, BASE, "{first:?} first");
     }
 }
 
