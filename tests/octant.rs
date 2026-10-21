@@ -303,8 +303,8 @@ fn a_pixel_past_an_edge_is_dropped() {
 
 /// Each cell of the canvas lands at its own place in the area, and no
 /// cell lands past it.
-/// Given: a canvas of three columns and two rows, with an ink pixel in its
-/// first column and one in its last.
+/// Given: a canvas of three columns and three rows, with an ink pixel in
+/// its first column and one in its last.
 /// When: it is drawn into an area of two columns and two rows at (4, 2) of
 /// a larger buffer.
 /// Then: the ink of the first column shows at its place in the area, and
@@ -315,7 +315,7 @@ fn a_pixel_past_an_edge_is_dropped() {
 #[test]
 fn each_cell_lands_in_its_place_in_the_area() {
     // Given:
-    let mut canvas = Canvas::new(3, 2, BASE);
+    let mut canvas = Canvas::new(3, 3, BASE);
     canvas.set(1, 4, INK);
     canvas.set(5, 7, INK);
     let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 6));
