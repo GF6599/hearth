@@ -9,7 +9,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
 use crate::clock::Clock;
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -129,11 +129,10 @@ impl Glass {
         )
     }
 
-    /// The pixels of the inside on each side of the middle at a row of pixels
-    /// between the caps: one in the neck, then out along the profile of a
-    /// bulb. Each row takes its own width, so the outline curves at the
-    /// size of a pixel and not of a cell.
-    fn half_width(&self, y: i32) -> Option<i32> {
+    /// The share of a bulb's widest row that the inside spans at a row of
+    /// pixels between the caps: none in the neck, then out along the
+    /// profile of a bulb.
+    fn share_at(&self, y: i32) -> Option<f32> {
         let (top, bottom) = self.caps();
         if y <= top || y >= bottom {
             return None;
@@ -144,12 +143,28 @@ impl Glass {
         } else {
             y - (gate + HEIGHT - 1)
         };
-        if from_neck <= 0 {
-            return Some(1);
-        }
+        Some(profile(
+            from_neck.max(0) as f32 / (self.bulb * HEIGHT) as f32,
+        ))
+    }
+
+    /// The pixels of the inside on each side of the middle at a row of pixels
+    /// between the caps: one in the neck, then out along the profile of a
+    /// bulb. Each row takes its own width, so the outline curves at the
+    /// size of a pixel and not of a cell.
+    fn half_width(&self, y: i32) -> Option<i32> {
         let widest = self.reach * WIDTH + 1;
-        let share = profile(from_neck as f32 / (self.bulb * HEIGHT) as f32);
-        Some(1 + ((widest - 1) as f32 * share).round() as i32)
+        self.share_at(y)
+            .map(|share| 1 + ((widest - 1) as f32 * share).round() as i32)
+    }
+
+    /// The half width of the inside at a row of pixels before it rounds to
+    /// a whole pixel, from the middle of the neck's two pixels to the
+    /// middle of the wall. The outline draws along it, so it curves where
+    /// the wall's pixels step.
+    fn reach_at(&self, y: i32) -> Option<f32> {
+        let widest = (self.reach * WIDTH) as f32;
+        self.share_at(y).map(|share| 1.5 + widest * share)
     }
 
     fn wall(&self, y: i32) -> Option<i32> {
@@ -222,12 +237,54 @@ fn profile(along: f32) -> f32 {
     }
 }
 
+/// The width of the outline's curve in pixels. The wall's own pixels stay
+/// whole under it, and the curve softens the steps between them.
+const OUTLINE: f32 = 1.5;
+
+/// The shades of the sand from its lit top to its shadowed depths, and the
+/// share of the light and of the shadow in the two ends. Past these shares
+/// the shadow of the break sand reads as the glass.
+const SAND_SHADES: usize = 12;
+const SAND_LIGHT: f32 = 0.4;
+const SAND_SHADOW: f32 = 0.3;
+/// The grains under the top of the sand at which its shade reaches the
+/// shadow, and the share of the shade that the distance from the middle
+/// adds, so the sand reads as a rounded pile.
+const SAND_DEPTH: f32 = 14.0;
+const SAND_ROUND: f32 = 0.35;
+/// The share of the sand's colour that a falling grain spills into each
+/// empty pixel beside it, so it falls as a soft point.
+const SPILL: f32 = 0.25;
+
+/// The shades of one colour of sand, from the lit top to the shadow. The
+/// light end mixes in the theme's text, or its overlay on a light theme
+/// where text is dark, and the shadow end mixes in `shadow`. The base is
+/// never a stop, so a see-through base keeps the sand opaque.
+fn sand_shades(palette: &Palette, sand: Color, shadow: Color) -> Vec<Color> {
+    let light = if palette.is_light() {
+        palette.overlay
+    } else {
+        palette.text
+    };
+    let stops = [
+        octant::mix(sand, light, SAND_LIGHT),
+        sand,
+        octant::mix(sand, shadow, SAND_SHADOW),
+    ];
+    (0..SAND_SHADES)
+        .map(|step| octant::ramp(&stops, step as f32 / (SAND_SHADES - 1) as f32))
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Colours {
     frame: Color,
     glass: Color,
     work: Color,
     rest: Color,
+    /// The colours the depths of each sand shade toward.
+    work_shadow: Color,
+    rest_shadow: Color,
     done: Color,
     to_do: Color,
     key: Color,
@@ -241,6 +298,8 @@ impl Colours {
             glass: palette.subtle,
             work: palette.gold,
             rest: palette.foam,
+            work_shadow: palette.love,
+            rest_shadow: palette.pine,
             done: palette.iris,
             to_do: palette.muted,
             key: palette.foam,
@@ -337,13 +396,19 @@ pub struct Hourglass {
     /// grain at rest stays at rest until a pixel below it empties, so the
     /// rest of the pile needs no look.
     moving: BTreeSet<(i32, i32)>,
+    /// Each pixel the outline draws and its colour, laid out with the glass
+    /// so that a frame does not draw the curve again.
+    outline: Vec<(usize, usize, Color)>,
+    /// The shades of the work sand and of the break sand.
+    shades: [Vec<Color>; 2],
 }
 
 impl Hourglass {
     pub fn new(rng: Rng, palette: &'static Palette, clock: Clock, lengths: Lengths) -> Self {
+        let colours = Colours::of(palette);
         Self {
             palette,
-            colours: Colours::of(palette),
+            colours,
             rng,
             clock,
             lengths,
@@ -356,6 +421,11 @@ impl Hourglass {
             total: 0,
             top: 0,
             moving: BTreeSet::new(),
+            outline: Vec::new(),
+            shades: [
+                sand_shades(palette, colours.work, colours.work_shadow),
+                sand_shades(palette, colours.rest, colours.rest_shadow),
+            ],
         }
     }
 
@@ -419,6 +489,130 @@ impl Hourglass {
         }
     }
 
+    /// The pixels of the outline: the wall's pixels in the glass, and a
+    /// curve along the profile that softens their steps in the cells beside
+    /// them. No pixel lies in a cell of the inside, so the sand never shares
+    /// a cell with the outline.
+    fn draw_outline(&self, glass: Glass) -> Vec<(usize, usize, Color)> {
+        let colour = self.colours.glass;
+        let mut canvas = Canvas::new(self.width, self.height, self.palette);
+        let (top, bottom) = glass.caps();
+        let middle = (glass.centre * WIDTH) as f32 + 0.5;
+        let wall: Vec<(f32, f32)> = (top + 1..bottom)
+            .filter_map(|y| Some((middle - glass.reach_at(y)?, y as f32)))
+            .collect();
+        let (Some(&(first, _)), Some(&(last, _))) = (wall.first(), wall.last()) else {
+            return Vec::new();
+        };
+        let mut curve = vec![(middle, top as f32), (first, top as f32)];
+        curve.extend(wall);
+        curve.extend([(last, bottom as f32), (middle, bottom as f32)]);
+        for side in [1.0, -1.0] {
+            for pair in curve.windows(2) {
+                let [(x0, y0), (x1, y1)] = [pair[0], pair[1]];
+                canvas.line(
+                    (middle + side * (x0 - middle), y0),
+                    (middle + side * (x1 - middle), y1),
+                    OUTLINE,
+                    colour,
+                );
+            }
+        }
+        let walls: BTreeSet<(usize, usize)> = glass
+            .walls()
+            .into_iter()
+            .flat_map(|(x, y)| [(x, y), (glass.mirror(x), y)])
+            .filter_map(|(x, y)| Some((usize::try_from(x).ok()?, usize::try_from(y).ok()?)))
+            .collect();
+        let base = self.palette.base;
+        let (across, down) = (canvas.width(), canvas.height());
+        let mut pixels = Vec::new();
+        for top in (0..down).step_by(CELL_HEIGHT) {
+            for left in (0..across).step_by(CELL_WIDTH) {
+                let cell: Vec<(usize, usize)> = (top..top + CELL_HEIGHT)
+                    .flat_map(|y| (left..left + CELL_WIDTH).map(move |x| (x, y)))
+                    .collect();
+                let inside = cell
+                    .iter()
+                    .any(|&(x, y)| self.inside.get(y * across + x).copied().unwrap_or(false));
+                if inside {
+                    continue;
+                }
+                // A cell shows two colours. A cell that holds the wall draws
+                // its pixels in the glass on the base, and only a cell beside
+                // it shows the soft edge of the curve, so no cell turns its
+                // base into a mix.
+                if cell.iter().any(|pixel| walls.contains(pixel)) {
+                    pixels.extend(
+                        cell.into_iter()
+                            .filter(|pixel| walls.contains(pixel))
+                            .map(|(x, y)| (x, y, colour)),
+                    );
+                } else {
+                    pixels.extend(
+                        cell.into_iter()
+                            .filter_map(|(x, y)| Some((x, y, canvas.get(x, y)?)))
+                            .filter(|&(_, _, drawn)| drawn != base),
+                    );
+                }
+            }
+        }
+        pixels
+    }
+
+    /// Whether the grain at (x, y) is in the air: the pixel below it is
+    /// inside and empty, and it is not held above the gate.
+    fn falling(&self, glass: Glass, x: i32, y: i32) -> bool {
+        let gate = glass.gate();
+        !(y < gate && y + 1 >= gate) && self.holds(x, y + 1) && !self.grain(x, y + 1)
+    }
+
+    /// Draws the sand. A grain takes the shade of its depth under the top
+    /// of the sand in its column and of its distance from the middle, so
+    /// the top of a pile is lit and its depths and sides are in shadow. A
+    /// grain in the air spills a little of its colour into the empty
+    /// pixels beside it.
+    fn draw_sand(&self, glass: Glass, canvas: &mut Canvas) {
+        let (shades, sand) = match self.phase.kind {
+            Kind::Work => (&self.shades[0], self.colours.work),
+            Kind::Break => (&self.shades[1], self.colours.rest),
+        };
+        let (columns, rows) = glass.span();
+        let middle = (glass.centre * WIDTH) as f32 + 0.5;
+        let last = (shades.len() - 1) as f32;
+        let mut falling = Vec::new();
+        for x in columns {
+            let mut depth = 0.0;
+            for y in rows.clone() {
+                if !self.grain(x, y) {
+                    depth = 0.0;
+                    continue;
+                }
+                let side = glass
+                    .reach_at(y)
+                    .map_or(0.0, |reach| ((x as f32 - middle).abs() / reach).powi(2));
+                if self.falling(glass, x, y) {
+                    falling.push((x, y));
+                }
+                let shade = (depth / SAND_DEPTH).min(1.0) * (1.0 - SAND_ROUND) + side * SAND_ROUND;
+                let colour = shades[(shade.min(1.0) * last).round() as usize];
+                plot(canvas, x, y, colour);
+                depth += 1.0;
+            }
+        }
+        for (x, y) in falling {
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let (nx, ny) = (x + dx, y + dy);
+                if self.holds(nx, ny)
+                    && !self.grain(nx, ny)
+                    && let (Ok(nx), Ok(ny)) = (usize::try_from(nx), usize::try_from(ny))
+                {
+                    canvas.blend(nx, ny, sand, SPILL);
+                }
+            }
+        }
+    }
+
     fn grain(&self, x: i32, y: i32) -> bool {
         self.place(x, y).is_some_and(|index| self.sand[index])
     }
@@ -447,11 +641,13 @@ impl Hourglass {
         self.glass = Glass::fit(self.width, self.height);
         let Some(glass) = self.glass else {
             self.inside = Vec::new();
+            self.outline = Vec::new();
             self.total = 0;
             self.top = 0;
             return;
         };
         self.fill_inside(glass);
+        self.outline = self.draw_outline(glass);
         let top = self.room(glass, glass.neck - 1, glass.neck - glass.bulb);
         self.total = (top.len() as f32 * FILL) as usize;
         let due = self.due();
@@ -659,21 +855,10 @@ impl Scene for Hourglass {
             return;
         };
         let mut canvas = Canvas::new(area.width, area.height, self.palette);
-        for (x, y) in glass.walls() {
-            plot(&mut canvas, x, y, self.colours.glass);
-            plot(&mut canvas, glass.mirror(x), y, self.colours.glass);
+        for &(x, y, colour) in &self.outline {
+            canvas.set(x, y, colour);
         }
-        let across = usize::from(self.width) * CELL_WIDTH;
-        let sand = match self.phase.kind {
-            Kind::Work => self.colours.work,
-            Kind::Break => self.colours.rest,
-        };
-        for (index, _) in self.sand.iter().enumerate().filter(|(_, grain)| **grain) {
-            let (x, y) = (index % across, index / across);
-            if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
-                plot(&mut canvas, x, y, sand);
-            }
-        }
+        self.draw_sand(glass, &mut canvas);
         let (left, right) = (
             glass.centre - glass.reach - POST - 1,
             glass.centre + glass.reach + POST + 1,
