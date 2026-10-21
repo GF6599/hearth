@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant;
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::study::{LAYERS, LEAST, PICTURE, Study, WINDOW};
 use hearth::scenes::typing::Speed;
@@ -22,38 +23,166 @@ fn render(scene: &Study, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The colour of each pixel of the area, one across and two down to a
-/// cell, row by row.
+/// The pixels across and down in each cell.
+const ACROSS: usize = octant::CELL_WIDTH;
+const DOWN: usize = octant::CELL_HEIGHT;
+
+/// The pixels across and down in each letter of the picture: a cell across
+/// and half a cell down, so a letter is as wide as it is tall.
+const LETTER: usize = 2;
+
+/// The colour of each pixel of the area, two across and four down to a
+/// cell, row by row, as the glyph and its two colours draw them.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    let mut rows = vec![vec![Color::Reset; usize::from(area.width)]; usize::from(area.height) * 2];
+    let width = usize::from(area.width) * ACROSS;
+    let mut rows = vec![vec![Color::Reset; width]; usize::from(area.height) * DOWN];
     for position in area.positions() {
         let cell = &buffer[position];
-        let (upper, lower) = match cell.symbol() {
-            "▀" => (cell.fg, cell.bg),
-            "▄" => (cell.bg, cell.fg),
-            "█" => (cell.fg, cell.fg),
-            _ => (cell.bg, cell.bg),
-        };
-        let x = usize::from(position.x - area.x);
-        let y = usize::from(position.y - area.y) * 2;
-        rows[y][x] = upper;
-        rows[y + 1][x] = lower;
+        let bits = (0..=u8::MAX)
+            .find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
+            .unwrap_or(0);
+        let left = usize::from(position.x - area.x) * ACROSS;
+        let top = usize::from(position.y - area.y) * DOWN;
+        for pixel in 0..ACROSS * DOWN {
+            let colour = if bits >> pixel & 1 == 1 {
+                cell.fg
+            } else {
+                cell.bg
+            };
+            rows[top + pixel / ACROSS][left + pixel % ACROSS] = colour;
+        }
     }
     rows
 }
 
+/// The pixels of a pane as drawn. A cell holds two colours, so where the
+/// rain or the steam meets two colours of the room a pixel can show
+/// another's colour. A cell of the room alone draws each pixel as it is.
 fn view(scene: &Study, width: u16, height: u16) -> Vec<Vec<Color>> {
     let area = Rect::new(0, 0, width, height);
     pixels(&render(scene, area, area), area)
 }
 
-/// Where a view of `size` pixels starts on a pane of `cells`, in pixels:
+/// `palette` with `colour` in light and every other colour in dark.
+fn two_tone(palette: &Palette, colour: Color) -> &'static Palette {
+    let tone = |each: Color| if each == colour { LIGHT } else { DARK };
+    Box::leak(Box::new(Palette {
+        base: tone(palette.base),
+        surface: tone(palette.surface),
+        overlay: tone(palette.overlay),
+        muted: tone(palette.muted),
+        subtle: tone(palette.subtle),
+        text: tone(palette.text),
+        love: tone(palette.love),
+        gold: tone(palette.gold),
+        rose: tone(palette.rose),
+        pine: tone(palette.pine),
+        foam: tone(palette.foam),
+        iris: tone(palette.iris),
+    }))
+}
+
+const DARK: Color = Color::Rgb(0, 0, 0);
+const LIGHT: Color = Color::Rgb(255, 255, 255);
+
+/// Scenes from seed 7, one for each colour of a palette, each with its
+/// colour in light and the rest in dark. A palette changes no tick, so the
+/// scenes run in step, and a cell of two tones draws each pixel as it is.
+struct Toned {
+    scenes: Vec<(Color, Study)>,
+}
+
+impl Toned {
+    fn new(palette: &'static Palette) -> Self {
+        let mut colours = vec![
+            palette.base,
+            palette.surface,
+            palette.overlay,
+            palette.muted,
+            palette.subtle,
+            palette.text,
+            palette.love,
+            palette.gold,
+            palette.rose,
+            palette.pine,
+            palette.foam,
+            palette.iris,
+        ];
+        colours.dedup();
+        let scenes = colours
+            .into_iter()
+            .map(|colour| {
+                let scene = Study::new(Rng::seed_from_u64(7), two_tone(palette, colour));
+                (colour, scene)
+            })
+            .collect();
+        Self { scenes }
+    }
+
+    fn tick(&mut self, area: Rect) {
+        for (_, scene) in &mut self.scenes {
+            scene.tick(area);
+        }
+    }
+
+    /// Whether each pixel of a pane is in `colour`.
+    fn shows(&self, colour: Color, width: u16, height: u16) -> Vec<Vec<bool>> {
+        let (_, scene) = self
+            .scenes
+            .iter()
+            .find(|(each, _)| *each == colour)
+            .unwrap();
+        view(scene, width, height)
+            .into_iter()
+            .map(|row| row.into_iter().map(|pixel| pixel == LIGHT).collect())
+            .collect()
+    }
+
+    /// The colour of each pixel of a pane, as the scene holds it.
+    fn view(&self, width: u16, height: u16) -> Vec<Vec<Color>> {
+        let lit: Vec<(Color, Vec<Vec<bool>>)> = self
+            .scenes
+            .iter()
+            .map(|(colour, _)| (*colour, self.shows(*colour, width, height)))
+            .collect();
+        let mut rows = vec![vec![Color::Reset; lit[0].1[0].len()]; lit[0].1.len()];
+        for (y, row) in rows.iter_mut().enumerate() {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                if let Some((colour, _)) = lit.iter().find(|(_, shows)| shows[y][x]) {
+                    *pixel = *colour;
+                }
+            }
+        }
+        rows
+    }
+}
+
+/// The scene in each colour of Rose Pine, ticked once.
+fn toned() -> Toned {
+    let mut scenes = Toned::new(PALETTE);
+    scenes.tick(AREA);
+    scenes
+}
+
+/// Where a view of `size` letters starts on a pane of `cells`, in pixels:
 /// half the room left over, which is less than none when the view is cut.
+/// It starts on a whole letter, so each letter fills a half of a cell.
 fn offset(cells: (u16, u16), size: (usize, usize)) -> (isize, isize) {
+    let room = (
+        usize::from(cells.0) * ACROSS / LETTER,
+        usize::from(cells.1) * DOWN / LETTER,
+    );
     (
-        (cells.0 as isize - size.0 as isize) / 2,
-        (cells.1 as isize * 2 - size.1 as isize) / 2,
+        (room.0 as isize - size.0 as isize) / 2 * LETTER as isize,
+        (room.1 as isize - size.1 as isize) / 2 * LETTER as isize,
     )
+}
+
+/// A part of the picture in pixels, from one in letters.
+fn in_pixels(
+    (left, top, wide, tall): (usize, usize, usize, usize),
+) -> (usize, usize, usize, usize) {
+    (left * LETTER, top * LETTER, wide * LETTER, tall * LETTER)
 }
 
 /// Asserts that `small` shows the pixels of `large` from `shift` on.
@@ -84,7 +213,9 @@ const FITTED: Rect = Rect::new(0, 0, PICTURE.0 as u16, PICTURE.1 as u16 / 2);
 /// Ticks enough for every layer to move a few times, about two minutes.
 const RUN: u32 = 2000;
 
+/// The layer whose area holds the pixel at (x, y).
 fn layer_at(x: usize, y: usize) -> Option<&'static str> {
+    let (x, y) = (x / LETTER, y / LETTER);
     LAYERS
         .iter()
         .find(|(_, (left, top, wide, tall))| {
@@ -94,7 +225,9 @@ fn layer_at(x: usize, y: usize) -> Option<&'static str> {
 }
 
 /// For each tick of a run, the layers whose pixels changed from the frame
-/// before. Every changed pixel must lie in a layer's area.
+/// before. Every changed pixel must lie in a layer's area. Each area starts
+/// on a whole letter, so the pixels outside it in a cell are one letter of
+/// one colour, and they show as they are.
 fn changes(run: u32) -> Vec<Vec<&'static str>> {
     let mut scene = scene();
     let mut before = view(&scene, FITTED.width, FITTED.height);
@@ -197,7 +330,7 @@ fn each_layer_keeps_its_own_pace() {
 /// When: it ticks, and the lowest pixel of each run of rain, in foam on
 /// the glass, is followed from a frame to the next.
 /// Then: three in four stay in their column at the same row or up to two
-/// rows lower, and on average they move down. No rain covers the cat,
+/// letters lower, and on average they move down. No rain covers the cat,
 /// the pixels in text in the lower half of the glass. The moon is in text
 /// too, but it is outside and in the upper half.
 ///
@@ -206,46 +339,35 @@ fn each_layer_keeps_its_own_pace() {
 #[test]
 fn the_rain_runs_down_the_glass_behind_the_cat() {
     // Given:
-    let mut scene = scene();
+    let mut scenes = toned();
     let rain = PALETTE.foam;
-    let (left, top, wide, tall) = LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1;
+    let (left, top, wide, tall) =
+        in_pixels(LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1);
     let glass: Vec<(usize, usize)> = (top..top + tall)
         .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
         .collect();
-    let first = view(&scene, FITTED.width, FITTED.height);
+    let first = scenes.shows(PALETTE.text, FITTED.width, FITTED.height);
     let cat: Vec<(usize, usize)> = glass
         .iter()
         .copied()
-        .filter(|&(x, y)| y >= top + tall / 2 && first[y][x] == PALETTE.text)
+        .filter(|&(x, y)| y >= top + tall / 2 && first[y][x])
         .collect();
-    let heads = |rows: &[Vec<Color>]| -> Vec<(usize, usize)> {
-        glass
-            .iter()
-            .copied()
-            .filter(|&(x, y)| rows[y][x] == rain && rows[y + 1][x] != rain)
-            .collect()
-    };
-    let mut before = view(&scene, FITTED.width, FITTED.height);
+    let mut before = scenes.shows(rain, FITTED.width, FITTED.height);
     let (mut kept, mut seen, mut moved) = (0, 0, 0_isize);
 
     for tick in 0..400 {
         // When:
-        scene.tick(FITTED);
-        let after = view(&scene, FITTED.width, FITTED.height);
+        scenes.tick(FITTED);
+        let after = scenes.shows(rain, FITTED.width, FITTED.height);
 
         // Then:
         for &(x, y) in &cat {
-            assert_ne!(
-                after[y][x],
-                rain,
-                "tick {tick}: rain on the cat at {:?}",
-                (x, y)
-            );
+            assert!(!after[y][x], "tick {tick}: rain on the cat at {:?}", (x, y));
         }
-        let next = heads(&after);
-        for (x, y) in heads(&before) {
+        let next = heads(&glass, &after);
+        for (x, y) in heads(&glass, &before) {
             seen += 1;
-            if let Some(step) = (0..=2).find(|step| next.contains(&(x, y + step))) {
+            if let Some(step) = (0..=2 * LETTER).find(|step| next.contains(&(x, y + step))) {
                 kept += 1;
                 moved += step as isize;
             }
@@ -257,9 +379,86 @@ fn the_rain_runs_down_the_glass_behind_the_cat() {
         "{kept} of {seen} heads ran down"
     );
     assert!(
-        moved as f32 / seen as f32 > 0.2,
-        "the heads moved {moved} rows over {seen}"
+        moved as f32 / seen as f32 > 0.2 * LETTER as f32,
+        "the heads moved {moved} pixels over {seen}"
     );
+}
+
+/// The lowest pixel of each run of rain on the glass: a pixel in the rain
+/// with none below it.
+fn heads(glass: &[(usize, usize)], rain: &[Vec<bool>]) -> Vec<(usize, usize)> {
+    glass
+        .iter()
+        .copied()
+        .filter(|&(x, y)| rain[y][x] && !rain[y + 1][x])
+        .collect()
+}
+
+/// The rain runs down a quarter of a cell at a time.
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks for a minute, and the lowest pixel of each run of rain is
+/// found in each frame.
+/// Then: the runs end on rows of pixels at the top of a letter as well as
+/// on rows at its bottom.
+///
+/// Why it matters: rain that moves half a cell at a time jumps down the
+/// glass instead of running.
+#[test]
+fn the_rain_runs_down_a_quarter_of_a_cell_at_a_time() {
+    // Given:
+    let mut scenes = toned();
+    let (left, top, wide, tall) =
+        in_pixels(LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1);
+    let glass: Vec<(usize, usize)> = (top..top + tall)
+        .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
+        .collect();
+    let mut ends = [0; LETTER];
+
+    // When:
+    for _ in 0..1000 {
+        scenes.tick(FITTED);
+        let rain = scenes.shows(PALETTE.foam, FITTED.width, FITTED.height);
+        for (_, y) in heads(&glass, &rain) {
+            ends[y % LETTER] += 1;
+        }
+    }
+
+    // Then:
+    assert!(
+        ends.iter().all(|&count| count > 0),
+        "runs end on rows {ends:?} of a letter"
+    );
+}
+
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks for a minute and renders after each tick.
+/// Then: some cells draw an octant glyph that splits a half of the cell,
+/// across or down.
+///
+/// Why it matters: a room drawn only in half blocks moves its rain and
+/// steam in coarse steps.
+#[test]
+fn the_room_draws_in_octant_glyphs() {
+    // Given:
+    let mut scene = scene();
+    let halves = [0x00, 0x0f, 0xf0, 0xff].map(octant::glyph);
+    let mut split = 0;
+
+    // When:
+    for _ in 0..1000 {
+        scene.tick(FITTED);
+        let buffer = render(&scene, FITTED, FITTED);
+
+        // Then:
+        split += FITTED
+            .positions()
+            .filter(|position| {
+                let glyph = buffer[*position].symbol().chars().next().unwrap();
+                !halves.contains(&glyph)
+            })
+            .count();
+    }
+    assert!(split > 0, "every cell is a half block or a space");
 }
 
 /// The picture is centred in a pane larger than it.
@@ -267,7 +466,7 @@ fn the_rain_runs_down_the_glass_behind_the_cat() {
 /// wider and three rows taller.
 /// When: both render.
 /// Then: the larger pane shows the same pixels five cells further right
-/// and three pixels further down, so the picture keeps the middle of each.
+/// and three letters further down, so the picture keeps the middle of each.
 /// The picture holds at least eight colours of the theme.
 ///
 /// Why it matters: a picture stuck at a corner of a large terminal reads
@@ -275,18 +474,23 @@ fn the_rain_runs_down_the_glass_behind_the_cat() {
 #[test]
 fn the_picture_is_centred_in_a_larger_pane() {
     // Given:
-    let scene = scene();
+    let scenes = toned();
     assert!(AREA.width as usize >= PICTURE.0 && AREA.height as usize * 2 >= PICTURE.1);
 
     // When:
-    let (smaller, larger) = (view(&scene, 100, 30), view(&scene, 110, 33));
+    let (smaller, larger) = (scenes.view(100, 30), scenes.view(110, 33));
 
     // Then:
-    shows_from(&smaller, &larger, (5, 3));
+    shows_from(
+        &smaller,
+        &larger,
+        (5 * ACROSS as isize, 3 * LETTER as isize),
+    );
     let (left, top) = offset((100, 30), PICTURE);
+    let (_, _, wide, tall) = in_pixels((0, 0, PICTURE.0, PICTURE.1));
     let mut colours: Vec<Color> = Vec::new();
-    for row in &smaller[top as usize..top as usize + PICTURE.1] {
-        for colour in &row[left as usize..left as usize + PICTURE.0] {
+    for row in &smaller[top as usize..top as usize + tall] {
+        for colour in &row[left as usize..left as usize + wide] {
             if !colours.contains(colour) {
                 colours.push(*colour);
             }
@@ -306,13 +510,13 @@ fn the_picture_is_centred_in_a_larger_pane() {
 #[test]
 fn a_smaller_pane_shows_the_middle_of_the_picture() {
     // Given:
-    let scene = scene();
+    let scenes = toned();
     let small = (56, 18);
     assert!(small.0 >= LEAST.0 && small.1 >= LEAST.1);
     assert!((small.0 as usize) < PICTURE.0 && (small.1 as usize) * 2 < PICTURE.1);
 
     // When:
-    let (smaller, larger) = (view(&scene, small.0, small.1), view(&scene, 100, 30));
+    let (smaller, larger) = (scenes.view(small.0, small.1), scenes.view(100, 30));
 
     // Then:
     let (large_left, large_top) = offset((100, 30), PICTURE);
@@ -327,9 +531,8 @@ fn a_smaller_pane_shows_the_middle_of_the_picture() {
 /// The window part of the picture on a pane under the least size, and the
 /// pixel of the pane where it starts.
 fn window_on(small: (u16, u16)) -> (Vec<Vec<Color>>, (isize, isize)) {
-    let scene = scene();
     (
-        view(&scene, small.0, small.1),
+        toned().view(small.0, small.1),
         offset(small, (WINDOW.2, WINDOW.3)),
     )
 }
@@ -338,9 +541,10 @@ fn window_on(small: (u16, u16)) -> (Vec<Vec<Color>>, (isize, isize)) {
 /// room shows.
 fn window_in_room() -> (Vec<Vec<Color>>, (isize, isize)) {
     let (left, top) = offset((100, 30), PICTURE);
+    let (from_x, from_y, _, _) = in_pixels(WINDOW);
     (
-        view(&scene(), 100, 30),
-        (left + WINDOW.0 as isize, top + WINDOW.1 as isize),
+        toned().view(100, 30),
+        (left + from_x as isize, top + from_y as isize),
     )
 }
 
@@ -350,9 +554,9 @@ fn window_in_room() -> (Vec<Vec<Color>>, (isize, isize)) {
 /// When: both render.
 /// Then: the small pane shows the window part, the window, the cat and the
 /// sill, the same as it is in the room. The window's frame, the muted
-/// pixels of the window part, lies whole inside the part with a pixel or
+/// pixels of the window part, lies whole inside the part with a letter or
 /// more to spare on every side, and it has as much room on its left as on
-/// its right, to a pixel.
+/// its right, to a letter.
 ///
 /// Why it matters: a room cut to a small pane is a strip of desk that
 /// reads as nothing, and a window cut at its frame reads as a fault.
@@ -368,8 +572,9 @@ fn below_the_least_size_the_whole_window_shows() {
     let (larger, (from_x, from_y)) = window_in_room();
 
     // Then:
-    for y in 0..WINDOW.3 {
-        for x in 0..WINDOW.2 {
+    let (_, _, wide, tall) = in_pixels(WINDOW);
+    for y in 0..tall {
+        for x in 0..wide {
             let (at_x, at_y) = ((left + x as isize) as usize, (top + y as isize) as usize);
             assert_eq!(
                 smaller[at_y][at_x],
@@ -379,8 +584,8 @@ fn below_the_least_size_the_whole_window_shows() {
             );
         }
     }
-    let frame: Vec<(usize, usize)> = (0..WINDOW.3)
-        .flat_map(|y| (0..WINDOW.2).map(move |x| (x, y)))
+    let frame: Vec<(usize, usize)> = (0..tall)
+        .flat_map(|y| (0..wide).map(move |x| (x, y)))
         .filter(|&(x, y)| {
             smaller[(top + y as isize) as usize][(left + x as isize) as usize] == PALETTE.muted
         })
@@ -388,16 +593,16 @@ fn below_the_least_size_the_whole_window_shows() {
     assert!(!frame.is_empty(), "no frame");
     for &(x, y) in &frame {
         assert!(
-            x > 0 && y > 0 && x + 1 < WINDOW.2 && y + 1 < WINDOW.3,
+            x >= LETTER && y >= LETTER && x + LETTER < wide && y + LETTER < tall,
             "the frame reaches the window part's edge at {:?}",
             (x, y)
         );
     }
     let first = frame.iter().map(|(x, _)| *x).min().unwrap();
     let last = frame.iter().map(|(x, _)| *x).max().unwrap();
-    let right = WINDOW.2 - 1 - last;
+    let right = wide - 1 - last;
     assert!(
-        first.abs_diff(right) <= 1,
+        first.abs_diff(right) <= LETTER,
         "the frame has {first} pixels on its left and {right} on its right"
     );
 }
@@ -408,8 +613,8 @@ fn below_the_least_size_the_whole_window_shows() {
 /// When: both render.
 /// Then: every pixel of the small pane is the pixel of the window part as
 /// it is in the room, and the window's middle bar, the columns with the
-/// most muted, is in the middle of the pane to half a pixel, so the window
-/// is cut evenly from each side.
+/// most muted, is in the middle of the pane to half a letter, so the
+/// window is cut evenly from each side.
 ///
 /// Why it matters: a window cut from one corner loses its frame on one
 /// side only and reads as off centre.
@@ -433,7 +638,7 @@ fn a_pane_smaller_than_the_window_shows_its_middle() {
     let middle = bar.iter().sum::<usize>() as f32 / bar.len() as f32;
     let centre = (smaller[0].len() as f32 - 1.0) / 2.0;
     assert!(
-        (middle - centre).abs() <= 0.5,
+        (middle - centre).abs() <= 0.5 * LETTER as f32,
         "the middle bar is at {middle}, the pane's middle at {centre}"
     );
 }
@@ -449,14 +654,15 @@ fn a_pane_smaller_than_the_window_shows_its_middle() {
 fn the_window_shows_a_night_sky() {
     for palette in [&theme::ROSE_PINE, &theme::ROSE_PINE_DAWN] {
         // Given:
-        let mut scene = Study::new(Rng::seed_from_u64(7), palette);
-        scene.tick(FITTED);
+        let mut scenes = Toned::new(palette);
+        scenes.tick(FITTED);
 
         // When:
-        let rows = view(&scene, FITTED.width, FITTED.height);
+        let rows = scenes.view(FITTED.width, FITTED.height);
 
         // Then:
-        let (left, top, wide, tall) = LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1;
+        let (left, top, wide, tall) =
+            in_pixels(LAYERS.iter().find(|(name, _)| *name == "rain").unwrap().1);
         let mut counts: Vec<(Color, usize)> = Vec::new();
         for row in &rows[top..top + tall] {
             for colour in &row[left..left + wide] {
@@ -476,13 +682,13 @@ fn the_window_shows_a_night_sky() {
 /// flickers.
 /// Given: the scene on a pane the size of the picture.
 /// When: it ticks over about two minutes.
-/// Then: in the first frame the gold of the lamp reaches ten rows or more
-/// below the top of its shade, and in some frame of the run the lower half
-/// of the lamp's area holds less gold than in the first. The pixels of the
-/// lamp's area that differ between the first frame and the dimmest, the
-/// light, reach from the shade to the desk, twelve rows or more, show on
-/// the wall within four to seven rows of the shade's top, and are all warm
-/// in the first frame: gold, rose, or the bulb's text.
+/// Then: in the first frame the gold of the lamp reaches ten letters or
+/// more below the top of its shade, and in some frame of the run the lower
+/// half of the lamp's area holds less gold than in the first. The pixels
+/// of the lamp's area that differ between the first frame and the dimmest,
+/// the light, reach from the shade to the desk, twelve letters or more,
+/// show on the wall within four to seven letters of the shade's top, and
+/// are all warm in the first frame: gold, rose, or the bulb's text.
 ///
 /// Why it matters: a lamp that throws no light reads as a picture of a
 /// lamp, and a glow that stays bright while the bulb dims reads as a
@@ -491,7 +697,8 @@ fn the_window_shows_a_night_sky() {
 fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
     // Given:
     let mut scene = scene();
-    let (left, top, wide, tall) = LAYERS.iter().find(|(name, _)| *name == "lamp").unwrap().1;
+    let (left, top, wide, tall) =
+        in_pixels(LAYERS.iter().find(|(name, _)| *name == "lamp").unwrap().1);
     let gold = |rows: &[Vec<Color>], from: usize| -> Vec<usize> {
         (from..top + tall)
             .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
@@ -503,7 +710,7 @@ fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
     let lit = gold(&first, top);
     let (highest, lowest) = (*lit.iter().min().unwrap(), *lit.iter().max().unwrap());
     assert!(
-        lowest >= highest + 10,
+        lowest >= highest + 10 * LETTER,
         "the light reaches from row {highest} to {lowest}"
     );
     let lower = top + tall / 2;
@@ -529,9 +736,10 @@ fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
         .filter(|&y| (left..left + wide).any(|x| first[y][x] != dim[y][x]))
         .collect();
     let (from, to) = (lit[0], lit[lit.len() - 1]);
-    assert!(to - from >= 12, "the light changes rows {lit:?}");
+    assert!(to - from >= 12 * LETTER, "the light changes rows {lit:?}");
     assert!(
-        lit.iter().any(|y| (from + 4..from + 8).contains(y)),
+        lit.iter()
+            .any(|y| (from + 4 * LETTER..from + 8 * LETTER).contains(y)),
         "no light on the wall under the shade: rows {lit:?}"
     );
     for y in top..top + tall {
