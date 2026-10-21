@@ -186,6 +186,23 @@ fn the_road_bends_with_the_track_both_ways() {
     );
 }
 
+/// The rows where the colour at the road's centre changes, the ends of the
+/// stripes, in the lower half of the road.
+fn stripe_ends(scene: &Drive) -> Vec<usize> {
+    let rows = pixels(&render(scene, AREA, AREA), AREA);
+    let road = road(&rows);
+    let lower = &road[road.len() / 2..];
+    let centre: Vec<(usize, Color)> = lower
+        .iter()
+        .map(|(y, left, right)| (*y, rows[*y][(left + right) / 2]))
+        .collect();
+    centre
+        .windows(2)
+        .filter(|pair| pair[0].1 != pair[1].1)
+        .map(|pair| pair[1].0)
+        .collect()
+}
+
 /// The stripes move toward the car.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks, and the rows where the colour at the road's centre
@@ -201,29 +218,15 @@ fn the_road_bends_with_the_track_both_ways() {
 fn the_stripes_move_toward_the_car() {
     // Given:
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
-    let ends = |scene: &Drive| -> Vec<usize> {
-        let rows = pixels(&render(scene, AREA, AREA), AREA);
-        let road = road(&rows);
-        let lower = &road[road.len() / 2..];
-        let centre: Vec<(usize, Color)> = lower
-            .iter()
-            .map(|(y, left, right)| (*y, rows[*y][(left + right) / 2]))
-            .collect();
-        centre
-            .windows(2)
-            .filter(|pair| pair[0].1 != pair[1].1)
-            .map(|pair| pair[1].0)
-            .collect()
-    };
     let bottom = usize::from(AREA.height) * CELL_HEIGHT - 1;
     scene.tick(AREA);
-    let mut before = ends(&scene);
+    let mut before = stripe_ends(&scene);
     let mut moves: Vec<isize> = Vec::new();
 
     // When:
     for _ in 0..400 {
         scene.tick(AREA);
-        let after = ends(&scene);
+        let after = stripe_ends(&scene);
         for end in before
             .iter()
             .filter(|end| bottom - **end >= 2 * CELL_HEIGHT)
@@ -881,5 +884,198 @@ fn a_car_ahead_is_wider_than_a_cell_for_most_of_its_approach() {
     assert!(
         wide * 3 >= shown * 2,
         "a car ahead was wider than a cell in {wide} of {shown} frames"
+    );
+}
+
+/// The progress between two ticks that a glide test draws at.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// The stripes glide toward the car between ticks.
+/// Given: the scene at a hundred by thirty, and a second scene from the
+/// same seed that is never told its progress.
+/// When: both tick, and before each tick the first renders at no progress
+/// and at a quarter, a half and three quarters of the way to the next.
+/// Then: at no progress the first draws the frame of the second. An end of
+/// a stripe two cells or more above the bottom that moves down a cell or
+/// more in a tick lies strictly between its rows at the two ticks at each
+/// progress between them, for nine ends in ten.
+///
+/// Why it matters: at a half or a quarter of the speed a tick is eight or
+/// sixteen frames long, and stripes that jump once a tick stutter.
+#[test]
+fn the_stripes_glide_between_ticks() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let mut plain = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let bottom = usize::from(AREA.height) * CELL_HEIGHT - 1;
+    // The ends at the last tick, and at each progress after it.
+    let mut last: Option<(Vec<usize>, Vec<Vec<usize>>)> = None;
+    let (mut moved, mut glided) = (0, 0);
+
+    for tick in 0..RUN / 5 {
+        // When:
+        scene.tick(AREA);
+        plain.tick(AREA);
+        scene.set_progress(0.0);
+        let now = stripe_ends(&scene);
+
+        // Then:
+        assert_eq!(
+            render(&scene, AREA, AREA),
+            render(&plain, AREA, AREA),
+            "tick {tick}"
+        );
+        if let Some((before, between)) = last {
+            for &end in before
+                .iter()
+                .filter(|end| bottom - **end >= 2 * CELL_HEIGHT)
+            {
+                let Some(&after) = now.iter().filter(|after| **after >= end).min() else {
+                    continue;
+                };
+                if after - end < CELL_HEIGHT {
+                    continue;
+                }
+                moved += 1;
+                glided += usize::from(
+                    between
+                        .iter()
+                        .all(|ends| ends.iter().any(|row| end < *row && *row < after)),
+                );
+            }
+        }
+        let between = BETWEEN
+            .iter()
+            .map(|progress| {
+                scene.set_progress(*progress);
+                stripe_ends(&scene)
+            })
+            .collect();
+        last = Some((now, between));
+    }
+    assert!(moved > 100, "{moved} ends moved a cell in a tick");
+    assert!(
+        glided * 10 >= moved * 9,
+        "{glided} of {moved} ends lay between their rows at each progress"
+    );
+}
+
+/// The middle of the moon across the pane, in pixels, when all of it
+/// shows: over five cells of pixels, clear of the sides of the pane and a
+/// cell or more above the road. The rows of the road are left out, because
+/// its stripes and the plates of the cars share the moon's colour.
+fn moon(rows: &[Vec<Color>]) -> Option<f32> {
+    let moon: Vec<(usize, usize)> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| !row.contains(&PALETTE.overlay))
+        .flat_map(|(y, row)| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, colour)| **colour == PALETTE.text)
+                .map(move |(x, _)| (x, y))
+        })
+        .collect();
+    let lowest = moon.iter().map(|(_, y)| *y).max()?;
+    let (left, right) = (
+        moon.iter().map(|(x, _)| *x).min()?,
+        moon.iter().map(|(x, _)| *x).max()?,
+    );
+    let whole = moon.len() > 5 * CELL_WIDTH * CELL_HEIGHT
+        && left > 0
+        && right + 1 < rows[0].len()
+        && lowest + CELL_HEIGHT < road_top(rows);
+    whole.then(|| moon.iter().map(|(x, _)| *x as f32).sum::<f32>() / moon.len() as f32)
+}
+
+/// The moon and the cars ahead move on between ticks.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks over straights and curves, and before each tick it
+/// renders at no progress and at a quarter, a half and three quarters of
+/// the way to the next.
+/// Then: where the moon shows whole and moves in a tick, and by less than
+/// a quarter of the pane, its middle at each progress lies between its
+/// places at the two ticks, within a tenth of a pixel. In over half of
+/// those ticks it has moved at some progress before the next tick. Where the lowest row of
+/// the nearest car ahead moves down in a tick, with as many cars in view at
+/// both, in over half of those ticks the car has moved down at some
+/// progress before the next tick, and never below its row at the next.
+///
+/// Why it matters: a moon or a car that holds still for a tick and then
+/// jumps stutters at a half or a quarter of the speed.
+#[test]
+fn the_moon_and_the_cars_ahead_glide_between_ticks() {
+    // Given:
+    let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
+    let width = usize::from(AREA.width) * CELL_WIDTH;
+    /// The moon, how many cars ahead show, and the lowest row of the
+    /// nearest.
+    type Frame = (Option<f32>, usize, Option<usize>);
+    let read = |scene: &Drive| -> Frame {
+        let rows = pixels(&render(scene, AREA, AREA), AREA);
+        let cars = cars_ahead(&rows);
+        (moon(&rows), cars.len(), cars.iter().map(|car| car.1).max())
+    };
+    // The frame at the last tick, and at each progress after it.
+    let mut last: Option<(Frame, Vec<Frame>)> = None;
+    let (mut moon_moved, mut moon_early) = (0, 0);
+    let (mut car_moved, mut car_early) = (0, 0);
+
+    for tick in 0..RUN / 2 {
+        // When:
+        scene.tick(AREA);
+        scene.set_progress(0.0);
+        let now = read(&scene);
+
+        // Then:
+        if let Some(((moon_before, cars_before, car_before), between)) = last {
+            if let (Some(before), Some(after)) = (moon_before, now.0)
+                && before != after
+                && (after - before).abs() < width as f32 / 4.0
+            {
+                moon_moved += 1;
+                let (low, high) = (before.min(after) - 0.1, before.max(after) + 0.1);
+                for (progress, (moon, _, _)) in BETWEEN.iter().zip(&between) {
+                    assert!(
+                        moon.is_none_or(|moon| (low..=high).contains(&moon)),
+                        "tick {tick}: the moon at {moon:?} at progress {progress}, from {before} to {after}"
+                    );
+                }
+                moon_early += usize::from(
+                    between
+                        .iter()
+                        .any(|(moon, _, _)| moon.is_some_and(|moon| moon != before)),
+                );
+            }
+            if let (Some(before), Some(after)) = (car_before, now.2)
+                && after > before
+                && cars_before == now.1
+            {
+                car_moved += 1;
+                for (progress, (_, _, car)) in BETWEEN.iter().zip(&between) {
+                    assert!(
+                        car.is_some_and(|car| car <= after),
+                        "tick {tick}: the car at {car:?} at progress {progress}, from {before} to {after}"
+                    );
+                }
+                car_early += usize::from(between.iter().any(|(_, _, car)| *car != Some(before)));
+            }
+        }
+        let between = BETWEEN
+            .iter()
+            .map(|progress| {
+                scene.set_progress(*progress);
+                read(&scene)
+            })
+            .collect();
+        last = Some((now, between));
+    }
+    assert!(
+        moon_moved > 50 && moon_early * 2 > moon_moved,
+        "the moon moved before the next tick in {moon_early} of {moon_moved} ticks"
+    );
+    assert!(
+        car_moved > 30 && car_early * 2 > car_moved,
+        "a car ahead moved before the next tick in {car_early} of {car_moved} ticks"
     );
 }
