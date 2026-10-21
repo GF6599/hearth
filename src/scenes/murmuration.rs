@@ -1,13 +1,13 @@
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::config::Background;
 use crate::dither;
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
 
@@ -71,7 +71,6 @@ const POINTED_WIDTH: usize = 3;
 /// One crown in this many is pointed.
 const POINTED_ODDS: u32 = 3;
 const CROWN_GAP: RangeInclusive<usize> = 0..=3;
-const HALF_BLOCK: char = '▀';
 
 #[derive(Debug, Clone, Copy)]
 struct Bird {
@@ -98,7 +97,7 @@ pub struct Murmuration {
     /// The dots above the trees, where the flock flies.
     sky: usize,
     tree_rows: usize,
-    /// The height of the trees in each cell column, in half-block pixels.
+    /// The height of the trees in each cell column, in halves of a cell.
     trees: Vec<usize>,
     birds: Vec<Bird>,
     hawk: Option<Hawk>,
@@ -393,65 +392,97 @@ impl Scene for Murmuration {
         let rows = usize::from(area.height);
         let sky_rows = rows.saturating_sub(self.tree_rows);
         let bands = self.sky_bands();
-        let plot = |cells: &mut [u32], x: usize, y: usize| {
-            let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
-            if column < columns && row < sky_rows {
-                cells[row * columns + column] |= braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let fill = |canvas: &mut Canvas, column: usize, rows: Range<usize>, colour: Color| {
+            for y in rows {
+                for x in column * CELL_WIDTH..(column + 1) * CELL_WIDTH {
+                    canvas.set(x, y, colour);
+                }
             }
         };
-        let mut cells = vec![0; columns * sky_rows];
-        for bird in &self.birds {
-            plot(&mut cells, bird.x as usize, bird.y as usize);
+        let skies: Vec<Color> = (0..columns * sky_rows)
+            .map(|index| Self::sky_colour(bands, index % columns, index / columns, sky_rows))
+            .collect();
+        for (index, &sky) in skies.iter().enumerate() {
+            let (column, row) = (index % columns, index / columns);
+            fill(
+                &mut canvas,
+                column,
+                row * CELL_HEIGHT..(row + 1) * CELL_HEIGHT,
+                sky,
+            );
         }
-        let mut hawk_cells = vec![0; columns * sky_rows];
+
+        // The pixels of the birds in each cell, so the birds of a cell take
+        // one shade.
+        let mut cells = vec![0_u8; columns * sky_rows];
+        for bird in &self.birds {
+            let (x, y) = (bird.x as usize, bird.y as usize);
+            let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
+            if column < columns && row < sky_rows {
+                cells[row * columns + column] |=
+                    1 << (y % CELL_HEIGHT * CELL_WIDTH + x % CELL_WIDTH);
+            }
+        }
+        for (index, &birds) in cells.iter().enumerate() {
+            let (column, row) = (index % columns, index / columns);
+            let colour = if birds.count_ones() > FAINT_DOTS {
+                self.palette.text
+            } else {
+                self.palette.subtle
+            };
+            for pixel in (0..8).filter(|pixel| birds >> pixel & 1 == 1) {
+                canvas.set(
+                    column * CELL_WIDTH + pixel % CELL_WIDTH,
+                    row * CELL_HEIGHT + pixel / CELL_WIDTH,
+                    colour,
+                );
+            }
+        }
+        // The flock keeps clear of the hawk, so a cell of the hawk holds the
+        // sky and the hawk.
         if let Some(hawk) = self.hawk {
             let centre = (hawk.x.floor() as isize, hawk.y.floor() as isize);
             for (dx, dy) in HAWK_SHAPE {
                 if let (Ok(x), Ok(y)) = (
                     usize::try_from(centre.0 + dx),
                     usize::try_from(centre.1 + dy),
-                ) {
-                    plot(&mut hawk_cells, x, y);
+                ) && y < sky_rows * CELL_HEIGHT
+                {
+                    canvas.set(x, y, self.palette.love);
                 }
             }
-        }
-        for (index, (&dots, &hawk)) in cells.iter().zip(&hawk_cells).enumerate() {
-            let (column, row) = (index % columns, index / columns);
-            let cell = &mut buf[(area.x + column as u16, area.y + row as u16)];
-            cell.set_bg(Self::sky_colour(bands, column, row, sky_rows));
-            // One braille cell has one colour, so a cell the hawk is in
-            // shows the hawk alone.
-            let (dots, colour) = if hawk != 0 {
-                (hawk, self.palette.love)
-            } else if dots.count_ones() > FAINT_DOTS {
-                (dots, self.palette.text)
-            } else {
-                (dots, self.palette.subtle)
-            };
-            if dots == 0 {
-                cell.set_char(' ');
-                continue;
-            }
-            let glyph = braille::glyph(dots);
-            cell.set_char(glyph).set_fg(colour);
         }
 
         let tallest = self.tree_rows * 2;
         for row in sky_rows..rows {
             for column in 0..columns {
                 let height = self.trees.get(column).copied().unwrap_or(0);
-                let pixel = |upper: usize| {
-                    if tallest - upper <= height {
+                let upper = (row - sky_rows) * 2;
+                for half in [upper, upper + 1] {
+                    let colour = if tallest - half <= height {
                         self.palette.muted
                     } else {
                         bands[2]
-                    }
-                };
-                let upper = (row - sky_rows) * 2;
-                buf[(area.x + column as u16, area.y + row as u16)]
-                    .set_char(HALF_BLOCK)
-                    .set_fg(pixel(upper))
-                    .set_bg(pixel(upper + 1));
+                    };
+                    let top = row * CELL_HEIGHT + (half - upper) * CELL_HEIGHT / 2;
+                    fill(&mut canvas, column, top..top + CELL_HEIGHT / 2, colour);
+                }
+            }
+        }
+        canvas.render(area, buf);
+
+        // A cell of the sky keeps the sky behind its birds, as the base
+        // stays behind, so the bands of the sky read as one background.
+        for (index, &sky) in skies.iter().enumerate() {
+            let (column, row) = (index % columns, index / columns);
+            let cell = &mut buf[(area.x + column as u16, area.y + row as u16)];
+            if cell.fg != sky || cell.bg == sky {
+                continue;
+            }
+            if let Some(turned) = octant::complement(cell.symbol()) {
+                let bird = cell.bg;
+                cell.set_char(turned).set_fg(bird).set_bg(sky);
             }
         }
     }
