@@ -80,6 +80,8 @@ pub fn accents(palette: &Palette) -> [Color; 5] {
 /// slowly shows no bands.
 pub const TONES: usize = 16;
 
+pub const BLENDS: usize = 8;
+
 /// The colour of each step of the mix from the water to each accent, mixed
 /// once from the palette, so a frame mixes no colour.
 #[derive(Debug)]

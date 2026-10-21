@@ -10,7 +10,7 @@ use hearth::corpus::Corpus;
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::ink::{
-    self, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME, TONES, Tones,
+    self, BLENDS, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME, TONES, Tones,
 };
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
@@ -60,22 +60,33 @@ fn tone(palette: &Palette, accent: Color, tone: usize) -> Color {
     octant::mix(palette.base, accent, tone as f32 / TONES as f32)
 }
 
-/// Every colour the ink can draw in `palette`: the water, each accent, and
-/// each step of the mix from the water toward one accent.
-fn tones(palette: &Palette) -> Vec<Color> {
-    ink::accents(palette)
-        .into_iter()
-        .flat_map(|accent| (0..=TONES).map(move |step| tone(palette, accent, step)))
+/// Every colour the ink can draw in `palette`: each step of the mix from
+/// the water toward an accent, or toward a mix of two accents by a step of
+/// `BLENDS`.
+fn tones(palette: &Palette) -> HashSet<Color> {
+    let accents = ink::accents(palette);
+    let mut inks = Vec::new();
+    for first in accents {
+        for second in accents {
+            for blend in 0..=BLENDS {
+                inks.push(octant::mix(first, second, blend as f32 / BLENDS as f32));
+            }
+        }
+    }
+    inks.into_iter()
+        .flat_map(|ink| (0..=TONES).map(move |step| tone(palette, ink, step)))
         .collect()
 }
 
 /// Given: the scene on a forty by twenty area, in a dark and a light theme.
 /// When: it renders after each of four hundred ticks.
 /// Then: every cell is an octant glyph whose eight pixels are the water
-/// mixed some steps of `TONES` toward one accent, all the way at the most.
+/// mixed some steps of `TONES` toward one accent or toward a mix of two,
+/// all the way at the most.
 ///
-/// Why it matters: a pixel that mixes the water with anything but one
-/// accent shows a colour that the theme and the drop do not have.
+/// Why it matters: a pixel that mixes the water with anything but the
+/// accents of the ink shows a colour that the theme and the drops do not
+/// have.
 #[test]
 fn every_pixel_is_the_water_mixed_toward_an_accent() {
     let area = Rect::new(0, 0, 40, 20);
@@ -270,31 +281,36 @@ fn thin_ink_mixes_the_water_toward_its_accent() {
     }
 }
 
-/// Given: a pixel that holds as much of the first accent as of the
-/// third, and `FULL_INK` between them.
-/// When: it shades every pixel of a four by four tile.
-/// Then: half the tile is the one accent and half the other, with no
-/// water.
+/// Given: pixels that hold `FULL_INK` between the first accent and the
+/// third, in shares of a half each, and of three quarters and a quarter.
+/// When: each shades every pixel of a four by four tile.
+/// Then: every pixel of the tile is the mix of the two accents by their
+/// shares.
 ///
-/// Why it matters: where two clouds meet the ink mixes by dither. Drawing
-/// only the densest ink cuts a hard edge between them.
+/// Why it matters: where two clouds meet their inks mix. Drawing only the
+/// densest ink cuts a hard edge between them, and picking one accent or
+/// the other for each pixel draws a checker of two colours where the
+/// theme's colours should blend.
 #[test]
-fn two_inks_in_one_pixel_mix_by_dither() {
+fn two_inks_in_one_pixel_mix_by_their_shares() {
     // Given:
     let palette = &theme::ROSE_PINE;
     let accents = ink::accents(palette);
-    let half = FULL_INK / 2.0;
-
-    // When:
     let shading = Tones::new(palette);
-    let tile: Vec<Color> = tile()
-        .map(|(x, row)| shading.shade(&[half, 0.0, half, 0.0, 0.0], x, row))
-        .collect();
+    for third in [0.5, 0.25] {
+        // When:
+        let inks = [FULL_INK * (1.0 - third), 0.0, FULL_INK * third, 0.0, 0.0];
+        let tile: Vec<Color> = tile()
+            .map(|(x, row)| shading.shade(&inks, x, row))
+            .collect();
 
-    // Then:
-    let first = tile.iter().filter(|colour| **colour == accents[0]).count();
-    let third = tile.iter().filter(|colour| **colour == accents[2]).count();
-    assert_eq!((first, third), (8, 8), "{tile:?}");
+        // Then:
+        let mix = octant::mix(accents[0], accents[2], third);
+        assert!(
+            tile.iter().all(|colour| *colour == mix),
+            "{third} of the third accent: {tile:?}"
+        );
+    }
 }
 
 /// Given: the scene on a hundred by thirty area.
