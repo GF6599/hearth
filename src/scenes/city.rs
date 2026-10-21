@@ -3,10 +3,9 @@ use std::f64::consts::TAU;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
-use ratatui::style::Color;
+use ratatui::layout::Rect;
 
-use crate::quadrant;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -21,14 +20,14 @@ const FAR: (f64, f64) = (0.5, 0.85);
 /// The least and the most height of a near tower, in the same shares.
 /// The least keeps a near roof above the train, which would hide it.
 const NEAR: (f64, f64) = (0.35, 0.65);
-/// The least rows by which two towers side by side differ in height, so
-/// their roofs make a skyline and not one block.
-const STEP: usize = 4;
+/// The least pixel rows by which two towers side by side differ in height,
+/// so their roofs make a skyline and not one block.
+const STEP: usize = 2 * CELL_HEIGHT;
 /// The share of near towers with a gap after them, and of far ones.
 const GAPS: (f64, f64) = (0.5, 0.3);
 /// The share of towers with an antenna, and its least and most height in
 /// pixels.
-const ANTENNA: (f64, usize, usize) = (0.35, 4, 8);
+const ANTENNA: (f64, usize, usize) = (0.35, 2 * CELL_HEIGHT, 4 * CELL_HEIGHT);
 /// The ticks of one loop of the night, about three minutes, from the
 /// evening to the late night and back.
 const NIGHT: f64 = 3000.0;
@@ -61,13 +60,15 @@ const TRAIN_GAP: (u64, u64) = (300, 900);
 /// How many stars the sky holds, at any size of pane.
 const STARS: usize = 90;
 /// The moon's radius as a share of the pane's height, and its middle as
-/// shares of the pane's width and height. A pixel is twice as tall as
-/// wide, so the moon spans twice its radius in pixels across.
+/// shares of the pane's width and height. A pixel is about square.
 const MOON: (f64, f64, f64) = (0.06, 0.8, 0.14);
+/// The pixel rows of a rim, a window, a lamp and the water line: half a
+/// cell.
+const THIN: usize = CELL_HEIGHT / 2;
 
-/// A tower's columns and its top row, in pixels. Every edge is even, so a
-/// tower covers whole cells and no cell holds a wall, a window and the
-/// sky.
+/// A tower's columns and its top row, in pixels. Its sides are the edges
+/// of cells and its top row is the top or the middle of a cell, so no cell
+/// holds a wall, a window and the sky.
 #[derive(Debug, Clone, Copy)]
 struct Tower {
     left: usize,
@@ -162,37 +163,41 @@ impl City {
     /// The top row of the raised line, or none on a pane too short for a
     /// train above it.
     fn line(down: usize, shore: usize) -> Option<usize> {
-        let line = shore.checked_sub(((down as f64 * LINE) as usize & !1).max(6))?;
-        (line >= 6).then_some(line)
+        let height = (down as f64 * LINE) as usize / CELL_HEIGHT * CELL_HEIGHT;
+        let line = shore.checked_sub(height.max(3 * CELL_HEIGHT))?;
+        (line >= 3 * CELL_HEIGHT).then_some(line)
     }
 
     fn shore(down: usize) -> usize {
-        (down as f64 * SHORE) as usize & !1
+        (down as f64 * SHORE) as usize / CELL_HEIGHT * CELL_HEIGHT
     }
 
     fn build(&mut self) {
-        let across = usize::from(self.width) * 2;
-        let down = usize::from(self.height) * 2;
+        let across = usize::from(self.width) * CELL_WIDTH;
+        let down = usize::from(self.height) * CELL_HEIGHT;
         let shore = Self::shore(down);
         self.towers.clear();
         self.windows.clear();
         self.antennas.clear();
-        if across == 0 || shore < 4 {
+        if across == 0 || shore < 2 * CELL_HEIGHT {
             return;
         }
         let far = self.layer(across, shore, FAR, false, 0);
-        let start = 2 * self.rng.random_range(0..=3);
+        let start = CELL_WIDTH * self.rng.random_range(0..=3);
         let near = self.layer(across, shore, NEAR, true, start);
         self.towers = far.into_iter().chain(near).collect();
         let towers = self.towers.clone();
         for tower in &towers {
             if self.rng.random_bool(ANTENNA.0) {
                 let height = self.rng.random_range(ANTENNA.1..=ANTENNA.2) & !1;
-                if tower.top > height {
+                if tower.top >= height + CELL_HEIGHT {
                     let period = self.rng.random_range(BLINK.1..=BLINK.2);
+                    // The lamp ends at the bottom of a cell, so a lit lamp
+                    // shares its cell with the sky and not with the mast.
+                    let light = (tower.top - height) / CELL_HEIGHT * CELL_HEIGHT - THIN;
                     self.antennas.push(Antenna {
-                        x: (tower.left + tower.width / 2) & !1,
-                        light: tower.top - height - 1,
+                        x: (tower.left + tower.width / 2) / CELL_WIDTH * CELL_WIDTH,
+                        light,
                         roof: tower.top,
                         near: tower.near,
                         period,
@@ -204,9 +209,10 @@ impl City {
         for tower in &towers {
             // The first and last cells of a tower hold no window, so the
             // rim at its right edge never shares a cell with one.
-            for column in 1..(tower.width / 2).saturating_sub(1) {
-                let x = tower.left + 1 + 2 * column;
-                for y in (tower.top + 2..shore.saturating_sub(3)).step_by(2) {
+            for column in 1..(tower.width / CELL_WIDTH).saturating_sub(1) {
+                let x = tower.left + 1 + CELL_WIDTH * column;
+                let bottom = shore.saturating_sub(3 * THIN);
+                for y in (tower.top + CELL_HEIGHT..bottom).step_by(CELL_HEIGHT) {
                     if x + 1 < across && (tower.near || !self.hidden(x, y)) {
                         self.windows.push(Window {
                             x,
@@ -221,15 +227,20 @@ impl City {
         }
     }
 
-    /// Whether a near tower, or the cell of a near antenna, stands in front
-    /// of a far window. A window in the cell of an antenna would make three
-    /// colours, more than a quadrant cell draws.
+    /// Whether the cell of a near tower or of a near antenna holds a far
+    /// window at row `y`. A window in such a cell would make three colours,
+    /// more than a cell draws.
     fn hidden(&self, x: usize, y: usize) -> bool {
+        let cell = y / CELL_HEIGHT * CELL_HEIGHT;
         let tower = self.towers.iter().any(|front| {
-            front.near && (front.left..front.left + front.width).contains(&x) && y >= front.top
+            front.near
+                && (front.left..front.left + front.width).contains(&x)
+                && cell + CELL_HEIGHT > front.top
         });
         let antenna = self.antennas.iter().any(|front| {
-            front.near && x & !1 == front.x && (front.light & !1..front.roof).contains(&y)
+            front.near
+                && x / CELL_WIDTH * CELL_WIDTH == front.x
+                && (front.light / CELL_HEIGHT * CELL_HEIGHT..front.roof).contains(&y)
         });
         tower || antenna
     }
@@ -244,17 +255,17 @@ impl City {
         near: bool,
         start: usize,
     ) -> Vec<Tower> {
-        let least = ((across as f64 * TOWER_WIDTH.0) as usize).max(4);
-        let most = ((across as f64 * TOWER_WIDTH.1) as usize).max(least + 2);
+        let least = ((across as f64 * TOWER_WIDTH.0) as usize).max(2 * CELL_WIDTH);
+        let most = ((across as f64 * TOWER_WIDTH.1) as usize).max(least + CELL_WIDTH);
         let gap = if near { GAPS.0 } else { GAPS.1 };
         let mut towers: Vec<Tower> = Vec::new();
         let mut left = start;
         while left < across {
-            let width = self.rng.random_range(least..=most) & !1;
+            let width = self.rng.random_range(least..=most) / CELL_WIDTH * CELL_WIDTH;
             let mut top = 0;
             for _ in 0..8 {
                 let share = self.rng.random_range(heights.0..heights.1);
-                let height = ((share * shore as f64) as usize & !1).max(2);
+                let height = ((share * shore as f64) as usize / THIN * THIN).max(CELL_HEIGHT);
                 top = shore - height;
                 let beside = towers.last().filter(|last| last.left + last.width == left);
                 if beside.is_none_or(|last| last.top.abs_diff(top) >= STEP) {
@@ -267,7 +278,12 @@ impl City {
                 top,
                 near,
             });
-            left += width + if self.rng.random_bool(gap) { 2 } else { 0 };
+            left += width
+                + if self.rng.random_bool(gap) {
+                    CELL_WIDTH
+                } else {
+                    0
+                };
         }
         towers
     }
@@ -275,16 +291,16 @@ impl City {
     fn in_moon(x: usize, y: usize, across: usize, down: usize) -> bool {
         let (width, height) = (across as f64, down as f64);
         let (radius, centre, middle) = (MOON.0 * height, MOON.1 * width, MOON.2 * height);
-        let (dx, dy) = ((x as f64 + 0.5 - centre) / 2.0, y as f64 + 0.5 - middle);
+        let (dx, dy) = (x as f64 + 0.5 - centre, y as f64 + 0.5 - middle);
         dx * dx + dy * dy <= radius * radius
     }
 
-    fn draw_moon(&self, rows: &mut [Vec<Color>], shore: usize) {
-        let (across, down) = (rows.first().map_or(0, Vec::len), rows.len());
-        for (y, row) in rows.iter_mut().enumerate().take(shore) {
-            for (x, pixel) in row.iter_mut().enumerate() {
+    fn draw_moon(&self, canvas: &mut Canvas, shore: usize) {
+        let (across, down) = (canvas.width(), canvas.height());
+        for y in 0..shore {
+            for x in 0..across {
                 if Self::in_moon(x, y, across, down) {
-                    *pixel = self.palette.text;
+                    canvas.set(x, y, self.palette.text);
                 }
             }
         }
@@ -294,23 +310,28 @@ impl City {
     /// star beside a mast or the moon would make a third colour in its
     /// cell. The cell is judged by the shapes and not by the colours, as
     /// with the terminal's background a far wall reads as the sky.
-    fn draw_stars(&self, rows: &mut [Vec<Color>], shore: usize) {
-        let (across, down) = (rows.first().map_or(0, Vec::len), rows.len());
-        let line = Self::line(down, shore).map_or(shore, |line| line - 4);
-        let room = shore.saturating_sub(2) as f64;
+    fn draw_stars(&self, canvas: &mut Canvas, shore: usize) {
+        let (across, down) = (canvas.width(), canvas.height());
+        let line = Self::line(down, shore).map_or(shore, |line| line - 2 * CELL_HEIGHT);
+        let room = shore.saturating_sub(CELL_HEIGHT) as f64;
         for &(x, y) in &self.stars {
             let (column, row) = ((x * across as f64) as usize, (y * room) as usize);
-            let (left, top) = (column & !1, row & !1);
+            let (left, top) = (
+                column / CELL_WIDTH * CELL_WIDTH,
+                row / CELL_HEIGHT * CELL_HEIGHT,
+            );
+            let (right, bottom) = (left + CELL_WIDTH, top + CELL_HEIGHT);
             let towers = self.towers.iter().any(|tower| {
-                left < tower.left + tower.width && tower.left < left + 2 && top + 1 >= tower.top
+                left < tower.left + tower.width && tower.left < right && bottom > tower.top
             });
-            let masts = self.antennas.iter().any(|antenna| {
-                antenna.x & !1 == left && top + 1 >= antenna.light && top < antenna.roof
-            });
+            let masts = self
+                .antennas
+                .iter()
+                .any(|antenna| antenna.x == left && bottom > antenna.light && top < antenna.roof);
             let moon =
-                (top..top + 2).any(|y| (left..left + 2).any(|x| Self::in_moon(x, y, across, down)));
-            if !towers && !masts && !moon && top + 1 < line {
-                rows[row][column] = self.palette.subtle;
+                (top..bottom).any(|y| (left..right).any(|x| Self::in_moon(x, y, across, down)));
+            if !towers && !masts && !moon && bottom <= line {
+                canvas.set(column, row, self.palette.subtle);
             }
         }
     }
@@ -319,7 +340,7 @@ impl City {
     /// tower has a rim on its roof and on its right edge, the side of the
     /// moon, in a lighter tone than its wall, so towers side by side read
     /// apart.
-    fn draw_towers(&self, rows: &mut [Vec<Color>], shore: usize) {
+    fn draw_towers(&self, canvas: &mut Canvas, shore: usize) {
         for near in [false, true] {
             let (wall, rim) = if near {
                 (self.palette.overlay, self.palette.pine)
@@ -328,106 +349,108 @@ impl City {
             };
             for tower in self.towers.iter().filter(|tower| tower.near == near) {
                 let right = tower.left + tower.width - 1;
-                for (y, row) in rows.iter_mut().enumerate().take(shore).skip(tower.top) {
-                    for (x, pixel) in row
-                        .iter_mut()
-                        .enumerate()
-                        .skip(tower.left)
-                        .take(tower.width)
-                    {
-                        *pixel = if y == tower.top || x == right {
+                for y in tower.top..shore {
+                    for x in tower.left..=right {
+                        let colour = if y < tower.top + THIN || x == right {
                             rim
                         } else {
                             wall
                         };
+                        canvas.set(x, y, colour);
                     }
                 }
             }
             for antenna in self.antennas.iter().filter(|antenna| antenna.near == near) {
-                for row in &mut rows[antenna.light + 1..antenna.roof] {
-                    if let Some(pixel) = row.get_mut(antenna.x) {
-                        *pixel = self.palette.muted;
-                    }
+                for y in antenna.light + THIN..antenna.roof {
+                    canvas.set(antenna.x, y, self.palette.muted);
                 }
                 // An unlit lamp keeps the mast's colour, so a far wall
                 // behind it does not show through as it blinks.
                 let on = (self.time + antenna.offset) % antenna.period < BLINK.0;
-                if let Some(pixel) = rows[antenna.light].get_mut(antenna.x) {
-                    *pixel = if on {
-                        self.palette.love
-                    } else {
-                        self.palette.muted
-                    };
+                let lamp = if on {
+                    self.palette.love
+                } else {
+                    self.palette.muted
+                };
+                for y in antenna.light..antenna.light + THIN {
+                    canvas.set(antenna.x, y, lamp);
                 }
             }
         }
         for window in &self.windows {
-            rows[window.y][window.x] = match (window.lit, window.warm, window.near) {
+            let colour = match (window.lit, window.warm, window.near) {
                 (true, true, _) => self.palette.rose,
                 (true, false, _) => self.palette.gold,
                 (false, _, true) => self.palette.surface,
                 (false, _, false) => continue,
             };
+            for y in window.y..window.y + THIN {
+                canvas.set(window.x, y, colour);
+            }
         }
     }
 
-    fn draw_line(&self, rows: &mut [Vec<Color>], line: usize, shore: usize) {
+    fn draw_line(&self, canvas: &mut Canvas, line: usize, shore: usize) {
         let muted = self.palette.muted;
-        for row in &mut rows[line..line + 2] {
-            row.fill(muted);
+        let across = canvas.width();
+        for y in line..line + CELL_HEIGHT {
+            for x in 0..across {
+                canvas.set(x, y, muted);
+            }
         }
-        for row in &mut rows[line + 2..shore] {
-            for (x, pixel) in row.iter_mut().enumerate() {
-                if x % PILLAR_GAP < 2 {
-                    *pixel = muted;
-                }
+        for y in line + CELL_HEIGHT..shore {
+            for x in (0..across).filter(|x| x % PILLAR_GAP < CELL_WIDTH) {
+                canvas.set(x, y, muted);
             }
         }
         let Some(train) = self.train else {
             return;
         };
         let car = (CARRIAGE.0 + CARRIAGE.1) as i64;
-        for (down, row) in rows[line - 4..line].iter_mut().enumerate() {
-            for (x, pixel) in row.iter_mut().enumerate() {
+        let top = line - 2 * CELL_HEIGHT;
+        for y in top..line {
+            for x in 0..across {
                 let along = x as i64 - train.left;
                 if along < 0 || along >= train.length() || along % car >= CARRIAGE.0 as i64 {
                     continue;
                 }
                 let inside = (2..CARRIAGE.0 as i64 - 2).contains(&(along % car));
-                *pixel = if down == 1 && inside && along % 2 == 0 {
+                let window = (y - top) / THIN == 1;
+                let colour = if window && inside && along % 2 == 0 {
                     self.palette.gold
                 } else {
                     muted
                 };
+                canvas.set(x, y, colour);
             }
         }
     }
 
-    /// The water line at the shore, and under it the near towers mirrored dim,
-    /// as far below the line as they stand above it. The far towers are left
-    /// out of the mirror, so the near roofs show their shapes in it. A lit
-    /// window mirrors as a streak four pixels wide. Each cell row of the water
-    /// slides by whole cells with a ripple that grows with depth, so no cell
-    /// holds a streak, the dim city and the water, and gaps that run along the
-    /// rows break the streaks.
-    fn draw_water(&self, rows: &mut [Vec<Color>], shore: usize) {
-        let across = rows.first().map_or(0, Vec::len);
-        let (land, water) = rows.split_at_mut(shore);
-        let Some((line, water)) = water.split_first_mut() else {
-            return;
-        };
-        line.fill(self.palette.muted);
-        for (depth, row) in water.iter_mut().enumerate().skip(1) {
-            let Some(above) = shore.checked_sub(depth) else {
+    /// The water line at the shore, and from a cell under the shore the near
+    /// towers mirrored dim, as far below the shore's cell as they stand
+    /// above it. The far towers are left out of the mirror, so the near
+    /// roofs show their shapes in it. A lit window mirrors as a streak four
+    /// pixels wide. Each cell row of the water slides by whole cells with a
+    /// ripple that grows with depth, so no cell holds a streak, the dim city
+    /// and the water, and gaps that run along the rows break the streaks.
+    fn draw_water(&self, canvas: &mut Canvas, shore: usize) {
+        let (across, down) = (canvas.width(), canvas.height());
+        for y in shore..shore + THIN {
+            for x in 0..across {
+                canvas.set(x, y, self.palette.muted);
+            }
+        }
+        let water = shore + CELL_HEIGHT;
+        for y in water..down {
+            let Some(above) = (shore + water - 1).checked_sub(y) else {
                 break;
             };
-            let cell = (shore + 1 + depth) / 2;
-            let cells_down = (cell - shore / 2) as f64;
+            let cell = y / CELL_HEIGHT;
+            let cells_down = (cell - shore / CELL_HEIGHT) as f64;
             let reach = (0.4 + cells_down * 0.2).min(2.0);
             let wave = (self.time as f64 * 0.12 + cell as f64 * 0.9).sin();
-            let ripple = 2 * (reach * wave).round() as i64;
-            let source = &land[above];
-            for (x, pixel) in row.iter_mut().enumerate() {
+            let ripple = CELL_WIDTH as i64 * (reach * wave).round() as i64;
+            for x in 0..across {
                 let Ok(from) = usize::try_from(x as i64 - ripple) else {
                     continue;
                 };
@@ -437,23 +460,22 @@ impl City {
                         && above >= tower.top
                 });
                 if near {
-                    *pixel = self.palette.surface;
+                    canvas.set(x, y, self.palette.surface);
                 }
             }
-            for (x, colour) in source.iter().enumerate() {
-                let lit = *colour == self.palette.gold || *colour == self.palette.rose;
+            for x in 0..across {
+                let Some(colour) = canvas.get(x, above) else {
+                    continue;
+                };
+                let lit = colour == self.palette.gold || colour == self.palette.rose;
                 let gap = (x / 4 + cell * 3 + (self.time / 5) as usize).is_multiple_of(4);
                 if !lit || gap {
                     continue;
                 }
                 let at = x as i64 + ripple;
                 for spread in -1..=2 {
-                    if let Some(pixel) = usize::try_from(at + spread)
-                        .ok()
-                        .filter(|x| *x < across)
-                        .and_then(|x| row.get_mut(x))
-                    {
-                        *pixel = *colour;
+                    if let Ok(x) = usize::try_from(at + spread) {
+                        canvas.set(x, y, colour);
                     }
                 }
             }
@@ -482,7 +504,7 @@ impl City {
     }
 
     fn run_train(&mut self) {
-        let across = i64::from(self.width) * 2;
+        let across = i64::from(self.width) * CELL_WIDTH as i64;
         if let Some(train) = &mut self.train {
             train.left += if train.forward {
                 TRAIN_SPEED
@@ -513,22 +535,21 @@ impl City {
         }
     }
 
-    fn pixels(&self) -> Vec<Vec<Color>> {
-        let across = usize::from(self.width) * 2;
-        let down = usize::from(self.height) * 2;
-        let mut rows = vec![vec![self.palette.base; across]; down];
+    fn pixels(&self) -> Canvas {
+        let mut canvas = Canvas::new(self.width, self.height, self.palette.base);
+        let down = canvas.height();
         let shore = Self::shore(down);
-        if shore < 4 {
-            return rows;
+        if shore < 2 * CELL_HEIGHT {
+            return canvas;
         }
-        self.draw_moon(&mut rows, shore);
-        self.draw_towers(&mut rows, shore);
+        self.draw_moon(&mut canvas, shore);
+        self.draw_towers(&mut canvas, shore);
         if let Some(line) = Self::line(down, shore) {
-            self.draw_line(&mut rows, line, shore);
+            self.draw_line(&mut canvas, line, shore);
         }
-        self.draw_stars(&mut rows, shore);
-        self.draw_water(&mut rows, shore);
-        rows
+        self.draw_stars(&mut canvas, shore);
+        self.draw_water(&mut canvas, shore);
+        canvas
     }
 }
 
@@ -545,22 +566,6 @@ impl Scene for City {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let rows = self.pixels();
-        for row in 0..self.height.min(area.height) {
-            for column in 0..self.width.min(area.width) {
-                let (x, y) = (usize::from(column) * 2, usize::from(row) * 2);
-                let quarters = [
-                    rows[y][x],
-                    rows[y][x + 1],
-                    rows[y + 1][x],
-                    rows[y + 1][x + 1],
-                ];
-                let (glyph, fore, back) = quadrant::cell(quarters, self.palette.base);
-                buf[Position::new(area.x + column, area.y + row)]
-                    .set_char(glyph)
-                    .set_fg(fore)
-                    .set_bg(back);
-            }
-        }
+        self.pixels().render(area, buf);
     }
 }
