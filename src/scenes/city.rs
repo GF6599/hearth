@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -180,34 +180,45 @@ impl Shades {
     fn new(palette: &Palette) -> Self {
         let step = |shade: usize| shade as f32 / (WALL_SHADES - 1) as f32;
         let near = std::array::from_fn(|shade| {
-            octant::mix(palette.overlay, palette.pine, NEAR_LIGHT * step(shade))
+            blended(
+                palette,
+                palette.overlay,
+                palette.pine,
+                NEAR_LIGHT * step(shade),
+            )
         });
         let far = std::array::from_fn(|shade| {
-            octant::mix(palette.surface, palette.overlay, FAR_LIGHT * step(shade))
+            blended(
+                palette,
+                palette.surface,
+                palette.overlay,
+                FAR_LIGHT * step(shade),
+            )
         });
-        // A see-through base never mixes, so the sky stays the terminal's
-        // own background.
         let sky = std::array::from_fn(|shade| {
-            if palette.see_through {
-                palette.base
-            } else {
-                let share = shade as f32 / (SKY_SHADES - 1) as f32;
-                octant::mix(palette.base, palette.iris, HORIZON * share)
-            }
-        });
-        let ends = [palette.gold, palette.rose].map(|light| {
-            let mut water = Canvas::new(1, 1, palette);
-            water.blend(0, 0, light, STREAK_END);
-            water.get(0, 0).unwrap_or(palette.base)
+            let share = shade as f32 / (SKY_SHADES - 1) as f32;
+            blended(palette, palette.base, palette.iris, HORIZON * share)
         });
         Self {
             sky,
-            ends,
+            ends: [palette.gold, palette.rose]
+                .map(|light| blended(palette, palette.base, light, STREAK_END)),
             walls: [far, near],
             glows: [palette.gold, palette.rose]
-                .map(|light| near.map(|wall| octant::mix(wall, light, WINDOW_GLOW))),
+                .map(|light| near.map(|wall| blended(palette, wall, light, WINDOW_GLOW))),
         }
     }
+}
+
+/// The colour `over` gives a pixel of `under` at `share`, as the canvas
+/// blends it. A theme over the terminal's background has a see-through
+/// base, and its surface too, and the canvas never mixes either, so the
+/// sky and the far walls stay the user's own background.
+fn blended(palette: &Palette, under: Color, over: Color, share: f32) -> Color {
+    let mut pixel = Canvas::new(1, 1, palette);
+    pixel.set(0, 0, under);
+    pixel.blend(0, 0, over, share);
+    pixel.get(0, 0).unwrap_or(under)
 }
 
 impl City {
@@ -407,9 +418,8 @@ impl City {
         disc.disc((x0 as f32, y0 as f32), radius as f32, self.palette.text);
         let blends: Vec<Color> = (0..=GLOW_STEPS as usize)
             .map(|step| {
-                let mut pixel = Canvas::new(1, 1, self.palette);
-                pixel.blend(0, 0, self.palette.text, step as f32 / GLOW_STEPS);
-                pixel.get(0, 0).unwrap_or(self.palette.base)
+                let share = step as f32 / GLOW_STEPS;
+                blended(self.palette, self.palette.base, self.palette.text, share)
             })
             .collect();
         // The glow takes one shade in each cell, from the distance of the
