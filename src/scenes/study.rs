@@ -1,7 +1,8 @@
 //! A study desk by a window on a rainy night: a town behind the glass, a
 //! cat on the sill, books, a lamp, a computer and a mug. One picture drawn
-//! by hand, a letter to a square of octant pixels, so a letter is as wide
-//! as it is tall. The rain and the steam move a pixel at a time.
+//! by hand, a character to an octant pixel, and laid out in letters two
+//! pixels square, so a letter is as wide as it is tall. The rain and the
+//! steam move a pixel at a time.
 
 use std::ops::Range;
 
@@ -10,7 +11,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::Canvas;
+use crate::octant::{self, CELL_HEIGHT, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -18,53 +19,116 @@ use crate::theme::Palette;
 /// and half a cell down, so a letter is as wide as it is tall.
 const LETTER: usize = 2;
 
-/// The room, letter by letter. Each letter is a role of the theme:
-/// `w` wall, `f` window frame, `s` night sky, `v` stars, `b` town, `y` and
-/// `r` lit town windows, `T` moon, pages and the lamp's bulb, `l` sill, `c`
-/// cat, `d` desk top, `n` desk front, `m` metal and the monitor, `k`
-/// screen, and `L`, `I`, `G`, `P`, `R`, `F` the colours of books, lamp and
-/// mug.
-const ART: [&str; 40] = [
-    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwffffffffffffffffffffffffffffwwwwwwwwwwwwwwwLwGPwFwwwwwwwwwwwwwwwwwwww",
-    "wwwfssssssssssssffssssssssssssfwwwwwwwwwwwwwwwLIGPRFIwwwwwRwwwwwwwwwwwww",
-    "wwwfsssTTsssvsssffsssssssssvssfwwwwwwwwwwwwwwwLIGPRFIwwwwRRwwwwwwwwwwwww",
-    "wwwfssTTTTssssssffssvsssssssssfwwwwwwwwwwwwdddddddddddddddddddddwwwwwwww",
-    "wwwfssTTTTssssssffssssssssssssfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwfsssTTsssssssffsssssssssssvfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwfssssssssssssffssssssvsssssfwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
-    "wwwfssssssssssvsffssssssssssssfwwwwwwwwwwmmmmmmmmmmmmmmmmmmmmmmwwwwwwwww",
-    "wwwfssssssvsssssffssssvsssssssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfssssssssssssffbbbbssssssssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwffffffffffffffffffffffffffffwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfsssbbbbsssssffbbbcsssbcbssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfsssbbbbsssbbffbbyccssccbssfwwwwwwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfbbbbbbbsssybffbbbccccccbbbfwwwGGGwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfrbbbbbbsssbbffbbccccccccbbfwwGGGGGwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfbbbbbbbbbbbbffbbbccccccbbbfwGGGGGGGwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfrbbrbbbrbbbbffbbybccccbbbbfwwwTTTwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfbbbbbbbbbbrbffbbbccccccbbbfwwwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfbbbbbrbybrbbffrbccccccccbbfwwwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfbbbbbbbbbbbbffbbccccccccbbfwwwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwfffffffffffffffffccccccccfffwwwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wllllllllllllllllllllllllllllllllwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wllllllllllllllllllllllllllllllllwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmwwwwwmkkkkkkkkkkkkkkkkkkkkmwwwwwwwww",
-    "wwwIIIIIIIIIIITwwwwwwwwwwwwwwwwwwwwmwwwwwmmmmmmmmmmmmmmmmmmmmmmwRRRRwwww",
-    "wwwIIIIIIIIIIITwwwwwwwwwwwwwwwwwwwwmwwwwwwwwwwwwwwmmmmwwwwwwwwwwRRRRRRww",
-    "wwLLLLLLLLLLLLLLTwwwwwwwwwwwwwwwwwwmwwwwwwwwwwwwwwmmmmwwwwwwwwwwRRRRwRww",
-    "wwLLLLLLLLLLLLLLTTTTTTTTTwwwwwwwwmmmmmwwwwwwwwwmmmmmmmmmmwwwwwwwRRRRRRww",
-    "dddddddddddddddddddddddddddddddddddddddddddmmmmmmmmmmmmmmmmmdddddddddddd",
-    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmmmmmmmmmmmmmmmmmmmmmnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnmmmnnnnnnnnmnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmmmmmmmmmmmmmmmmmmmmmnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
-    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+/// The room, a character to a pixel. Each character is a role of the
+/// theme: `w` wall, `f` window frame, `s` night sky, `v` stars, `b` town,
+/// `y` and `r` lit town windows, `T` moon, pages and the lamp's bulb, `l`
+/// sill, `c` cat and `e` its shade, `d` desk top, `n` desk front, `m` metal
+/// and the monitor, `k` screen, and `L`, `I`, `G`, `P`, `R`, `F` the
+/// colours of books, lamp and mug. The rest are mixes of two roles that
+/// shade them, as `SHADES` gives them. A cell shows two colours of its
+/// pixels, so the art keeps each cell's two pixels across and four down to
+/// two colours.
+const ART: [&str; PICTURE.1 * LETTER] = [
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwPwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwGGwwwwwwwwwwwwwwwwPPwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLwwGGwwwwFFwwwwwwwwwwwPwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwffffffffffffffffffffffffffffffffffffffffffffffffffffffffwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLwwGGPPwwFFwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwffffffffffffffffffffffffffffffffffffffffffffffffffffffffwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLIIGGPPwwFFwwwwwwwwwwRRwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjssssssssssssssssssssssssfjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLIIGGPPRRFFIIwwwwwwwwRRwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjssssssssssssssssssssssssfjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLIIGGPPRRFFIIwwwwwwwwRRwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssTTTTsssssssssssssshffjsssssssssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLIIGGPPRRFFIIwwwwwwwwRRwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssTTTTTTsssssvssssssshffjssssssssssssssssssvssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwLLIIGGPPRRFFIIwwwwwwwwRRwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssTTMTTTTTsssssssssssshffjssssssssssvssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwddddddddddddddddddddddddddddddddddddddddddwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssTTTTTTTTsssssssssssshffjsssssssssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwddddddddddddddddddddddddddddddddddddddddddwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssTTTTTTTTsssssssssssshffjsssssssssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwzzwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwzzwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssTTTTMMTTsssssssssssshffjsssssssssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwzzwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwzzwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssTTTTTTssssssssssssshffjssssssssssssssssssssssvshjwwwwwwwwwwwwwwwwwwwwwwwwwwwzwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwzwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssTTTTsssssssssssssshffjsssssssssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjsssssbsssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjsssssbsssssssvsssssssssshjwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssssssssssssssssvssshffjsssssbsssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjsssssbsssssssssssssssssshjwwwwwwwwwwwwwwwwwwwwhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjbbbbbbbbsssssssssssssssshjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssvssssssssvssssssssssshffjbbbbbbbbssssssssvssssssshjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjbbybrbbbsssssssssssssssshjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjbbbbbbbbsssssssssssssssshjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwffffffffffffffffffffffffffffffffffffffffffffffffffffffffwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwffffffffffffffffffffffffffffffffffffffffffffffffffffffffwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjbbbbbbbbssssssssssssssssfjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfsssssssssssssssssssssssshffjbbbbbbbbssssssssssssssssfjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssbbbbbbbbsssssssssshffjbbbbbbebbbbbbbbbbcbbbbbbhjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssbbbbbbbbsssssssssshffjbbbbbbeecbbbbbbcccbbbbbbhjwwwwwwwwwwwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssbbrbbbbbsssssssssshffjbbbbbbeeccbbbbccccbbbbbbhjwwwwww888888wwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfssssssbbbbbbbbsssssssssshffjbbbbbbeeccccccccccbbbbybhjwwwww88888888wwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbbbbbssssssbbbbhffjbbbbbbeeccccccccccbbbbbbhjwwwwGGGGGGGGGGwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbybbbssssssbbbbhffjbbbbbbeeccccccccccbbbbbbhjwwwGGGGGGGGGGGGwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbybbbbbbbbbbbssssssbrbbhffjbbbbbbeeccccccccccbbbbbbhjwwGGGGGGGGGGGGGGwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbbbbbssssssbbbbhffjbbbbbbeeccccccccccbbbbbbhjwwGGGGGGGGGGGGGGwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbbbbbbbbbbbbbbbhffjbbbbbbbecccccccccbbbbbbbhjwwwwwwwTTTTwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbybbbbbbbbbbbbbbbhffjbbbbbbbbccccccccbbbbbbrbhjwwwwwwwwTTwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbrbbbbbbbbbbbybbbbbbbhffjbbbbbbbbccccccccbbbbbbbbhjwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbbbbbbbbbbbbbybhffjbbbbbbbbccccccccbbbbbbbbhjwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbbbrbbbbbbbbbbbhffjbbbbbbbccccccccccbbbbbbbhjwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbybbbbbbbbbbbbbbbrbbbbbhffjbbbbbbccccccccccccbbbbbbhjwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbybbbbbbbbbbbbbhffjbbbbbbccccccccccccbbbbbbhjwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwhfbbbbbbbbbbbbbbbbbbbbbbbbhffjbbbbbecccccccccccccbbbbbhjwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwffffffffffffffffffffffffffffffffffeeccccccccccccccffffffwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwffffffffffffffffffffffffffffffffffeeccccccccccccccffffffwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeeccccccccccccccaaaaaaaaaawwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeeccccccccccccccaaaaaaaaaawwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwhmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkmjwwwwwwwwwwwwwwwwww",
+    "wwwwwwIIIIIIIIIIIIIIIIIIIIIITTwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjww77RRRR55wwwwwwww",
+    "wwwwwwIIIIIIIIIIIIIIIIIIIIII99wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjww77RRRR55wwwwwwww",
+    "wwwwww2222222222222222222222TTwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwwwwwwwwwwwwwwwwwwwhhmmmmjjwwwwwwwwwwwwwwwwwwww77RRRR5555wwwwww",
+    "wwwwwwIIIIIIIIIIIIIIIIIIIIII99wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwwwwwwwwwwwwwwwwwwwhhmmmmjjwwwwwwwwwwwwwwwwwwww77RRRR55ww5wwwww",
+    "wwwwLLLLLLLLLLLLLLLLLLLLLLLLLLLLTTwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwwwwwwwwwwwwwwwwwwwhhmmmmjjwwwwwwwwwwwwwwwwwwww77RRRR55ww5wwwww",
+    "wwwwLLLLLLLLLLLLLLLLLLLLLLLLLLLL99wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmwwwwwwwwwwwwwwwwwwwwwwwwwwwwhhmmmmjjwwwwwwwwwwwwwwwwwwww77RRRR55ww5wwwww",
+    "wwww1111111111111111111111111111TTwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwmmmmmmmmmmwwwwwwwwwwwwwwwwwwmmmmmmmmmmmmmmmmmmmmwwwwwwwwwwwwww77RRRR5555wwwwww",
+    "wwwwLLLLLLLLLLLLLLLLLLLLLLLLLLLL99TTTTTTTTTTTTTTTTwwwwwwwwwwwwwwwwmmmmmmmmmmwwwwwwwwwwwwwwwwwwmmmmmmmmmmmmmmmmmmmmwwwwwwwwwwwwwwwwRRRRwwwwwwwwww",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaammmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnmmmmnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnmmmmnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+    "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+];
+
+/// Two roles of a theme, for a mix of them.
+type Pair = fn(&Palette) -> (Color, Color);
+
+/// The characters of the art that mix two roles: the share of the second
+/// role in the first. Each lights or shades a part in colours of its own,
+/// and none mixes in the base, so a see-through base keeps every edge hard.
+const SHADES: [(u8, Pair, f32); 11] = [
+    (b'h', |p| (p.muted, p.subtle), 0.5),
+    (b'j', |p| (p.muted, p.overlay), 0.5),
+    (b'a', |p| (p.subtle, p.text), 0.3),
+    (b'z', |p| (p.subtle, p.muted), 0.5),
+    (b'M', |p| (p.text, p.subtle), 0.45),
+    (b'9', |p| (p.text, p.subtle), 0.45),
+    (b'1', |p| (p.love, p.muted), 0.4),
+    (b'2', |p| (p.iris, p.muted), 0.4),
+    (b'5', |p| (p.rose, p.love), 0.35),
+    (b'7', |p| (p.rose, p.text), 0.45),
+    (b'8', |p| (p.gold, p.text), 0.4),
 ];
 
 /// The picture's width and height, in letters.
@@ -87,16 +151,21 @@ const RAIN: Area = (4, 3, 26, 19);
 const STEAM: Area = (63, 17, 8, 9);
 const LAMP: Area = (32, 15, 7, 16);
 const SWING: Area = (25, 22, 7, 7);
-/// The column of the lamp's bulb, the rows of wall under the shade its
-/// light falls on, and the row of the desk it lights.
-const BULB: usize = 35;
-const LIT_WALL: (usize, usize) = (19, 22);
+/// The middle of the lamp's bulb, in letters, and the row of the desk it
+/// lights.
+const BULB: (f32, f32) = (35.5, 18.5);
 const LIT_DESK: usize = 30;
-/// The light on the wall under the shade, a row of it for each row down:
-/// the letters from the bulb that take gold, those that take rose, and how
-/// many in turn are lit, so the light thins out as it falls. The pole and
-/// the base stay in front of it.
-const HALO: [(usize, usize, usize); 3] = [(1, 3, 2), (0, 2, 2), (0, 3, 4)];
+/// The glow of the bulb on the wall under the shade: how far it reaches in
+/// pixels, which keeps it inside the lamp's area, how far along the light
+/// from the wall through rose to gold it reaches at the bulb, and the steps
+/// it fades in.
+const GLOW_REACH: f32 = 7.5;
+const GLOW_PEAK: f32 = 0.9;
+const GLOW_STEPS: usize = 8;
+/// The columns of the desk, in pixels, that the lamp's pool of light takes
+/// in gold, and in rose past them as far as the lamp's area reaches. Each
+/// edge lies between two cells, so no cell holds both.
+const POOL: Range<usize> = 68..74;
 /// Each layer that moves, by name, and the area it draws in. No layer
 /// draws outside its own area, so the rest of the room stays still.
 pub const LAYERS: [(&str, Area); 5] = [
@@ -107,9 +176,9 @@ pub const LAYERS: [(&str, Area); 5] = [
     ("screen", SCREEN),
 ];
 const SYNTAX: [fn(&Palette) -> Color; 4] = [|p| p.iris, |p| p.foam, |p| p.gold, |p| p.subtle];
-/// The letters of the picture outside the glass. The rain runs over these
-/// only, because the frame and the cat are inside the room.
-const OUTSIDE: &[u8] = b"sbyrTv";
+/// The characters of the picture outside the glass. The rain runs over
+/// these only, because the frame and the cat are inside the room.
+const OUTSIDE: &[u8] = b"sbyrTvM";
 const DROPS: usize = 14;
 /// The ticks from one letter typed on the screen to the next, half a
 /// second. The cursor blinks at twice this.
@@ -122,6 +191,11 @@ const LINE_PAUSE: usize = 3;
 const SPOUT: (f64, f64) = (65.5, 25.0);
 const RISE: f64 = 0.1;
 const SWAY: f64 = 1.5;
+/// A puff of steam fades into the wall as it rises: by this share of the
+/// wall at most, in this many steps, over this many ticks.
+const STEAM_FADE: f32 = 0.6;
+const STEAM_FADES: usize = 4;
+const STEAM_TICKS: f64 = 50.0;
 /// The cat's tail at rest, swung left and swung right, hanging over the
 /// front of the sill.
 const TAILS: [[(usize, usize); 7]; 3] = [
@@ -157,6 +231,9 @@ const TAILS: [[(usize, usize); 7]; 3] = [
 /// rest.
 const FLICK: [usize; 4] = [1, 0, 2, 0];
 const FLICK_TICKS: usize = 3;
+/// The places the tail's brush takes along each letter of it, enough that
+/// a diagonal leaves no gap.
+const TAIL_STEPS: usize = 4;
 
 /// One line of code on the screen: its indent, then each word's length and
 /// colour.
@@ -176,8 +253,8 @@ impl Code {
     }
 }
 
-/// A streak of rain on the glass: its column, the row of its lowest point,
-/// its speed in a tick and its length, all in letters.
+/// A streak of rain on the glass: its column in pixels, and the row of its
+/// lowest point, its speed in a tick and its length, in letters.
 #[derive(Debug, Clone, Copy)]
 struct Streak {
     x: usize,
@@ -208,6 +285,48 @@ pub struct Study {
     /// the steam draw on from their tick by it, so they move a pixel at a
     /// time at any rate.
     progress: f64,
+    /// The colour of each character of the art, and of each step of the
+    /// lamp's glow on the wall, mixed once from the theme.
+    colours: [Color; 128],
+    glow: Vec<Color>,
+    /// The shades of a puff of steam, from new to faded.
+    steam_shades: Vec<Color>,
+}
+
+/// The colour of each character of the art: its role, or the mix that
+/// `SHADES` gives it. A character the art does not use takes the wall's.
+fn colours(palette: &Palette) -> [Color; 128] {
+    let mut colours = [palette.overlay; 128];
+    let roles = [
+        (b'f', palette.muted),
+        (b'm', palette.muted),
+        (b'P', palette.pine),
+        (b's', palette.base),
+        (b'k', palette.base),
+        (b'b', palette.overlay),
+        (b'v', palette.subtle),
+        (b'y', palette.gold),
+        (b'G', palette.gold),
+        (b'r', palette.rose),
+        (b'R', palette.rose),
+        (b'T', palette.text),
+        (b'c', palette.text),
+        (b'e', palette.subtle),
+        (b'l', palette.subtle),
+        (b'd', palette.subtle),
+        (b'n', palette.surface),
+        (b'L', palette.love),
+        (b'I', palette.iris),
+        (b'F', palette.foam),
+    ];
+    for (letter, colour) in roles {
+        colours[usize::from(letter)] = colour;
+    }
+    for (letter, pair, share) in SHADES {
+        let (from, to) = pair(palette);
+        colours[usize::from(letter)] = octant::mix(from, to, share);
+    }
+    colours
 }
 
 impl Study {
@@ -226,6 +345,19 @@ impl Study {
             flick: None,
             next_flick: 0,
             progress: 0.0,
+            colours: colours(palette),
+            glow: (0..=GLOW_STEPS)
+                .map(|step| {
+                    let along = GLOW_PEAK * step as f32 / GLOW_STEPS as f32;
+                    octant::ramp(&[palette.overlay, palette.rose, palette.gold], along)
+                })
+                .collect(),
+            steam_shades: (0..STEAM_FADES)
+                .map(|step| {
+                    let share = STEAM_FADE * step as f32 / (STEAM_FADES - 1) as f32;
+                    octant::mix(palette.subtle, palette.overlay, share)
+                })
+                .collect(),
         };
         let lines = SCREEN.3 / 2;
         study.screen = (0..lines).map(|_| study.code()).collect();
@@ -256,8 +388,8 @@ impl Study {
     fn streak(&mut self, above: bool) -> Streak {
         let (left, top, wide, tall) = RAIN;
         let x = loop {
-            let x = self.rng.random_range(left..left + wide);
-            if ART[top].as_bytes()[x] != b'f' {
+            let x = self.rng.random_range(left * LETTER..(left + wide) * LETTER);
+            if OUTSIDE.contains(&ART[top * LETTER].as_bytes()[x]) {
                 break x;
             }
         };
@@ -274,82 +406,50 @@ impl Study {
         }
     }
 
-    fn colour(&self, letter: u8) -> Color {
-        let palette = self.palette;
-        match letter {
-            b'f' | b'm' => palette.muted,
-            b'P' => palette.pine,
-            b's' | b'k' => palette.base,
-            b'b' => palette.overlay,
-            b'v' => palette.subtle,
-            b'y' | b'G' => palette.gold,
-            b'r' | b'R' => palette.rose,
-            b'T' | b'c' => palette.text,
-            b'l' | b'd' => palette.subtle,
-            b'n' => palette.surface,
-            b'L' => palette.love,
-            b'I' => palette.iris,
-            b'F' => palette.foam,
-            _ => palette.overlay,
-        }
-    }
-
-    /// The colour of each letter of the picture, with the layers that move
-    /// a letter at a time.
-    fn letters(&self) -> Vec<Vec<Color>> {
+    /// The colour of each pixel of the picture, with the layers that move.
+    fn pixels(&self) -> Vec<Vec<Color>> {
         let mut rows: Vec<Vec<Color>> = ART
             .iter()
-            .map(|line| line.bytes().map(|letter| self.colour(letter)).collect())
+            .map(|line| {
+                line.bytes()
+                    .map(|letter| self.colours[usize::from(letter)])
+                    .collect()
+            })
             .collect();
         self.draw_screen(&mut rows);
         self.draw_lamp(&mut rows);
-        let pose = self.flick.map_or(0, |tick| FLICK[tick / FLICK_TICKS]);
-        for &(x, y) in &TAILS[pose] {
-            rows[y][x] = self.palette.text;
-        }
-        rows
-    }
-
-    /// The colour of each pixel of the picture, with the layers that move
-    /// a pixel at a time.
-    fn pixels(&self) -> Vec<Vec<Color>> {
-        let mut rows: Vec<Vec<Color>> = self
-            .letters()
-            .iter()
-            .flat_map(|line| {
-                let row: Vec<Color> = line.iter().flat_map(|colour| [*colour; LETTER]).collect();
-                vec![row; LETTER]
-            })
-            .collect();
+        self.draw_tail(&mut rows);
         self.draw_rain(&mut rows);
         self.draw_steam(&mut rows);
         rows
     }
 
+    /// Each line of code is a row of pixels across the top of its letters,
+    /// and the cursor a letter tall.
     fn draw_screen(&self, rows: &mut [Vec<Color>]) {
         let (left, top, _, _) = SCREEN;
         let last = self.screen.len() - 1;
         for (line, code) in self.screen.iter().enumerate() {
-            let y = top + 1 + line * 2;
+            let y = (top + 1 + line * 2) * LETTER;
             let start = left + 2 + code.indent * 2;
             let shown = if line == last { self.typed } else { usize::MAX };
             let mut x = start;
             for &(length, colour) in &code.words {
-                for (offset, typed) in rows[y][x..x + length].iter_mut().enumerate() {
-                    if x - start + offset < shown {
-                        *typed = colour;
-                    }
-                }
+                let typed = length.min(shown.saturating_sub(x - start));
+                rows[y][x * LETTER..(x + typed) * LETTER].fill(colour);
                 x += length + 1;
             }
             if line == last && (self.ticks / (TYPING * 2)).is_multiple_of(2) {
-                rows[y][start + self.typed.min(code.width())] = self.palette.text;
+                let cursor = (start + self.typed.min(code.width())) * LETTER;
+                rows[y][cursor] = self.palette.text;
+                rows[y + 1][cursor] = self.palette.text;
             }
         }
     }
 
     fn draw_rain(&self, rows: &mut [Vec<Color>]) {
         let (_, top, _, tall) = RAIN;
+        let glass = top * LETTER..(top + tall) * LETTER;
         for streak in &self.rain {
             // A streak that starts again on the next tick runs on below
             // the glass until then, so no frame draws it on its way back
@@ -361,18 +461,15 @@ impl Study {
                 let Ok(row) = usize::try_from(row) else {
                     continue;
                 };
-                let letter = row / LETTER;
-                if (top..top + tall).contains(&letter)
-                    && OUTSIDE.contains(&ART[letter].as_bytes()[streak.x])
-                {
-                    let left = streak.x * LETTER;
-                    rows[row][left..left + LETTER].fill(self.palette.foam);
+                if glass.contains(&row) && OUTSIDE.contains(&ART[row].as_bytes()[streak.x]) {
+                    rows[row][streak.x] = self.palette.foam;
                 }
             }
         }
     }
 
-    /// Each puff of steam is a letter in size, placed to the pixel.
+    /// Each puff of steam is a letter in size, placed to the pixel, and
+    /// fades into the wall as it rises.
     fn draw_steam(&self, rows: &mut [Vec<Color>]) {
         let (left, top, wide, tall) = STEAM;
         let across = left * LETTER..(left + wide) * LETTER;
@@ -381,6 +478,7 @@ impl Study {
             at.clamp(within.start, within.end)..(at + LETTER).clamp(within.start, within.end)
         };
         let scale = LETTER as f64;
+        let last = self.steam_shades.len() - 1;
         for &(age, sway) in &self.steam {
             for behind in [0.0, 8.0, 16.0] {
                 let age = age + self.progress - behind;
@@ -389,37 +487,76 @@ impl Study {
                 }
                 let x = (SPOUT.0 + (age * 0.12 + sway).sin() * SWAY) * scale;
                 let y = (SPOUT.1 - age * RISE) * scale;
+                let fade = ((age / STEAM_TICKS) * last as f64).round() as usize;
+                let colour = self.steam_shades[fade.min(last)];
                 let columns = inside(x.round() as usize, &across);
                 for row in &mut rows[inside(y.round() as usize, &down)] {
-                    row[columns.clone()].fill(self.palette.subtle);
+                    row[columns.clone()].fill(colour);
                 }
             }
         }
     }
 
+    /// Lit, the lamp's bulb glows on the wall under its shade and throws a
+    /// pool of gold and rose on the desk. Dim, as it flickers, its
+    /// bulb turns gold, its shade rose, and the light goes. The pole and
+    /// the base stay in front of the light.
     fn draw_lamp(&self, rows: &mut [Vec<Color>]) {
         let (left, top, wide, tall) = LAMP;
         let dim = !self.flicker.is_multiple_of(2);
         let palette = self.palette;
-        for (y, (row, line)) in rows.iter_mut().zip(ART).enumerate().skip(top).take(tall) {
-            let cells = row.iter_mut().zip(line.bytes()).enumerate();
-            for (x, (lit, letter)) in cells.skip(left).take(wide) {
-                let off = x.abs_diff(BULB);
+        let bulb = (BULB.0 * LETTER as f32, BULB.1 * LETTER as f32);
+        let desk = LIT_DESK * LETTER..(LIT_DESK + 1) * LETTER;
+        let colour = |letter: u8| self.colours[usize::from(letter)];
+        let lines = rows.iter_mut().zip(ART).enumerate();
+        for (y, (row, line)) in lines.skip(top * LETTER).take(tall * LETTER) {
+            let pixels = row.iter_mut().zip(line.bytes()).enumerate();
+            for (x, (lit, letter)) in pixels.skip(left * LETTER).take(wide * LETTER) {
+                let (dx, dy) = (x as f32 + 0.5 - bulb.0, y as f32 + 0.5 - bulb.1);
                 if dim {
                     match letter {
                         b'T' => *lit = palette.gold,
                         b'G' => *lit = palette.rose,
+                        b'8' => *lit = colour(b'7'),
                         _ => {}
                     }
-                } else if (LIT_WALL.0..LIT_WALL.1).contains(&y) && letter == b'w' {
-                    let (gold, rose, every) = HALO[y - LIT_WALL.0];
-                    if off <= gold {
-                        *lit = palette.gold;
-                    } else if off <= rose && (x + y).is_multiple_of(every) {
-                        *lit = palette.rose;
+                } else if letter == b'w' && dy > 0.0 {
+                    let near = (1.0 - dx.hypot(dy) / GLOW_REACH).max(0.0);
+                    let step = (near * near * GLOW_STEPS as f32).round() as usize;
+                    if step > 0 {
+                        *lit = self.glow[step.min(GLOW_STEPS)];
                     }
-                } else if y == LIT_DESK && letter == b'd' && off <= 3 {
-                    *lit = if off <= 2 { palette.gold } else { palette.rose };
+                } else if desk.contains(&y) && letter == b'a' {
+                    *lit = if POOL.contains(&x) {
+                        palette.gold
+                    } else {
+                        palette.rose
+                    };
+                }
+            }
+        }
+    }
+
+    /// The tail through the points of its pose, a letter apart, two pixels
+    /// thick and one at its tip.
+    fn draw_tail(&self, rows: &mut [Vec<Color>]) {
+        let pose = self.flick.map_or(0, |tick| FLICK[tick / FLICK_TICKS]);
+        let scale = LETTER as f32;
+        let points: Vec<(f32, f32)> = TAILS[pose]
+            .iter()
+            .map(|&(x, y)| ((x as f32 + 0.5) * scale, (y as f32 + 0.5) * scale))
+            .collect();
+        let tip = points.len() - 2;
+        for (segment, pair) in points.windows(2).enumerate() {
+            let brush = if segment == tip { 1.0 } else { scale };
+            let [(x0, y0), (x1, y1)] = [pair[0], pair[1]];
+            for step in 0..=TAIL_STEPS {
+                let along = step as f32 / TAIL_STEPS as f32;
+                let (x, y) = (x0 + (x1 - x0) * along, y0 + (y1 - y0) * along);
+                let (left, top) = ((x - brush / 2.0).floor(), (y - brush / 2.0).floor());
+                let (left, top, brush) = (left as usize, top as usize, brush as usize);
+                for row in rows.iter_mut().skip(top).take(brush) {
+                    row[left..left + brush].fill(self.palette.text);
                 }
             }
         }
@@ -510,6 +647,12 @@ impl Scene for Study {
         let left = from_x as isize - (room.0 as isize - wide as isize) / 2;
         let top = from_y as isize - (room.1 as isize - tall as isize) / 2;
         let (left, top) = (left * LETTER as isize, top * LETTER as isize);
+        // A letter is a cell across but half a cell down, and a cell draws
+        // two colours of its pixels. The view starts on a whole cell, so a
+        // cell holds the same pixels of the picture, and draws them the
+        // same, at every size of the pane.
+        let cell = CELL_HEIGHT as isize;
+        let top = top.div_euclid(cell) * cell;
         let (right, bottom) = (pixels[0].len() as isize - 1, pixels.len() as isize - 1);
         for y in 0..canvas.height() {
             for x in 0..canvas.width() {
