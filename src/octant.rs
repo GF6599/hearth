@@ -3,7 +3,7 @@
 
 use std::cmp::Reverse;
 
-use ratatui::buffer::Buffer;
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
@@ -72,6 +72,37 @@ const fn glyphs() -> [u32; 256] {
 /// `row * CELL_WIDTH + column`, and a set bit draws in the foreground.
 pub fn glyph(bits: u8) -> char {
     char::from_u32(GLYPHS[usize::from(bits)]).unwrap_or(' ')
+}
+
+/// The glyph that fills the pixels `glyph` leaves out, or none for a glyph
+/// that is not in the table. With its colours swapped it draws the same
+/// cell.
+pub fn complement(glyph: &str) -> Option<char> {
+    let index = GLYPHS
+        .iter()
+        .position(|point| glyph.chars().map(u32::from).eq([*point]))?;
+    let bits = u8::try_from(index).ok()?;
+    Some(self::glyph(!bits))
+}
+
+/// Gives a cell in `base` the terminal's own background. A block glyph
+/// drawn in `base` turns over, so the other colour stays in front and the
+/// picture holds.
+pub fn clear(cell: &mut Cell, base: Color) {
+    let turned = (cell.fg == base)
+        .then(|| complement(cell.symbol()))
+        .flatten();
+    if let Some(glyph) = turned {
+        let front = if cell.bg == base {
+            Color::Reset
+        } else {
+            cell.bg
+        };
+        let symbol = if front == Color::Reset { ' ' } else { glyph };
+        cell.set_char(symbol).set_fg(front).set_bg(Color::Reset);
+    } else if cell.bg == base {
+        cell.set_bg(Color::Reset);
+    }
 }
 
 /// The glyph, foreground and background for the pixels of one cell, in the

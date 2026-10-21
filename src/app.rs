@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::widgets::Widget;
 
 use crate::config::{self, Background, Config};
 use crate::corpus::Corpus;
+use crate::octant;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
-use crate::quadrant;
 use crate::scene::{ALL, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
 use crate::theme::{self, Palette};
@@ -283,27 +283,11 @@ impl App {
 
     /// Gives every cell in the theme's base the terminal's own background.
     /// The surface takes the base's colour in `FLAT_THEMES`, so it clears
-    /// too. A block glyph drawn in the base turns over, so the other colour
-    /// stays in front and the picture holds.
+    /// too.
     fn clear_background(&self, area: Rect, buf: &mut Buffer) {
         let base = self.palette().base;
-        let clear = |colour: Color| colour == base;
         for position in area.positions() {
-            let cell = &mut buf[position];
-            let turned = clear(cell.fg)
-                .then(|| quadrant::complement(cell.symbol()))
-                .flatten();
-            if let Some(glyph) = turned {
-                let front = if clear(cell.bg) {
-                    Color::Reset
-                } else {
-                    cell.bg
-                };
-                let symbol = if front == Color::Reset { ' ' } else { glyph };
-                cell.set_char(symbol).set_fg(front).set_bg(Color::Reset);
-            } else if clear(cell.bg) {
-                cell.set_bg(Color::Reset);
-            }
+            octant::clear(&mut buf[position], base);
         }
     }
 
