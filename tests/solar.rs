@@ -149,8 +149,9 @@ fn sun(buffer: &Buffer, area: Rect) -> (f32, f32) {
 }
 
 /// Whether a body, a planet by its index or the Moon, stands far enough
-/// from the sun and from every other body that no other cell can cover its
-/// own.
+/// from the sun and from every other body that no other can share a cell
+/// with its middle. A cell reaches a cell's height past the two dots round
+/// the middle that a check reads.
 fn stands_clear(bodies: &[(f32, f32)], index: usize, centre: (f32, f32), reach: f32) -> bool {
     let span = |body: usize| match body {
         MOON => MOON_SPAN,
@@ -158,7 +159,7 @@ fn stands_clear(bodies: &[(f32, f32)], index: usize, centre: (f32, f32), reach: 
         _ => PLANET_SPAN,
     };
     let place = bodies[index];
-    distance(place, centre) > reach + 4.0
+    distance(place, centre) > reach + 2.0 + CELL_HEIGHT as f32
         && bodies.iter().enumerate().all(|(other, near)| {
             other == index
                 || (near.0 - place.0).abs() > span(index).0 + span(other).0 + 1.0
@@ -206,8 +207,13 @@ fn each_planet_keeps_to_its_own_ellipse() {
             if tick % 50 == 0 {
                 let buffer = render(&scene, AREA, AREA);
                 for (index, planet) in planets.iter().enumerate() {
+                    let cell = (
+                        (planet.0 / CELL_WIDTH as f32) as u16,
+                        (planet.1 / CELL_HEIGHT as f32) as u16,
+                    );
                     assert!(
-                        colour_at(&buffer, *planet).is_some_and(|colour| colour != PALETTE.base),
+                        pixels::shown(&buffer[cell])
+                            .is_some_and(|cell| cell.iter().any(|colour| *colour != PALETTE.base)),
                         "seed {seed}: planet {index} not drawn at tick {tick}"
                     );
                 }
