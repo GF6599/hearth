@@ -1001,3 +1001,42 @@ fn a_gradient_from_a_see_through_base_turns_at_its_middle() {
     let colours: Vec<Color> = (0..8).map(|y| canvas.get(0, y).unwrap()).collect();
     assert_eq!(colours, [BASE, BASE, BASE, BASE, INK, INK, INK, INK]);
 }
+
+/// One colour blends as a pixel of the canvas blends it.
+/// Given: the opaque and the see-through Rose Pine, and each pair of the
+/// base, an ink and foam, one under the other.
+/// When: the upper colour blends over the lower at shares from none to
+/// whole, as one colour and as a pixel of a canvas.
+/// Then: the colour is the canvas's pixel each time, and over a
+/// see-through base it is one of the two colours and never a mix.
+///
+/// Why it matters: a scene that works out a shade ahead of time, such as a
+/// ramp of heat or a fade, must keep the hard edge a canvas keeps, or it
+/// paints a mix of the base over the terminal's own background.
+#[test]
+fn a_colour_blends_as_a_pixel_of_the_canvas() {
+    // Given:
+    for palette in [PALETTE, SEE_THROUGH] {
+        let colours = [palette.base, INK, OTHER];
+        for under in colours {
+            for over in colours {
+                for step in 0..=16 {
+                    let share = step as f32 / 16.0;
+
+                    // When:
+                    let colour = octant::blend(palette, under, over, share);
+                    let mut pixel = Canvas::new(1, 1, palette);
+                    pixel.set(0, 0, under);
+                    pixel.blend(0, 0, over, share);
+
+                    // Then:
+                    let at = format!("{over:?} over {under:?} at {share}");
+                    assert_eq!(Some(colour), pixel.get(0, 0), "{at}");
+                    if palette.see_through && (under == palette.base || over == palette.base) {
+                        assert!(colour == under || colour == over, "{at} is {colour:?}");
+                    }
+                }
+            }
+        }
+    }
+}
