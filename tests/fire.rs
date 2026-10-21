@@ -34,6 +34,9 @@ const RAMP: [Color; 7] = [
 
 const FULL: usize = RAMP.len() - 1;
 
+/// The band of the gold stop, from which the heat shades to text.
+const HOTTEST: usize = FULL - 1;
+
 /// The pixels across and down in each cell.
 const ACROSS: usize = octant::CELL_WIDTH;
 const DOWN: usize = octant::CELL_HEIGHT;
@@ -50,8 +53,10 @@ const DARK: Color = Color::Rgb(0, 0, 0);
 const LIGHT: Color = Color::Rgb(255, 255, 255);
 
 /// Rose Pine with each stop of the ramp from `band` up in light and every
-/// other colour in dark. A cell of the whole ramp can hold three colours
-/// and draws only two, but a cell of two tones draws each pixel as it is.
+/// other colour in dark. A pixel is light from the heat of the band's stop
+/// up, dark at the heat of the stop below and under it, and a grey mix of
+/// the two between. A cell of the whole ramp can hold eight colours and
+/// draws only two, but a cell of these holds at most three.
 fn from_band(band: usize) -> &'static Palette {
     let tone = |colour: Color| {
         if RAMP[band..].contains(&colour) {
@@ -128,7 +133,7 @@ impl Banded {
 
 /// The colour that a pixel at `heat` draws.
 fn shade(palette: &Palette, heat: u16) -> Color {
-    fire::color(palette, heat, 0, 0)
+    fire::color(palette, heat)
 }
 
 /// The largest difference in one channel between two colours.
@@ -162,7 +167,8 @@ const LEAST_SHADES: usize = 5;
 /// least `LEAST_SHADES` colours lie on the way from one to the other: each
 /// is no nearer the lower stop than the one before and no further from the
 /// upper, to a step of rounding. No two neighbouring heats differ by more
-/// than an eighth of the two stops' difference and a step of rounding.
+/// than a quarter of the two stops' difference and a step of rounding. An
+/// even step of the mix is larger in RGB where a channel nears 0.
 fn assert_shades(palette: &Palette, stops: &[Color]) {
     let span = MAX_HEAT / (stops.len() as u16 - 1);
     for (index, pair) in stops.windows(2).enumerate() {
@@ -179,7 +185,7 @@ fn assert_shades(palette: &Palette, stops: &[Color]) {
             "{} shades from {lower:?} to {upper:?}: {distinct:?}",
             distinct.len()
         );
-        let largest = step(lower, upper) / 8 + 1;
+        let largest = step(lower, upper) / 4 + 1;
         for (heat, pair) in heats.zip(colours.windows(2)) {
             assert!(
                 distance(lower, pair[1]) >= distance(lower, pair[0]) - 1.0
@@ -317,7 +323,9 @@ fn every_cell_is_a_shade_of_the_ramp() {
 /// Given: a scene on a twelve by six area.
 /// When: it ticks and renders twenty times.
 /// Then: on every frame the lowest row of pixels, a quarter of every
-/// bottom cell, is at full heat.
+/// bottom cell, is at the hottest band. The row over it shades from gold
+/// to text and shares its cells, and a cell draws two colours, so a pixel
+/// at full heat can show as the nearest of those shades: at least gold.
 ///
 /// Why it matters: the bottom row is the fuel. A tick that decays it puts
 /// the fire out within seconds.
@@ -330,7 +338,7 @@ fn the_bottom_row_stays_at_full_heat() {
         let grid = fires.bands(area, area);
         let bottom = grid.last().unwrap();
         assert!(
-            bottom.iter().all(|&band| band == FULL),
+            bottom.iter().all(|&band| band >= HOTTEST),
             "tick {tick}: bottom row {bottom:?}"
         );
     }
@@ -344,8 +352,9 @@ const CLIMB: usize = 2;
 /// Given: a scene on a sixteen by eight area.
 /// When: it ticks forty times, with a render after each.
 /// Then: every pixel's stop is at most one above the hottest of the five
-/// pixels two rows below it on the frame before, which is as far as the
-/// dither can lift a pixel.
+/// pixels two rows below it on the frame before. A cell draws two colours,
+/// so a grey pixel between two stops can show as the light one, but no
+/// further.
 ///
 /// Why it matters: heat that appears from nowhere, or climbs, reads as
 /// sparks in the sky instead of a fire.
@@ -445,8 +454,8 @@ fn the_flames_draw_in_octant_glyphs() {
 /// Given: a scene that ticked on a twenty by ten area.
 /// When: it ticks and renders on a five by three area inside a larger
 /// canvas, then on one cell, then on none.
-/// Then: it draws without a panic, the bottom row is at full heat, and no
-/// cell outside the area is touched.
+/// Then: it draws without a panic, the bottom row is at the hottest band,
+/// and no cell outside the area is touched.
 #[test]
 fn a_smaller_area_drops_the_old_buffer() {
     // Given:
@@ -472,7 +481,7 @@ fn a_smaller_area_drops_the_old_buffer() {
             }
         }
         if let Some(bottom) = fires.bands(area, canvas).last() {
-            assert!(bottom.iter().all(|&band| band == FULL), "{bottom:?}");
+            assert!(bottom.iter().all(|&band| band >= HOTTEST), "{bottom:?}");
         }
     }
 }
