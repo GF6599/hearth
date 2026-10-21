@@ -2,7 +2,7 @@
 
 mod pixels;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use hearth::config::Background;
@@ -1184,5 +1184,81 @@ fn a_lit_window_warms_the_wall_beside_it() {
             warm * 2 > pairs,
             "seed {seed}: {warm} of {pairs} lit windows warm their wall"
         );
+    }
+}
+
+/// Each colour within a channel step of `colour`.
+fn around(colour: Color) -> Vec<(u8, u8, u8)> {
+    let Color::Rgb(r, g, b) = colour else {
+        return Vec::new();
+    };
+    (0..27)
+        .map(|at| {
+            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
+            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
+        })
+        .collect()
+}
+
+/// Every colour within a channel step of a mix strictly between `base` and
+/// one of `colours`, sampled finely along each mix, less the colours within
+/// a step of the base or of one of `colours` themselves.
+fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
+    let mut near: HashSet<(u8, u8, u8)> = colours
+        .iter()
+        .flat_map(|colour| {
+            (1..200).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
+        })
+        .collect();
+    for end in colours.iter().chain([&base]) {
+        for each in around(*end) {
+            near.remove(&each);
+        }
+    }
+    near
+}
+
+/// Over the terminal's background the city mixes no colour with the base.
+/// Given: the scene in flat Rose Pine, whose base and surface are the
+/// terminal's own background, from three seeds.
+/// When: it ticks and renders over a few seconds.
+/// Then: no pixel lies on a mix from the base toward overlay, pine, gold,
+/// rose, love or text, the colours the city draws.
+///
+/// Why it matters: a mix with a see-through base is an opaque colour, and
+/// it shows as a dark smear over the user's own background.
+#[test]
+fn over_the_terminal_background_nothing_mixes_with_the_base() {
+    let palette = &theme::FLAT_THEMES[0];
+    let drawn = [
+        palette.overlay,
+        palette.pine,
+        palette.gold,
+        palette.rose,
+        palette.love,
+        palette.text,
+    ];
+    let mixes = base_mixes(palette.base, &drawn);
+    for seed in [7, 8, 9] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), palette);
+        for tick in 0..FEW_SECONDS {
+            // When:
+            scene.tick(AREA);
+            let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+            // Then:
+            for (y, row) in rows.iter().enumerate() {
+                for (x, colour) in row.iter().enumerate() {
+                    if let Color::Rgb(r, g, b) = *colour {
+                        assert!(
+                            !mixes.contains(&(r, g, b)),
+                            "seed {seed}, tick {tick}: {colour:?} at {:?} mixes with the base",
+                            (x, y)
+                        );
+                    }
+                }
+            }
+        }
     }
 }
