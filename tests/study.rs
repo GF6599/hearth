@@ -417,6 +417,189 @@ fn the_rain_runs_down_a_quarter_of_a_cell_at_a_time() {
     );
 }
 
+/// The shares of a tick at which a test draws a frame between two ticks.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// A scene from seed 7 with `colour` in light and every other colour in
+/// dark, so each pixel of that colour shows as it is.
+fn lit_scene(colour: Color) -> Study {
+    Study::new(Rng::seed_from_u64(7), two_tone(PALETTE, colour))
+}
+
+/// Whether each pixel of the picture is lit, at `progress` from the last
+/// tick towards the next.
+fn lit_at(scene: &mut Study, progress: f64) -> Vec<Vec<bool>> {
+    scene.set_progress(progress);
+    view(scene, FITTED.width, FITTED.height)
+        .into_iter()
+        .map(|row| row.into_iter().map(|pixel| pixel == LIGHT).collect())
+        .collect()
+}
+
+/// The pixels of a layer's area, by column and row.
+fn area_of(layer: &str) -> Vec<(usize, usize)> {
+    let (left, top, wide, tall) =
+        in_pixels(LAYERS.iter().find(|(name, _)| *name == layer).unwrap().1);
+    (top..top + tall)
+        .flat_map(|y| (left..left + wide).map(move |x| (x, y)))
+        .collect()
+}
+
+/// Given: two scenes from one seed on a pane the size of the picture.
+/// When: both tick, and one is told a share of a tick and then none before
+/// each frame.
+/// Then: the two frames are the same.
+///
+/// Why it matters: a frame on a tick is the frame the scene always drew, so
+/// a glide between ticks changes no tick.
+#[test]
+fn the_frame_on_a_tick_does_not_change() {
+    // Given:
+    let mut glide = scene();
+    let mut plain = scene();
+
+    for tick in 0..300 {
+        // When:
+        glide.tick(FITTED);
+        plain.tick(FITTED);
+        glide.set_progress(0.5);
+        let _ = view(&glide, FITTED.width, FITTED.height);
+        glide.set_progress(0.0);
+
+        // Then:
+        assert!(
+            view(&glide, FITTED.width, FITTED.height) == view(&plain, FITTED.width, FITTED.height),
+            "tick {tick}"
+        );
+    }
+}
+
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks, and draws frames at a quarter, a half and three quarters
+/// of the way to the next tick.
+/// Then: some run of rain that ends two pixels lower on the next tick ends
+/// one pixel lower in a frame between.
+///
+/// Why it matters: rain that moves only on a tick steps two pixels at a
+/// time at a slow speed, and a glide runs it down one pixel at a time.
+#[test]
+fn the_rain_runs_on_between_two_ticks() {
+    // Given:
+    let mut scene = lit_scene(PALETTE.foam);
+    let glass = area_of("rain");
+    scene.tick(FITTED);
+    let mut before = heads(&glass, &lit_at(&mut scene, 0.0));
+    let mut between = 0;
+
+    for _ in 0..400 {
+        // When:
+        let frames: Vec<Vec<(usize, usize)>> = BETWEEN
+            .iter()
+            .map(|progress| heads(&glass, &lit_at(&mut scene, *progress)))
+            .collect();
+        scene.tick(FITTED);
+        let after = heads(&glass, &lit_at(&mut scene, 0.0));
+
+        // Then:
+        for &(x, y) in &before {
+            if after.contains(&(x, y + 2)) && frames.iter().any(|heads| heads.contains(&(x, y + 1)))
+            {
+                between += 1;
+            }
+        }
+        before = after;
+    }
+    assert!(between > 0, "no run of rain ended between two ticks");
+}
+
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks, and draws frames at a quarter, a half and three quarters
+/// of the way to the next tick.
+/// Then: each pixel of rain in a frame between that was not rain on the
+/// tick lies at most two letters under rain of the tick in its column, or
+/// under the frame or the cat, which hide the rain behind them, or under
+/// the top of the glass.
+///
+/// Why it matters: a drop that starts again at the top of the glass must
+/// not draw a streak across the glass on its way there.
+#[test]
+fn a_drop_that_starts_again_draws_no_streak_between_ticks() {
+    // Given:
+    let mut scene = lit_scene(PALETTE.foam);
+    let glass = area_of("rain");
+    let top = glass.iter().map(|&(_, y)| y).min().unwrap();
+    let bottom = glass.iter().map(|&(_, y)| y).max().unwrap();
+    let reach = 2 * LETTER;
+    let room = toned();
+    let bars = room.shows(PALETTE.muted, FITTED.width, FITTED.height);
+    let text = room.shows(PALETTE.text, FITTED.width, FITTED.height);
+    // The moon is in text too, but it is in the upper half, and the rain
+    // runs over it.
+    let hides = |x: usize, y: usize| bars[y][x] || (text[y][x] && 2 * y > top + bottom);
+
+    for tick in 0..400 {
+        scene.tick(FITTED);
+        let on_tick = lit_at(&mut scene, 0.0);
+
+        // When:
+        for progress in BETWEEN {
+            let frame = lit_at(&mut scene, progress);
+
+            // Then:
+            for &(x, y) in &glass {
+                if frame[y][x] && !on_tick[y][x] {
+                    let below_rain = (1..=reach)
+                        .filter(|up| y >= *up)
+                        .any(|up| on_tick[y - up][x] || hides(x, y - up));
+                    assert!(
+                        below_rain || y < top + reach,
+                        "tick {tick} at {progress}: rain at {:?} far from the rain of the tick",
+                        (x, y)
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Given: the scene on a pane the size of the picture.
+/// When: it ticks for two minutes, and draws frames at a quarter, a half
+/// and three quarters of the way to the next tick.
+/// Then: some frame between shows the steam in neither the place of the
+/// tick before it nor the place of the tick after it.
+///
+/// Why it matters: steam that moves only on a tick moves across and up in
+/// one step, and a glide moves it a pixel at a time.
+#[test]
+fn the_steam_rises_between_two_ticks() {
+    // Given:
+    let mut scene = lit_scene(PALETTE.subtle);
+    let air = area_of("steam");
+    let steam =
+        |frame: &[Vec<bool>]| -> Vec<bool> { air.iter().map(|&(x, y)| frame[y][x]).collect() };
+    scene.tick(FITTED);
+    let mut before = steam(&lit_at(&mut scene, 0.0));
+    let mut between = 0;
+
+    for _ in 0..RUN {
+        // When:
+        let frames: Vec<Vec<bool>> = BETWEEN
+            .iter()
+            .map(|progress| steam(&lit_at(&mut scene, *progress)))
+            .collect();
+        scene.tick(FITTED);
+        let after = steam(&lit_at(&mut scene, 0.0));
+
+        // Then:
+        between += frames
+            .iter()
+            .filter(|frame| **frame != before && **frame != after)
+            .count();
+        before = after;
+    }
+    assert!(between > 0, "the steam moved only on a tick");
+}
+
 /// Given: the scene on a pane the size of the picture.
 /// When: it ticks for a minute and renders after each tick.
 /// Then: some cells draw an octant glyph that splits a half of the cell,
