@@ -51,6 +51,9 @@ const WAVE_SPEED: RangeInclusive<f32> = 0.05..=0.12;
 const DRIFT: RangeInclusive<f32> = 0.002..=0.006;
 /// A drop enters this far in from either side, as a share of the width.
 const MARGIN: f32 = 0.15;
+/// The pixels over which a particle spreads its ink, as the scale of a
+/// cubic B-spline. It reaches twice this far on each side.
+const SPLAT: f32 = 2.0;
 /// Keeps a clamped particle strictly inside the last pixel.
 const INSIDE: f32 = 0.01;
 
@@ -72,41 +75,51 @@ pub fn accents(palette: &Palette) -> [Color; 5] {
     ]
 }
 
-/// The colour of one pixel that holds `inks`, one amount for each accent.
-/// The total decides the share of the tile that is inked, and each
-/// accent takes the part of that share its ink holds. The second choice
-/// reads the tile two cells over, so it does not follow the first.
-pub fn shade(palette: &Palette, inks: &[f32; 5], x: usize, row: usize) -> Color {
-    let total: f32 = inks.iter().sum();
-    let share = (total / FULL_INK).min(1.0);
-    if share * SHADES <= dither::rank(x, row) as f32 {
-        return palette.base;
-    }
-    let pick = (dither::rank(x + 2, row + 2) as f32 + 0.5) / SHADES * total;
-    let mut reached = 0.0;
-    for (accent, amount) in accents(palette).into_iter().zip(inks) {
-        reached += amount;
-        if pick < reached {
-            return accent;
-        }
-    }
-    palette.base
-}
-
+/// The steps of the mix from the water to an accent. Each pixel takes the
+/// two steps nearest its ink in an ordered dither, so a cloud that thins
+/// slowly shows no bands.
 pub const TONES: usize = 16;
 
+/// The colour of each step of the mix from the water to each accent, mixed
+/// once from the palette, so a frame mixes no colour.
 #[derive(Debug)]
 pub struct Tones {
-    palette: &'static Palette,
+    tones: [[Color; TONES + 1]; 5],
 }
 
 impl Tones {
-    pub fn new(palette: &'static Palette) -> Self {
-        Self { palette }
+    /// Each step is the colour the canvas blends over the water, so a mix
+    /// with a see-through base stays hard as the canvas keeps it.
+    pub fn new(palette: &Palette) -> Self {
+        let tones = accents(palette).map(|accent| {
+            std::array::from_fn(|step| {
+                let mut water = Canvas::new(1, 1, palette);
+                water.blend(0, 0, accent, step as f32 / TONES as f32);
+                water.get(0, 0).unwrap_or(palette.base)
+            })
+        });
+        Self { tones }
     }
 
+    /// The colour of one pixel that holds `inks`, one amount for each
+    /// accent. The total mixes the water toward an accent, all the way at
+    /// `FULL_INK`, and each accent takes the part of the tile its ink
+    /// holds. The choice of accent reads the tile two cells over, so it
+    /// does not follow the step of the mix.
     pub fn shade(&self, inks: &[f32; 5], x: usize, row: usize) -> Color {
-        shade(self.palette, inks, x, row)
+        let total: f32 = inks.iter().sum();
+        let share = (total / FULL_INK).min(1.0);
+        let step = (share * TONES as f32 + (dither::rank(x, row) as f32 + 0.5) / SHADES) as usize;
+        let step = step.min(TONES);
+        let pick = (dither::rank(x + 2, row + 2) as f32 + 0.5) / SHADES * total;
+        let mut reached = 0.0;
+        for (tones, amount) in self.tones.iter().zip(inks) {
+            reached += amount;
+            if pick < reached {
+                return tones[step];
+            }
+        }
+        self.tones[0][0]
     }
 }
 
@@ -167,6 +180,19 @@ impl Currents {
     }
 }
 
+/// The cubic B-spline at `distance`: a smooth hump that is none from a
+/// distance of two on, and whose samples one apart always sum to one.
+fn spline(distance: f32) -> f32 {
+    let distance = distance.abs();
+    if distance < 1.0 {
+        (4.0 - 6.0 * distance.powi(2) + 3.0 * distance.powi(3)) / 6.0
+    } else if distance < 2.0 {
+        (2.0 - distance).powi(3) / 6.0
+    } else {
+        0.0
+    }
+}
+
 /// A hump that is zero at both ends of `0..=length` and one in the middle,
 /// with its slope.
 fn window(at: f32, length: f32) -> (f32, f32) {
@@ -212,6 +238,7 @@ struct Drop {
 pub struct Ink {
     rng: Rng,
     palette: &'static Palette,
+    tones: Tones,
     /// The pane in square units, one a cell across and two a cell down.
     width: usize,
     rows: usize,
@@ -233,6 +260,7 @@ impl Ink {
         Self {
             rng,
             palette,
+            tones: Tones::new(palette),
             width: 0,
             rows: 0,
             drops: Vec::new(),
@@ -290,11 +318,20 @@ impl Ink {
     }
 
     /// The ink of each accent in each pixel. A particle shares its ink
-    /// among the four pixels nearest it, by how near each is, so a cloud
-    /// that thins stays a cloud and does not break into lone pixels.
+    /// among the pixels near it by a cubic B-spline `SPLAT` pixels wide,
+    /// so a cloud is one smooth density that fades at its edge and does not
+    /// break into lone pixels. The shares always sum to one, so a cloud
+    /// that glides keeps its ink.
     fn inks(&self) -> Vec<[f32; 5]> {
         let (columns, rows) = (self.width * PIXELS_ACROSS, self.rows * PIXELS_DOWN);
         let mut inks = vec![[0.0_f32; 5]; columns * rows];
+        let taps = |at: f32| {
+            let first = (at - 2.0 * SPLAT).ceil();
+            (0..=(4.0 * SPLAT) as usize).map(move |tap| {
+                let place = first + tap as f32;
+                (place, spline((place - at) / SPLAT) / SPLAT)
+            })
+        };
         for drop in &self.drops {
             for particle in &drop.particles {
                 let (x, y) = self.inside(
@@ -303,10 +340,8 @@ impl Ink {
                 );
                 let x = x * PIXELS_ACROSS as f32 - 0.5;
                 let y = y * PIXELS_DOWN as f32 - 0.5;
-                let (left, top) = (x.floor(), y.floor());
-                let (right_share, lower_share) = (x - left, y - top);
-                for (column, across) in [(left, 1.0 - right_share), (left + 1.0, right_share)] {
-                    for (row, down) in [(top, 1.0 - lower_share), (top + 1.0, lower_share)] {
+                for (column, across) in taps(x) {
+                    for (row, down) in taps(y) {
                         if column < 0.0 || row < 0.0 {
                             continue;
                         }
@@ -403,7 +438,7 @@ impl Scene for Ink {
         let columns = canvas.width();
         for (index, ink) in inks.iter().enumerate() {
             let (column, row) = (index % columns, index / columns);
-            canvas.set(column, row, shade(self.palette, ink, column, row));
+            canvas.set(column, row, self.tones.shade(ink, column, row));
         }
         canvas.render(area, buf);
     }
