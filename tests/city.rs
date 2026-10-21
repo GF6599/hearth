@@ -1,9 +1,11 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::city::City;
 use hearth::scenes::typing::Speed;
@@ -17,7 +19,7 @@ const AREA: Rect = Rect::new(0, 0, 100, 30);
 /// The pixels a streak in the water lies to either side of its window at
 /// the most: a ripple slides a row by up to two cells, and a streak reaches
 /// a pixel left and two right of its window.
-const RIPPLE: usize = 6;
+const RIPPLE: usize = 2 * CELL_WIDTH + 2;
 /// About three seconds of ticks.
 const FEW_SECONDS: u32 = 50;
 /// A loop of the night and a half, so a run holds an evening and a late
@@ -26,11 +28,6 @@ const NIGHT_AND_A_HALF: u32 = 4500;
 /// Ticks enough for a few trains to cross.
 const TRAINS: u32 = 4000;
 const PALETTE: &Palette = &theme::ROSE_PINE;
-/// The quadrant glyphs, in the order of the quarters they set: upper left,
-/// upper right, lower left and lower right from the lowest bit.
-const QUADRANTS: [char; 16] = [
-    ' ', '▘', '▝', '▀', '▖', '▌', '▞', '▛', '▗', '▚', '▐', '▜', '▄', '▙', '▟', '█',
-];
 
 fn render(scene: &City, area: Rect, canvas: Rect) -> Buffer {
     let mut buffer = Buffer::empty(canvas);
@@ -38,21 +35,35 @@ fn render(scene: &City, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The colour of each pixel of the area, two by two to a cell, row by row.
+/// The bits of each octant glyph.
+fn octants() -> &'static HashMap<char, u8> {
+    static OCTANTS: OnceLock<HashMap<char, u8>> = OnceLock::new();
+    OCTANTS.get_or_init(|| {
+        (0..=u8::MAX)
+            .map(|bits| (octant::glyph(bits), bits))
+            .collect()
+    })
+}
+
+/// The colour of each pixel of the area, two across and four down to a
+/// cell, row by row.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    let mut rows =
-        vec![vec![Color::Reset; usize::from(area.width) * 2]; usize::from(area.height) * 2];
+    let mut rows = vec![
+        vec![Color::Reset; usize::from(area.width) * CELL_WIDTH];
+        usize::from(area.height) * CELL_HEIGHT
+    ];
     for position in area.positions() {
         let cell = &buffer[position];
-        let glyph = cell.symbol().chars().next().unwrap_or(' ');
-        let bits = QUADRANTS
-            .iter()
-            .position(|each| *each == glyph)
+        let bits = cell
+            .symbol()
+            .chars()
+            .next()
+            .and_then(|glyph| octants().get(&glyph).copied())
             .unwrap_or(0);
-        for quarter in 0..4 {
-            let x = usize::from(position.x - area.x) * 2 + quarter % 2;
-            let y = usize::from(position.y - area.y) * 2 + quarter / 2;
-            rows[y][x] = if bits & 1 << quarter != 0 {
+        for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
+            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
+            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
+            rows[y][x] = if bits & 1 << pixel != 0 {
                 cell.fg
             } else {
                 cell.bg
@@ -75,13 +86,21 @@ fn is_window(colour: Color) -> bool {
     colour == PALETTE.gold || colour == PALETTE.rose
 }
 
+fn all_muted(row: &[Color]) -> bool {
+    row.iter().all(|colour| *colour == PALETTE.muted)
+}
+
 /// The row the towers stand on, just above the water line. The water line
-/// is the lowest row that is all muted.
+/// is the lowest run of rows that are all muted.
 fn ground(rows: &[Vec<Color>]) -> usize {
-    rows.iter()
-        .rposition(|row| row.iter().all(|colour| *colour == PALETTE.muted))
-        .expect("a water line")
-        - 1
+    let mut line = rows
+        .iter()
+        .rposition(|row| all_muted(row))
+        .expect("a water line");
+    while line > 0 && all_muted(&rows[line - 1]) {
+        line -= 1;
+    }
+    line - 1
 }
 
 /// The topmost tower row in each column above the water, or none for a
@@ -133,7 +152,7 @@ fn assert_skyline_fits(rows: &[Vec<Color>], context: &str) {
 /// Then: towers stand on one ground row across most of the width, each
 /// reaches that row and has sky above it, and every lit window above the
 /// ground has a tower wall on both sides. Over fifty windows of the near
-/// towers show, lit or dark.
+/// towers show, lit or dark, each counted at its top pixel.
 ///
 /// Why it matters: a window in the sky or a tower cut off by the top of
 /// the pane breaks the picture of a city.
@@ -154,7 +173,8 @@ fn windows_light_only_inside_towers_that_fit_the_pane() {
         for (y, row) in rows.iter().enumerate().take(ground + 1) {
             for (x, colour) in row.iter().enumerate() {
                 let dark = *colour == PALETTE.surface && in_near_wall(row, x);
-                shown += usize::from(dark || is_window(*colour) && in_near_wall(row, x));
+                let top = y > 0 && rows[y - 1][x] != *colour;
+                shown += usize::from(top && (dark || is_window(*colour) && in_near_wall(row, x)));
                 if !is_window(*colour) {
                     continue;
                 }
@@ -176,7 +196,8 @@ fn windows_light_only_inside_towers_that_fit_the_pane() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders.
 /// Then: every star and every pixel of the moon lies above the ground and
-/// above the top of any tower in its column, and the moon shows.
+/// above the top of any tower in its column, and the moon shows with over
+/// five cells of pixels.
 ///
 /// Why it matters: a star on a wall or a moon in the water reads as a
 /// fault.
@@ -208,21 +229,25 @@ fn the_stars_and_moon_stay_in_the_sky() {
                 moon += usize::from(*colour == PALETTE.text);
             }
         }
-        assert!(moon > 20, "seed {seed}: the moon has {moon} pixels");
+        assert!(
+            moon > 5 * CELL_WIDTH * CELL_HEIGHT,
+            "seed {seed}: the moon has {moon} pixels"
+        );
     }
 }
 
 /// The water under the city reads as water.
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders over a few seconds.
-/// Then: in every frame a water line runs under the ground. Under the
-/// middle of every near tower the first row of the water is the dim tower
-/// colour or a streak, as the towers mirror in it. Every run of lit pixels
-/// in the water is two pixels wide or more, unless it meets the pane's
-/// edge, and each lit pixel has a lit window of its colour within `RIPPLE`
-/// pixels in the row as far above the water line as it is below. Over half
-/// of the lit windows whose mirror falls in the pane show in the water, and
-/// the water changes in most frames.
+/// Then: in every frame a water line runs under the ground, and the water
+/// starts a cell under the shore. Under the middle of every near tower the
+/// first row of the water is the dim tower colour or a streak, as the
+/// towers mirror in it. Every run of lit pixels in the water is two pixels
+/// wide or more, unless it meets the pane's edge, and each lit pixel has a
+/// lit window of its colour within `RIPPLE` pixels in the row as far above
+/// the shore's cell as it is below. Over half of the lit windows whose
+/// mirror falls in the pane show in the water, and the water changes in
+/// most frames.
 ///
 /// Why it matters: lit dots on a dark band do not read as a reflection,
 /// a reflection of something that is not there reads as a fault, and water
@@ -241,13 +266,14 @@ fn the_water_mirrors_the_city_in_streaks_that_ripple() {
         // Then:
         let ground = ground(&rows);
         let shore = ground + 1;
+        let water = shore + CELL_HEIGHT;
         let across = rows[0].len();
         for x in 4..across - 4 {
             if rows[ground][x - 4..=x + 4]
                 .iter()
                 .all(|colour| *colour == PALETTE.overlay)
             {
-                let first = rows[shore + 2][x];
+                let first = rows[water][x];
                 assert!(
                     first == PALETTE.surface || is_window(first),
                     "tick {tick}: {first:?} in the water under the near tower at column {x}"
@@ -255,8 +281,8 @@ fn the_water_mirrors_the_city_in_streaks_that_ripple() {
             }
         }
         let (mut shown, mut windows) = (0, 0);
-        for y in shore + 2..rows.len().min(2 * shore + 2) {
-            let above = &rows[2 * shore + 1 - y];
+        for y in water..rows.len().min(shore + water) {
+            let above = &rows[shore + water - 1 - y];
             let mut run = 0;
             for (x, &water) in rows[y].iter().enumerate() {
                 if is_window(water) {
@@ -307,7 +333,7 @@ fn the_water_mirrors_the_city_in_streaks_that_ripple() {
 /// its wall, ends in a rim at its right, or a pillar of the raised line in
 /// front of the rim, before the next tower or the pane's edge. Its roof, the
 /// first rim above the ground in its middle column, is there, and two near
-/// towers that touch differ in height by four rows or more.
+/// towers that touch differ in height by two cells or more.
 ///
 /// Why it matters: towers of one colour side by side melt into one block,
 /// and the skyline stops reading as a city.
@@ -356,7 +382,7 @@ fn each_near_tower_has_a_rim_and_its_own_roof_line() {
             let ((_, rim, first), (start, _, second)) = (pair[0], pair[1]);
             if start == rim + 1 {
                 assert!(
-                    first.abs_diff(second) >= 4,
+                    first.abs_diff(second) >= 2 * CELL_HEIGHT,
                     "seed {seed}: touching towers at {rim} with roofs at {first} and {second}"
                 );
             }
@@ -384,6 +410,47 @@ fn the_skyline_is_built_again_for_each_pane() {
 
         // Then:
         assert_skyline_fits(&rows, &format!("{width} by {height}"));
+    }
+}
+
+/// The moon and the roofs are drawn at a quarter of a cell.
+/// Given: the scene at a hundred by thirty, from three seeds.
+/// When: it ticks and renders.
+/// Then: some pixel row of the moon starts or ends in another column than
+/// the row above it, inside the upper or the lower half of a cell, and
+/// some tower has its top row in the middle of a cell.
+///
+/// Why it matters: a moon in steps of half a cell has a jagged rim, and
+/// roofs at whole cells give the skyline a third of the heights it can
+/// have.
+#[test]
+fn the_moon_and_the_roofs_are_drawn_at_a_quarter_of_a_cell() {
+    for seed in [7, 8, 9] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
+
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let rim = |row: &Vec<Color>| {
+            let left = row.iter().position(|colour| *colour == PALETTE.text)?;
+            let right = row.iter().rposition(|colour| *colour == PALETTE.text)?;
+            Some((left, right))
+        };
+        let round = (0..rows.len()).step_by(2).any(|y| {
+            let (upper, lower) = (rim(&rows[y]), rim(&rows[y + 1]));
+            upper.is_some() && lower.is_some() && upper != lower
+        });
+        assert!(round, "seed {seed}: the moon steps by half cells");
+        let tops = tower_tops(&rows);
+        assert!(
+            tops.iter()
+                .flatten()
+                .any(|top| top % CELL_HEIGHT == CELL_HEIGHT / 2),
+            "seed {seed}: every roof is at the top of a cell"
+        );
     }
 }
 
@@ -464,10 +531,10 @@ fn rail(rows: &[Vec<Color>]) -> usize {
         .expect("a raised line")
 }
 
-/// Whether a row of the city lies outside the rows a train passes on and
-/// the line it runs on.
+/// Whether a row of the city lies outside the rows a train passes on, two
+/// cells, and the line it runs on, one cell.
 fn off_the_line(y: usize, rail: usize) -> bool {
-    y + 4 < rail || y > rail + 1
+    y + 2 * CELL_HEIGHT < rail || y >= rail + CELL_HEIGHT
 }
 
 /// Each pixel of a tower or a window above the water and off the train's
@@ -527,9 +594,9 @@ fn a_far_window_never_shares_a_cell_with_a_lamp() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks over a loop of the night and a half.
 /// Then: off the line of the train, the towers and the places of the
-/// windows stay the same, at most one window changes from a frame to the
-/// next, and the count of lit windows both rises and falls by over a
-/// quarter of its most. Of the windows of the near towers, never more
+/// windows stay the same, the pixels that change from a frame to the next
+/// lie in one cell at most, as one window does, and the count of lit
+/// window pixels both rises and falls by over a quarter of its most. Of the windows of the near towers, never more
 /// than three in ten are lit, and at some point fewer than one in twelve.
 ///
 /// Why it matters: a city whose windows never change reads as a picture,
@@ -572,10 +639,16 @@ fn windows_light_and_go_dark_one_by_one_as_the_night_passes() {
                 places(&city),
                 "tick {tick}: the skyline moved"
             );
-            let changes = before.iter().zip(&city).filter(|(a, b)| a != b).count();
+            let mut changes: Vec<(usize, usize)> = before
+                .iter()
+                .zip(&city)
+                .filter(|(a, b)| a != b)
+                .map(|((x, y, _), _)| (x / CELL_WIDTH, y / CELL_HEIGHT))
+                .collect();
+            changes.dedup();
             assert!(
-                changes <= 1,
-                "tick {tick}: {changes} windows changed at once"
+                changes.len() <= 1,
+                "tick {tick}: windows changed at once in cells {changes:?}"
             );
         }
         before = Some(city);
@@ -690,7 +763,7 @@ fn a_train_crosses_on_its_line_now_and_then() {
 
         // Then:
         let rail = rail(&rows);
-        for (y, row) in rows.iter().enumerate().take(rail - 4) {
+        for (y, row) in rows.iter().enumerate().take(rail - 2 * CELL_HEIGHT) {
             // A near mast in one cell with a far tower's rim and the sky
             // can draw two pixels of the mast's colour.
             assert!(
