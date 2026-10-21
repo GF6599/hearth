@@ -109,14 +109,10 @@ pub fn clear(cell: &mut Cell, base: Color) {
     }
 }
 
-/// The glyph, foreground and background for the pixels of one cell, in the
-/// order of the glyph's bits. A glyph holds two colours, the two most
-/// common, and a pixel of a third takes the foreground rather than `base`,
-/// so a thin colour is not lost. Of two colours with the same count, the
-/// one with the first pixel goes first, so a seed draws the same frame
-/// each time.
-fn cell(pixels: [Color; 8], base: Color) -> (char, Color, Color) {
-    let mut counts = [(base, 0); 8];
+/// Each colour of `pixels` once, in the order of its first pixel, with the
+/// count of its pixels, and how many colours there are.
+fn tally(pixels: [Color; 8]) -> ([(Color, u8); 8], usize) {
+    let mut counts = [(Color::Reset, 0); 8];
     let mut colours = 0;
     for colour in pixels {
         match counts[..colours]
@@ -130,6 +126,79 @@ fn cell(pixels: [Color; 8], base: Color) -> (char, Color, Color) {
             }
         }
     }
+    (counts, colours)
+}
+
+/// `pixels` in two colours of `counts`, the colours of the cell: the pair
+/// whose total OKLab distance from every pixel to the nearer of the two is
+/// least, with each pixel in the nearer. Of two pairs with the same total,
+/// the pair whose colours come first wins, and a pixel as near both takes
+/// the first, so a seed draws the same frame each time. A colour with no
+/// RGB value lies infinitely far from every other.
+fn nearest_pair(pixels: [Color; 8], counts: &[(Color, u8)], cache: &mut Labs) -> [Color; 8] {
+    let labs: [Option<Lab>; 8] =
+        std::array::from_fn(|index| counts.get(index).and_then(|(colour, _)| cache.of(*colour)));
+    // Row `one` holds what each colour of the cell costs to draw in colour
+    // `one`: its distance to it times its pixels, and 0 past the colours
+    // the cell holds. A pair then costs the smaller of its two rows in each
+    // place, so the search over pairs needs no multiplication.
+    let mut costs = [[0.0_f32; 8]; 8];
+    for one in 0..counts.len() {
+        for other in one + 1..counts.len() {
+            let gap = match (labs[one], labs[other]) {
+                (Some(Lab(a)), Some(Lab(b))) => {
+                    let squares: f32 = (0..3).map(|axis| (a[axis] - b[axis]).powi(2)).sum();
+                    squares.sqrt()
+                }
+                _ => f32::INFINITY,
+            };
+            costs[one][other] = f32::from(counts[other].1) * gap;
+            costs[other][one] = f32::from(counts[one].1) * gap;
+        }
+    }
+    let mut best = (0, 1);
+    let mut least = f32::INFINITY;
+    for one in 0..counts.len() {
+        for other in one + 1..counts.len() {
+            let total: f32 = (0..8)
+                .map(|each| costs[one][each].min(costs[other][each]))
+                .sum();
+            if total < least {
+                (best, least) = ((one, other), total);
+            }
+        }
+    }
+    let (one, other) = best;
+    pixels.map(|colour| {
+        let each = counts
+            .iter()
+            .position(|(held, _)| *held == colour)
+            .unwrap_or(one);
+        if costs[one][each] <= costs[other][each] {
+            counts[one].0
+        } else {
+            counts[other].0
+        }
+    })
+}
+
+/// The glyph, foreground and background for the pixels of one cell, in the
+/// order of the glyph's bits. A glyph holds two colours. A cell of more
+/// first takes the pair of its colours that lies nearest its pixels, with
+/// each pixel in the nearer of the two. Of the two colours, the more common
+/// goes in front, but `base` stays behind, so it can clear to the
+/// terminal's own background. Of two colours with the same count, the one
+/// with the first pixel goes first, so a seed draws the same frame each
+/// time.
+fn cell(pixels: [Color; 8], base: Color, cache: &mut Labs) -> (char, Color, Color) {
+    let (mut counts, mut colours) = tally(pixels);
+    let pixels = if colours > 2 {
+        let paired = nearest_pair(pixels, &counts[..colours], cache);
+        (counts, colours) = tally(paired);
+        paired
+    } else {
+        pixels
+    };
     let counts = &mut counts[..colours];
     counts.sort_by_key(|(_, count)| Reverse(*count));
     let first = counts.first().map_or(base, |(colour, _)| *colour);
@@ -210,6 +279,33 @@ impl Lab {
         Self(std::array::from_fn(|axis| {
             self.0[axis] + (other.0[axis] - self.0[axis]) * share
         }))
+    }
+}
+
+/// The colours a render has read in OKLab, so a frame takes the cube roots
+/// of each colour once and not once for each cell. A colour whose slot
+/// another holds is read again, so the cache needs no heap.
+#[derive(Debug)]
+struct Labs([Option<(Color, Lab)>; 256]);
+
+impl Labs {
+    fn new() -> Self {
+        Self([None; 256])
+    }
+
+    fn of(&mut self, colour: Color) -> Option<Lab> {
+        let Color::Rgb(r, g, b) = colour else {
+            return None;
+        };
+        let slot = usize::from(r ^ g.rotate_left(3) ^ b.rotate_left(5));
+        match self.0[slot] {
+            Some((held, lab)) if held == colour => Some(lab),
+            _ => {
+                let lab = Lab::of(colour)?;
+                self.0[slot] = Some((colour, lab));
+                Some(lab)
+            }
+        }
     }
 }
 
@@ -508,6 +604,7 @@ impl Canvas {
     /// Draws each cell into `buf` from the top left of `area`. Cells past
     /// the area are not drawn.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        let mut cache = Labs::new();
         for row in 0..self.rows.min(area.height) {
             for column in 0..self.columns.min(area.width) {
                 let (left, top) = (
@@ -518,7 +615,7 @@ impl Canvas {
                     let (x, y) = (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
                     self.pixels[y * self.width() + x]
                 });
-                let (glyph, fore, back) = cell(pixels, self.base);
+                let (glyph, fore, back) = cell(pixels, self.base, &mut cache);
                 buf[Position::new(area.x + column, area.y + row)]
                     .set_char(glyph)
                     .set_fg(fore)
