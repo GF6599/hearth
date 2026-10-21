@@ -34,27 +34,6 @@ const RAMP: [Color; 7] = [
 
 const FULL: usize = RAMP.len() - 1;
 
-const PALETTE: [Color; 12] = [
-    theme::ROSE_PINE.base,
-    theme::ROSE_PINE.surface,
-    theme::ROSE_PINE.overlay,
-    theme::ROSE_PINE.muted,
-    theme::ROSE_PINE.subtle,
-    theme::ROSE_PINE.text,
-    theme::ROSE_PINE.love,
-    theme::ROSE_PINE.gold,
-    theme::ROSE_PINE.rose,
-    theme::ROSE_PINE.pine,
-    theme::ROSE_PINE.foam,
-    theme::ROSE_PINE.iris,
-];
-
-fn band_of(colour: Color) -> usize {
-    RAMP.iter()
-        .position(|stop| *stop == colour)
-        .unwrap_or_else(|| panic!("{colour:?} is not on the ramp"))
-}
-
 /// The pixels across and down in each cell.
 const ACROSS: usize = octant::CELL_WIDTH;
 const DOWN: usize = octant::CELL_HEIGHT;
@@ -147,40 +126,100 @@ impl Banded {
     }
 }
 
-/// The dither pattern repeats every four pixels in each direction.
-const TILE: usize = 4;
+/// The colour that a pixel at `heat` draws.
+fn shade(palette: &Palette, heat: u16) -> Color {
+    fire::color(palette, heat, 0, 0)
+}
 
-fn tile() -> impl Iterator<Item = (usize, usize)> {
-    (0..TILE).flat_map(|row| (0..TILE).map(move |x| (x, row)))
+/// The largest difference in one channel between two colours.
+fn step(one: Color, other: Color) -> u8 {
+    match (one, other) {
+        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [r.abs_diff(s), g.abs_diff(h), b.abs_diff(c)]
+            .into_iter()
+            .max()
+            .unwrap(),
+        _ => panic!("{one:?} or {other:?} has no RGB value"),
+    }
+}
+
+/// The distance between two colours in RGB.
+fn distance(one: Color, other: Color) -> f32 {
+    match (one, other) {
+        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
+            .into_iter()
+            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
+            .sum::<f32>()
+            .sqrt(),
+        _ => panic!("{one:?} or {other:?} has no RGB value"),
+    }
+}
+
+/// The shades fewer than this between two stops show as bands.
+const LEAST_SHADES: usize = 5;
+
+/// Asserts that the heats of `palette` shade through `stops`: each stop's
+/// own heat, evenly spaced, gives the stop exactly. Between two stops at
+/// least `LEAST_SHADES` colours lie on the way from one to the other: each
+/// is no nearer the lower stop than the one before and no further from the
+/// upper, to a step of rounding. No two neighbouring heats differ by more
+/// than an eighth of the two stops' difference and a step of rounding.
+fn assert_shades(palette: &Palette, stops: &[Color]) {
+    let span = MAX_HEAT / (stops.len() as u16 - 1);
+    for (index, pair) in stops.windows(2).enumerate() {
+        let (lower, upper) = (pair[0], pair[1]);
+        let from = span * index as u16;
+        let heats = from..=from + span;
+        let colours: Vec<Color> = heats.clone().map(|heat| shade(palette, heat)).collect();
+        assert_eq!(colours[0], lower, "heat {from}");
+        assert_eq!(colours[colours.len() - 1], upper, "heat {}", from + span);
+        let mut distinct = colours.clone();
+        distinct.dedup();
+        assert!(
+            distinct.len() >= LEAST_SHADES,
+            "{} shades from {lower:?} to {upper:?}: {distinct:?}",
+            distinct.len()
+        );
+        let largest = step(lower, upper) / 8 + 1;
+        for (heat, pair) in heats.zip(colours.windows(2)) {
+            assert!(
+                distance(lower, pair[1]) >= distance(lower, pair[0]) - 1.0
+                    && distance(upper, pair[1]) <= distance(upper, pair[0]) + 1.0,
+                "heat {heat} to {}: {:?} to {:?} turns back",
+                heat + 1,
+                pair[0],
+                pair[1]
+            );
+            assert!(
+                step(pair[0], pair[1]) <= largest,
+                "heat {heat} to {}: {:?} to {:?} jumps",
+                heat + 1,
+                pair[0],
+                pair[1]
+            );
+        }
+    }
 }
 
 /// Given: the ramp.
-/// When: each heat from none to full is read at each pixel of a tile.
-/// Then: at every pixel the colours climb through base, overlay, muted,
-/// love, rose, gold and text, in that order, with each stop shown.
+/// When: each heat from none to full is read.
+/// Then: the heats shade through base, overlay, muted, love, rose, gold and
+/// text in that order, each stop at its own heat, and between two stops
+/// through mixes of the two in small steps.
 ///
-/// Why it matters: a blend between two stops makes a colour that Rose Pine
-/// does not have, and a skipped stop leaves a jump in the flame.
+/// Why it matters: a skipped stop leaves a jump in the flame, and flat
+/// stops show as hard bands. A dither of flat stops hides the bands at a
+/// distance but reads as a grain of pixels up close.
 #[test]
-fn the_ramp_climbs_through_the_seven_stops() {
-    for (x, row) in tile() {
-        // When:
-        let mut shown: Vec<Color> = (0..=MAX_HEAT)
-            .map(|heat| fire::color(&theme::ROSE_PINE, heat, x, row))
-            .collect();
-        shown.dedup();
-
-        // Then:
-        assert_eq!(shown, RAMP, "pixel ({x}, {row})");
-    }
+fn the_ramp_shades_through_the_seven_stops() {
+    assert_shades(&theme::ROSE_PINE, &RAMP);
 }
 
 /// Given: each light palette, Rose Pine Dawn, Catppuccin Latte, Tokyo
 /// Night Day, Kanagawa Lotus, Alucard and Solarized Light, where text is
 /// the darkest role.
-/// When: each heat from none to full is read at each pixel of a tile.
-/// Then: at every pixel the colours climb through base, overlay, muted,
-/// love, rose and gold, and end at gold.
+/// When: each heat from none to full is read.
+/// Then: the heats shade through base, overlay, muted, love, rose and gold,
+/// and end at gold.
 ///
 /// Why it matters: on a light theme a text stop draws a dark band under
 /// the flames, which reads as the coldest part and not the hottest.
@@ -194,64 +233,62 @@ fn a_light_theme_ends_the_ramp_at_gold() {
         &theme::DRACULA_ALUCARD,
         &theme::SOLARIZED_LIGHT,
     ] {
-        let ramp = [
-            light.base,
-            light.overlay,
-            light.muted,
-            light.love,
-            light.rose,
-            light.gold,
-        ];
-        for (x, row) in tile() {
-            // When:
-            let mut shown: Vec<Color> = (0..=MAX_HEAT)
-                .map(|heat| fire::color(light, heat, x, row))
-                .collect();
-            shown.dedup();
-
-            // Then:
-            assert_eq!(shown, ramp, "pixel ({x}, {row})");
-        }
+        assert_shades(
+            light,
+            &[
+                light.base,
+                light.overlay,
+                light.muted,
+                light.love,
+                light.rose,
+                light.gold,
+            ],
+        );
     }
 }
 
-/// Given: the ramp.
-/// When: each heat from none to full is drawn over one tile.
-/// Then: the tile holds at most two neighbouring stops, and the sum of its
-/// stops rises one step at a time from all base to all text.
+/// Given: the terminal's background on Rose Pine, where the base is
+/// see-through.
+/// When: each heat from none to full is read.
+/// Then: each heat below the overlay's own heat is the base or the overlay,
+/// and never a mix of the two.
 ///
-/// Why it matters: this is the dither. A tile that jumps from one stop to
-/// the next shows the hard bands that the dither exists to hide.
+/// Why it matters: a mix with the base is an opaque colour over the
+/// terminal's own background, and shows as a smudge over a transparent
+/// terminal.
 #[test]
-fn a_tile_shades_from_each_stop_to_the_next() {
-    let mut shades = Vec::new();
-    for heat in 0..=MAX_HEAT {
-        // When:
-        let tile: Vec<usize> = tile()
-            .map(|(x, row)| band_of(fire::color(&theme::ROSE_PINE, heat, x, row)))
-            .collect();
+fn a_see_through_base_keeps_the_top_of_the_fire_hard() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[0];
+    assert!(palette.see_through);
 
-        // Then:
-        let (low, high) = (tile.iter().min().unwrap(), tile.iter().max().unwrap());
-        assert!(high - low <= 1, "heat {heat}: {tile:?}");
-        shades.push(tile.iter().sum::<usize>());
+    // When, then:
+    for heat in 0..MAX_HEAT / FULL as u16 {
+        let colour = shade(palette, heat);
+        assert!(
+            colour == palette.base || colour == palette.overlay,
+            "heat {heat} draws {colour:?}"
+        );
     }
-    shades.dedup();
-    let every_step: Vec<usize> = (0..=FULL * TILE * TILE).collect();
-    assert_eq!(shades, every_step);
 }
 
 /// Given: a scene on a forty by twenty area.
 /// When: it ticks thirty times and renders.
-/// Then: every cell's foreground and background is a Rose Pine colour.
+/// Then: every cell's foreground and background is a shade of the ramp,
+/// and the frame shows more than three times as many shades as the ramp
+/// has stops.
 ///
-/// Why it matters: one colour outside the palette reads as a fault on a
-/// surface where every other cell is Rose Pine.
+/// Why it matters: a colour off the ramp is not a mix of the theme's
+/// colours and reads as a fault, and a frame of few shades shows the hard
+/// bands of the stops.
 #[test]
-fn every_cell_is_a_rose_pine_colour() {
+fn every_cell_is_a_shade_of_the_ramp() {
     // Given:
     let area = Rect::new(0, 0, 40, 20);
     let mut scene = scene(7);
+    let ramp: Vec<Color> = (0..=MAX_HEAT)
+        .map(|heat| shade(&theme::ROSE_PINE, heat))
+        .collect();
 
     // When:
     for _ in 0..30 {
@@ -260,12 +297,21 @@ fn every_cell_is_a_rose_pine_colour() {
     let buffer = render(&scene, area, area);
 
     // Then:
+    let mut shown: Vec<Color> = Vec::new();
     for position in area.positions() {
         let cell = &buffer[position];
         for colour in [cell.fg, cell.bg] {
-            assert!(PALETTE.contains(&colour), "{colour:?} at {position:?}");
+            assert!(ramp.contains(&colour), "{colour:?} at {position:?}");
+            if !shown.contains(&colour) {
+                shown.push(colour);
+            }
         }
     }
+    assert!(
+        shown.len() > 3 * RAMP.len(),
+        "{} shades: {shown:?}",
+        shown.len()
+    );
 }
 
 /// Given: a scene on a twelve by six area.
