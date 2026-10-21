@@ -1,12 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::TAU;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -49,12 +48,11 @@ const TRAIL_GAP: f32 = 1.0;
 /// thresholds evenly with no pattern that the eye picks up.
 const GOLDEN: f32 = 0.618_034;
 
-/// What a cell shows when more than one thing falls in it, from the
-/// lowest. One braille cell holds one colour, so a cell shows the dots of
-/// its highest layer alone. A body or a trail on the far half of its orbit
-/// is behind the sun and one on the near half in front of it, a body is
-/// over every trail on its side and over its own trail, and between two
-/// bodies the nearer wins.
+/// What a pixel shows when more than one thing falls on it, from the
+/// lowest. A body or a trail on the far half of its orbit is behind the sun
+/// and one on the near half in front of it, a body is over every trail on
+/// its side and over its own trail, and between two bodies the nearer
+/// wins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
     Orbit,
@@ -122,35 +120,6 @@ impl Solar {
     }
 }
 
-/// The place at `angle` on the orbit `across` dots wide each side of the
-/// centre. The angle grows the way the planets go, against the clock seen
-/// from above, so a planet crosses the near side, the bottom of the pane,
-/// from left to right.
-fn cell(dot: (i32, i32)) -> (i32, i32) {
-    (
-        dot.0.div_euclid(CELL_WIDTH as i32),
-        dot.1.div_euclid(CELL_HEIGHT as i32),
-    )
-}
-
-fn touched(dots: &[(i32, i32)]) -> BTreeSet<(i32, i32)> {
-    dots.iter().copied().map(cell).collect()
-}
-
-/// Every dot of each cell that `dots` touch, so a body shows as solid cells
-/// and stands out from the single dots of its trail.
-fn fill(dots: &[(i32, i32)]) -> Vec<(i32, i32)> {
-    let (width, height) = (CELL_WIDTH as i32, CELL_HEIGHT as i32);
-    touched(dots)
-        .into_iter()
-        .flat_map(|(column, row)| {
-            (0..width).flat_map(move |dx| {
-                (0..height).map(move |dy| (column * width + dx, row * height + dy))
-            })
-        })
-        .collect()
-}
-
 /// The share of a turn made after `time` ticks, at `period` ticks a turn.
 /// Whole turns come off in f64 first, because an angle that grows without
 /// end in f32 loses the precision of one tick within a day.
@@ -158,6 +127,10 @@ fn turned(time: u32, period: f32) -> f32 {
     (f64::from(time) / f64::from(period)).fract() as f32
 }
 
+/// The place at `angle` on the orbit `across` dots wide each side of the
+/// centre. The angle grows the way the planets go, against the clock seen
+/// from above, so a planet crosses the near side, the bottom of the pane,
+/// from left to right.
 fn place(centre: (f32, f32), across: f32, angle: f32) -> (f32, f32) {
     (
         centre.0 + across * angle.cos(),
@@ -192,6 +165,36 @@ fn disc(middle: (f32, f32), radius: f32) -> Vec<(i32, i32)> {
     dots
 }
 
+/// The colour of each pixel of one cell, from what lies on it. A cell
+/// shows two colours: the colour of its highest layer, and behind it the
+/// base where any pixel is empty, or else the colour most of the rest
+/// takes. A pixel of a third colour takes the colour behind, so no empty
+/// pixel draws. A dot of an orbit or a trail beside a body drops out, and so
+/// does the part of a body that shares a cell of sky with a nearer one.
+fn settle(pixels: [Option<(Layer, Color)>; 8], base: Color) -> [Color; 8] {
+    let front = pixels
+        .iter()
+        .flatten()
+        .max_by_key(|(layer, _)| *layer)
+        .map_or(base, |(_, colour)| *colour);
+    let colours = pixels.map(|pixel| pixel.map_or(base, |(_, colour)| colour));
+    let behind = if pixels.contains(&None) {
+        base
+    } else {
+        colours
+            .iter()
+            .filter(|colour| **colour != front)
+            .max_by_key(|colour| {
+                let count = colours.iter().filter(|other| other == colour).count();
+                let first = colours.iter().position(|other| other == *colour);
+                (count, std::cmp::Reverse(first))
+            })
+            .copied()
+            .unwrap_or(base)
+    };
+    colours.map(|colour| if colour == front { front } else { behind })
+}
+
 impl Scene for Solar {
     fn tick(&mut self, area: Rect) {
         self.width = area.width;
@@ -201,21 +204,19 @@ impl Scene for Solar {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let (centre, across) = self.frame();
-        let mut cells: BTreeMap<(i32, i32), (Layer, u32, Color)> = BTreeMap::new();
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let (width, height) = (canvas.width(), canvas.height());
+        let mut layers: Vec<Option<(Layer, Color)>> = vec![None; width * height];
         let mut plot = |x: i32, y: i32, layer: Layer, colour: Color| {
-            if x < 0 || y < 0 {
+            let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+                return;
+            };
+            if x >= width || y >= height {
                 return;
             }
-            let cell = (x / CELL_WIDTH as i32, y / CELL_HEIGHT as i32);
-            let bit = braille::dot(
-                (x % CELL_WIDTH as i32) as usize,
-                (y % CELL_HEIGHT as i32) as usize,
-            );
-            let entry = cells.entry(cell).or_insert((layer, 0, colour));
-            if layer > entry.0 {
-                *entry = (layer, bit, colour);
-            } else if layer == entry.0 {
-                entry.1 |= bit;
+            let pixel = &mut layers[y * width + x];
+            if pixel.is_none_or(|(under, _)| layer > under) {
+                *pixel = Some((layer, colour));
             }
         };
 
@@ -258,9 +259,6 @@ impl Scene for Solar {
             let steps = ((TAU * reach / TRAIL_GAP) as i32).max(1);
             let gap = TAU / steps as f32;
             let newest = (angle / gap).floor() as i32;
-            // Near the side of an orbit the trail is on the near half while
-            // the planet is on the far half, and would draw over it.
-            let body = touched(&disc(planets[index], RADII[index]));
             for step in (newest - (TRAIL_TURN * steps as f32) as i32..=newest).rev() {
                 // Each place keeps its threshold as the planet moves on, so a
                 // lit dot stays lit until the fade passes its threshold.
@@ -270,10 +268,6 @@ impl Scene for Solar {
                     continue;
                 }
                 let (x, y) = place(centre, reach, step as f32 * gap);
-                let dot = (x.round() as i32, y.round() as i32);
-                if body.contains(&cell(dot)) {
-                    continue;
-                }
                 let layer = if y > centre.1 {
                     Layer::TrailFront
                 } else {
@@ -284,7 +278,7 @@ impl Scene for Solar {
         }
         for (index, &body) in planets.iter().enumerate() {
             let layer = depth(body);
-            for (x, y) in fill(&disc(body, RADII[index])) {
+            for (x, y) in disc(body, RADII[index]) {
                 plot(x, y, layer, colours[index]);
             }
             if index == SATURN {
@@ -307,16 +301,19 @@ impl Scene for Solar {
             plot(x, y, Layer::Sun, self.palette.gold);
         }
 
-        for ((column, row), (_, dots, colour)) in cells {
-            let (Ok(column), Ok(row)) = (u16::try_from(column), u16::try_from(row)) else {
-                continue;
-            };
-            if column >= area.width || row >= area.height {
-                continue;
+        for top in (0..height).step_by(CELL_HEIGHT) {
+            for left in (0..width).step_by(CELL_WIDTH) {
+                let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
+                let pixels = std::array::from_fn(|pixel| {
+                    let (x, y) = at(pixel);
+                    layers[y * width + x]
+                });
+                for (pixel, colour) in settle(pixels, self.palette.base).into_iter().enumerate() {
+                    let (x, y) = at(pixel);
+                    canvas.set(x, y, colour);
+                }
             }
-            buf[Position::new(area.x + column, area.y + row)]
-                .set_char(braille::glyph(dots))
-                .set_fg(colour);
         }
+        canvas.render(area, buf);
     }
 }
