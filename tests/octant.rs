@@ -108,7 +108,12 @@ fn pixels(name: &str) -> u8 {
 
 /// One cell of `pixels`, in the order of the glyph's bits, as drawn.
 fn draw(pixels: [Color; 8]) -> Cell {
-    let mut canvas = Canvas::new(1, 1, PALETTE);
+    draw_on(PALETTE, pixels)
+}
+
+/// One cell of `pixels` on a canvas of `palette`, as drawn.
+fn draw_on(palette: &Palette, pixels: [Color; 8]) -> Cell {
+    let mut canvas = Canvas::new(1, 1, palette);
     for (pixel, colour) in pixels.into_iter().enumerate() {
         canvas.set(pixel % CELL_WIDTH, pixel / CELL_WIDTH, colour);
     }
@@ -345,6 +350,46 @@ fn a_tie_between_two_pairs_goes_to_the_first_colours() {
         let expected = pixels.map(|colour| if colour == BASE { BASE } else { first });
         assert_eq!(shown(&cell), expected, "{first:?} first");
         assert_eq!(cell.bg, BASE, "{first:?} first");
+    }
+}
+
+/// A cell draws the same pair on a see-through base as on a coloured one.
+/// Given: a cell of four pixels of the base, two of the overlay, which
+/// lies near the base, and two of the ink, once on a base that is a colour
+/// and once on a see-through base.
+/// When: each cell is drawn.
+/// Then: both show the base in the base and overlay pixels and the ink in
+/// the ink pixels, with the base behind.
+///
+/// Why it matters: the terminal's own background changes no picture, only
+/// what lies behind it. A cell that chose its pair by the kind of base
+/// would draw other colours on each background.
+#[test]
+fn a_cell_draws_the_same_pair_on_a_see_through_base() {
+    // Given:
+    let pixels = [
+        BASE,
+        BASE,
+        BASE,
+        BASE,
+        PALETTE.overlay,
+        PALETTE.overlay,
+        INK,
+        INK,
+    ];
+
+    for palette in [PALETTE, SEE_THROUGH] {
+        // When:
+        let cell = draw_on(palette, pixels);
+
+        // Then:
+        let at = format!("see-through: {}", palette.see_through);
+        assert_eq!(
+            shown(&cell),
+            [BASE, BASE, BASE, BASE, BASE, BASE, INK, INK],
+            "{at}"
+        );
+        assert_eq!(cell.bg, BASE, "{at}");
     }
 }
 
