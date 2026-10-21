@@ -337,19 +337,22 @@ pub struct Canvas {
     columns: u16,
     rows: u16,
     base: Color,
+    see_through: bool,
     pixels: Vec<Color>,
 }
 
 impl Canvas {
     /// A canvas of `columns` by `rows` cells with every pixel in the base
     /// of `palette`. The cells keep the base behind them where they can, so
-    /// it clears to the terminal's own background.
+    /// it clears to the terminal's own background. Where the palette's base
+    /// is see-through, the canvas never mixes a colour with the base.
     pub fn new(columns: u16, rows: u16, palette: &Palette) -> Self {
         let size = usize::from(columns) * CELL_WIDTH * usize::from(rows) * CELL_HEIGHT;
         Self {
             columns,
             rows,
             base: palette.base,
+            see_through: palette.see_through,
             pixels: vec![palette.base; size],
         }
     }
@@ -382,11 +385,23 @@ impl Canvas {
     }
 
     /// Mixes `colour` into the pixel at (x, y) by `coverage`, the share of
-    /// the pixel a shape covers, from 0 to 1. A pixel past an edge is
-    /// dropped.
+    /// the pixel a shape covers, from 0 to 1. Where the base is
+    /// see-through and the pixel or `colour` is the base, the pixel takes
+    /// `colour` from a coverage of a half on and keeps its own colour
+    /// below, so the edge stays hard. A pixel past an edge is dropped.
     pub fn blend(&mut self, x: usize, y: usize, colour: Color, coverage: f32) {
         if let Some(index) = self.index(x, y) {
-            self.pixels[index] = mix(self.pixels[index], colour, coverage);
+            self.pixels[index] = self.mix(self.pixels[index], colour, coverage);
+        }
+    }
+
+    /// The mix of `from` and `to` at `share`, or the nearer end where
+    /// either is a see-through base.
+    fn mix(&self, from: Color, to: Color, share: f32) -> Color {
+        if self.see_through && (from == self.base || to == self.base) {
+            if share >= 0.5 { to } else { from }
+        } else {
+            mix(from, to, share)
         }
     }
 
@@ -445,12 +460,14 @@ impl Canvas {
 
     /// Fills each row of `rows` across the canvas with a mix from `top` in
     /// the first row to `bottom` in the last. Rows past the bottom edge are
-    /// dropped, and the rows left keep the colours of the whole span.
+    /// dropped, and the rows left keep the colours of the whole span. From
+    /// a see-through base, the rows turn from one colour to the other at
+    /// the middle.
     pub fn gradient(&mut self, rows: Range<usize>, top: Color, bottom: Color) {
         let steps = rows.len().saturating_sub(1).max(1) as f32;
         let width = self.width();
         for y in rows.start..rows.end.min(self.height()) {
-            let colour = mix(top, bottom, (y - rows.start) as f32 / steps);
+            let colour = self.mix(top, bottom, (y - rows.start) as f32 / steps);
             self.pixels[y * width..(y + 1) * width].fill(colour);
         }
     }

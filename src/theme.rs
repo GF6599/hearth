@@ -20,6 +20,9 @@ pub struct Palette {
     pub pine: Color,
     pub foam: Color,
     pub iris: Color,
+    /// Whether the base clears to the terminal's own background, as in
+    /// `FLAT_THEMES`. A mix with the base is then an opaque colour over a
+    /// background the user sees through.
     pub see_through: bool,
 }
 
@@ -298,7 +301,8 @@ pub const THEMES: [(&str, &Palette); 13] = [
 /// Each theme of `THEMES` with its surface in its base colour, for the
 /// terminal's background. A panel then shows the terminal with the rest of
 /// the background, and a role that shares the surface's colour, as
-/// Solarized's overlay does, stays painted.
+/// Solarized's overlay does, stays painted. The base is see-through, so a
+/// canvas keeps each edge against it hard.
 pub static FLAT_THEMES: [Palette; THEMES.len()] = {
     let mut flat = [ROSE_PINE; THEMES.len()];
     let mut index = 0;
@@ -306,6 +310,7 @@ pub static FLAT_THEMES: [Palette; THEMES.len()] = {
         let palette = THEMES[index].1;
         flat[index] = Palette {
             surface: palette.base,
+            see_through: true,
             ..*palette
         };
         index += 1;
