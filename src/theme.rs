@@ -20,6 +20,7 @@ pub struct Palette {
     pub pine: Color,
     pub foam: Color,
     pub iris: Color,
+    pub see_through: bool,
 }
 
 impl Palette {
@@ -60,6 +61,7 @@ pub const ROSE_PINE: Palette = Palette {
     pine: Color::Rgb(0x31, 0x74, 0x8f),
     foam: Color::Rgb(0x9c, 0xcf, 0xd8),
     iris: Color::Rgb(0xc4, 0xa7, 0xe7),
+    see_through: false,
 };
 
 pub const ROSE_PINE_MOON: Palette = Palette {
@@ -75,6 +77,7 @@ pub const ROSE_PINE_MOON: Palette = Palette {
     pine: Color::Rgb(0x3e, 0x8f, 0xb0),
     foam: Color::Rgb(0x9c, 0xcf, 0xd8),
     iris: Color::Rgb(0xc4, 0xa7, 0xe7),
+    see_through: false,
 };
 
 pub const ROSE_PINE_DAWN: Palette = Palette {
@@ -90,6 +93,7 @@ pub const ROSE_PINE_DAWN: Palette = Palette {
     pine: Color::Rgb(0x28, 0x69, 0x83),
     foam: Color::Rgb(0x56, 0x94, 0x9f),
     iris: Color::Rgb(0x90, 0x7a, 0xa9),
+    see_through: false,
 };
 
 /// Catppuccin by the same names in both variants: mantle fills a frame,
@@ -108,6 +112,7 @@ pub const CATPPUCCIN_MOCHA: Palette = Palette {
     pine: Color::Rgb(0x89, 0xb4, 0xfa),
     foam: Color::Rgb(0x94, 0xe2, 0xd5),
     iris: Color::Rgb(0xcb, 0xa6, 0xf7),
+    see_through: false,
 };
 
 pub const CATPPUCCIN_LATTE: Palette = Palette {
@@ -123,6 +128,7 @@ pub const CATPPUCCIN_LATTE: Palette = Palette {
     pine: Color::Rgb(0x1e, 0x66, 0xf5),
     foam: Color::Rgb(0x17, 0x92, 0x99),
     iris: Color::Rgb(0x88, 0x39, 0xef),
+    see_through: false,
 };
 
 /// Tokyo Night by the same names in both variants: bg_dark fills a frame,
@@ -142,6 +148,7 @@ pub const TOKYO_NIGHT: Palette = Palette {
     pine: Color::Rgb(0x7a, 0xa2, 0xf7),
     foam: Color::Rgb(0x7d, 0xcf, 0xff),
     iris: Color::Rgb(0xbb, 0x9a, 0xf7),
+    see_through: false,
 };
 
 pub const TOKYO_NIGHT_DAY: Palette = Palette {
@@ -157,6 +164,7 @@ pub const TOKYO_NIGHT_DAY: Palette = Palette {
     pine: Color::Rgb(0x2e, 0x7d, 0xe9),
     foam: Color::Rgb(0x00, 0x71, 0x97),
     iris: Color::Rgb(0x98, 0x54, 0xf1),
+    see_through: false,
 };
 
 /// Kanagawa by the role each theme gives a colour, the same in both
@@ -177,6 +185,7 @@ pub const KANAGAWA_WAVE: Palette = Palette {
     pine: Color::Rgb(0x7e, 0x9c, 0xd8),
     foam: Color::Rgb(0x7a, 0xa8, 0x9f),
     iris: Color::Rgb(0x95, 0x7f, 0xb8),
+    see_through: false,
 };
 
 pub const KANAGAWA_LOTUS: Palette = Palette {
@@ -192,6 +201,7 @@ pub const KANAGAWA_LOTUS: Palette = Palette {
     pine: Color::Rgb(0x4d, 0x69, 0x9b),
     foam: Color::Rgb(0x59, 0x7b, 0x75),
     iris: Color::Rgb(0x62, 0x4c, 0x83),
+    see_through: false,
 };
 
 /// Dracula and Alucard by the names of the Dracula specification: Background,
@@ -212,6 +222,7 @@ pub const DRACULA: Palette = Palette {
     pine: Color::Rgb(0x50, 0xfa, 0x7b),
     foam: Color::Rgb(0x8b, 0xe9, 0xfd),
     iris: Color::Rgb(0xbd, 0x93, 0xf9),
+    see_through: false,
 };
 
 pub const DRACULA_ALUCARD: Palette = Palette {
@@ -227,6 +238,7 @@ pub const DRACULA_ALUCARD: Palette = Palette {
     pine: Color::Rgb(0x14, 0x71, 0x0a),
     foam: Color::Rgb(0x03, 0x6a, 0x96),
     iris: Color::Rgb(0x64, 0x4a, 0xc9),
+    see_through: false,
 };
 
 /// Solarized by its tone names: Dark takes base03, base02, base01, base00
@@ -246,6 +258,7 @@ pub const SOLARIZED_DARK: Palette = Palette {
     pine: Color::Rgb(0x26, 0x8b, 0xd2),
     foam: Color::Rgb(0x2a, 0xa1, 0x98),
     iris: Color::Rgb(0x6c, 0x71, 0xc4),
+    see_through: false,
 };
 
 pub const SOLARIZED_LIGHT: Palette = Palette {
@@ -261,6 +274,7 @@ pub const SOLARIZED_LIGHT: Palette = Palette {
     pine: Color::Rgb(0x26, 0x8b, 0xd2),
     foam: Color::Rgb(0x2a, 0xa1, 0x98),
     iris: Color::Rgb(0x6c, 0x71, 0xc4),
+    see_through: false,
 };
 
 /// Each theme by the name the config file gives it. A family comes first

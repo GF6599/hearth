@@ -792,3 +792,95 @@ fn a_gradient_runs_from_its_top_colour_to_its_bottom_colour() {
         assert_eq!(rows[y], vec![BASE; width], "row {y}");
     }
 }
+
+/// Rose Pine for the terminal's own background, whose base shows the
+/// terminal through.
+const SEE_THROUGH: &Palette = &Palette {
+    see_through: true,
+    ..theme::ROSE_PINE
+};
+
+/// Over a see-through base an edge stays hard, and over another colour it
+/// blends.
+/// Given: a canvas whose base is see-through, with foam over its right
+/// half.
+/// When: a disc of ink is drawn across both halves, a line two pixels wide
+/// runs over the base with rows half under it, and the base blends into a
+/// pixel of foam at a quarter and at three quarters.
+/// Then: each pixel over the base is the base or the ink, never a mix, and
+/// a pixel half under the line is the ink. Over the foam the disc's edge
+/// shows a mix of foam and the ink. The base at a quarter leaves the foam,
+/// and at three quarters replaces it.
+///
+/// Why it matters: with the terminal's own background the base clears to
+/// the terminal. A mix of the base and an ink is an opaque colour, so a
+/// soft edge on the base would draw a dark or light ring over the
+/// terminal round each shape.
+#[test]
+fn an_edge_over_a_see_through_base_stays_hard() {
+    // Given:
+    let mut canvas = Canvas::new(8, 4, SEE_THROUGH);
+    let half = canvas.width() / 2;
+    for y in 0..canvas.height() {
+        for x in half..canvas.width() {
+            canvas.set(x, y, OTHER);
+        }
+    }
+    let foam = |x: usize| x >= half;
+
+    // When:
+    canvas.disc((8.0, 8.0), 5.3, INK);
+    canvas.line((0.0, 13.0), (5.0, 13.0), 2.0, INK);
+    canvas.blend(12, 0, BASE, 0.25);
+    canvas.blend(13, 0, BASE, 0.75);
+
+    // Then:
+    let mut soft = 0;
+    for y in 0..canvas.height() {
+        for x in 0..canvas.width() {
+            let colour = canvas.get(x, y).unwrap();
+            if (x, y) == (12, 0) {
+                assert_eq!(colour, OTHER, "the base at a quarter over foam");
+            } else if (x, y) == (13, 0) {
+                assert_eq!(colour, BASE, "the base at three quarters over foam");
+            } else if !foam(x) {
+                assert!(colour == BASE || colour == INK, "({x}, {y}) is {colour:?}");
+            } else if colour != OTHER && colour != INK {
+                assert!(
+                    share_of(OTHER, INK, colour).is_some(),
+                    "({x}, {y}) is {colour:?}"
+                );
+                soft += 1;
+            }
+        }
+    }
+    assert!(soft > 0, "no pixel over foam blends");
+    for x in 0..4 {
+        let column: Vec<Color> = (11..16).map(|y| canvas.get(x, y).unwrap()).collect();
+        assert_eq!(
+            column,
+            [BASE, INK, INK, INK, BASE],
+            "column {x} of the line"
+        );
+    }
+}
+
+/// A gradient from a see-through base turns at its middle row.
+/// Given: a canvas whose base is see-through.
+/// When: a gradient from the base to the ink fills rows 0 to 7.
+/// Then: rows 0 to 3 show the base, and rows 4 to 7 show the ink.
+///
+/// Why it matters: a sky that fades into the terminal's own background
+/// would paint a band of opaque mixes over the terminal.
+#[test]
+fn a_gradient_from_a_see_through_base_turns_at_its_middle() {
+    // Given:
+    let mut canvas = Canvas::new(1, 2, SEE_THROUGH);
+
+    // When:
+    canvas.gradient(0..8, BASE, INK);
+
+    // Then:
+    let colours: Vec<Color> = (0..8).map(|y| canvas.get(0, y).unwrap()).collect();
+    assert_eq!(colours, [BASE, BASE, BASE, BASE, INK, INK, INK, INK]);
+}

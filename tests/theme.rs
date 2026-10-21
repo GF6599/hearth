@@ -207,3 +207,21 @@ fn t_names_the_new_theme_in_the_notice() {
     let top = row(&frame(&mut app, 1), 0);
     assert!(top.contains(name), "{top:?}");
 }
+
+/// Only a theme for the terminal's background has a base that shows the
+/// terminal through.
+/// Given: each theme, and each theme of `FLAT_THEMES`.
+/// When: each is asked whether its base is see-through.
+/// Then: no theme of `THEMES` is, and each of `FLAT_THEMES` is.
+///
+/// Why it matters: a canvas mixes a soft edge into the base only where the
+/// base is a colour. Over the terminal's own background a mix with the
+/// base paints an opaque halo round each shape.
+#[test]
+fn only_a_flat_theme_has_a_see_through_base() {
+    for ((name, palette), flat) in theme::THEMES.iter().zip(&theme::FLAT_THEMES) {
+        // When, then:
+        assert!(!palette.see_through, "{name}");
+        assert!(flat.see_through, "flat {name}");
+    }
+}

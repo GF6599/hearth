@@ -66,6 +66,7 @@ fn two_tone(palette: &Palette, colour: Color) -> &'static Palette {
         pine: tone(palette.pine),
         foam: tone(palette.foam),
         iris: tone(palette.iris),
+        ..*palette
     }))
 }
 
