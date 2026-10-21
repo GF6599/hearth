@@ -974,10 +974,15 @@ fn the_outline_has_mixes_of_the_glass_and_the_base_at_its_edge() {
 /// Over the terminal's background the outline stays hard.
 /// Given: a glass at a hundred by thirty on Rose Pine with the terminal's
 /// background, where the base is see-through.
-/// When: it runs a quarter of the work phase and renders.
-/// Then: no pixel but a role of the theme is a mix of the base with the
-/// glass or with the sand. The muted marks lie between the base and the
-/// glass, and they are a role and no mix.
+/// When: it runs a quarter of the work phase and renders, and runs into
+/// half the break and renders.
+/// Then: no pixel but a role of the theme is a mix of the base with a
+/// colour the hourglass draws: the glass's subtle, the work sand's gold,
+/// the break sand's foam, the frame's pine or the finished round's iris.
+/// The muted rounds to come lie on the line from the base to the glass,
+/// and they are a role and no mix. A shade of the sand, toward the text or
+/// toward its love or pine shadow, lies close to the line from the base to
+/// its sand, and it is a mix of the sand and no mix with the base.
 ///
 /// Why it matters: a mix with the base is an opaque colour over the
 /// terminal's own background, and shows as a smudge over a transparent
@@ -988,12 +993,6 @@ fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
     let palette = &theme::FLAT_THEMES[0];
     assert!(palette.see_through);
     let (mut scene, now) = hourglass_on(7, palette, Lengths::DEFAULT);
-
-    // When:
-    run(&mut scene, &now, WORK / 4, AREA);
-    let buffer = render(&scene, AREA, AREA);
-
-    // Then:
     let roles = [
         palette.base,
         palette.overlay,
@@ -1007,13 +1006,36 @@ fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
         palette.foam,
         palette.iris,
     ];
-    for ((x, y), colour) in pixels::showing(&buffer, AREA, |colour| !roles.contains(&colour)) {
-        for other in [palette.subtle, palette.gold] {
-            assert!(
-                !between(colour, palette.base, other),
-                "{colour:?} at {:?} mixes the base and {other:?}",
-                (x, y)
-            );
+    let drawn = [
+        palette.subtle,
+        palette.gold,
+        palette.foam,
+        palette.pine,
+        palette.iris,
+    ];
+
+    for until in [WORK / 4, WORK + BREAK / 2] {
+        // When:
+        run(&mut scene, &now, until, AREA);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let shade = |colour: Color| {
+            [(palette.gold, palette.love), (palette.foam, palette.pine)]
+                .into_iter()
+                .any(|(sand, shadow)| {
+                    between(colour, sand, shadow) || between(colour, sand, palette.text)
+                })
+        };
+        let drawn_on_purpose = |colour: Color| roles.contains(&colour) || shade(colour);
+        for ((x, y), colour) in pixels::showing(&buffer, AREA, |colour| !drawn_on_purpose(colour)) {
+            for other in drawn {
+                assert!(
+                    !between(colour, palette.base, other),
+                    "{colour:?} at {:?} at {until:?} mixes the base and {other:?}",
+                    (x, y)
+                );
+            }
         }
     }
 }

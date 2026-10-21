@@ -1160,3 +1160,59 @@ fn the_lamp_glows_on_the_wall_and_fades_from_the_bulb() {
         "the glow near the bulb lies {near} from the wall and further out {out}"
     );
 }
+
+/// Given: the scene on a pane the size of the picture on Rose Pine with the
+/// terminal's background, where the base is see-through, the night sky and
+/// the screen.
+/// When: it runs for a minute, a frame after each tick.
+/// Then: no pixel is a mix of the base and a colour the study draws by the
+/// sky and the screen: the gold and rose of the town, the lamp and the
+/// code, the foam of the rain and the code, the love of a book and the pine
+/// of the vase. The greys, text and the pale iris lie on a line from the
+/// base, so a shade between two greys would read as a mix with the base,
+/// and the test reads these colours only. It reads no role of the
+/// theme, and no shade of the lamp's glow from the wall through rose to
+/// gold, because the wall lies close to the base.
+///
+/// Why it matters: a mix with the base is an opaque colour over the
+/// terminal's own background, and shows as a smudge over a transparent
+/// terminal.
+#[test]
+fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[0];
+    assert!(palette.see_through);
+    let mut scene = Study::new(Rng::seed_from_u64(7), palette);
+    let drawn = [
+        palette.gold,
+        palette.rose,
+        palette.foam,
+        palette.love,
+        palette.pine,
+    ];
+
+    for tick in 0..1000 {
+        // When:
+        scene.tick(FITTED);
+        let rows = view(&scene, FITTED.width, FITTED.height);
+
+        // Then:
+        let glow = |colour: Color| {
+            between(colour, palette.overlay, palette.rose)
+                || between(colour, palette.rose, palette.gold)
+        };
+        for (y, row) in rows.iter().enumerate() {
+            for (x, colour) in row.iter().enumerate() {
+                if ROLES.contains(colour) || glow(*colour) {
+                    continue;
+                }
+                for other in drawn {
+                    assert!(
+                        !between(*colour, palette.base, other),
+                        "tick {tick}: {colour:?} at ({x}, {y}) mixes the base and {other:?}"
+                    );
+                }
+            }
+        }
+    }
+}

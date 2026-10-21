@@ -920,11 +920,14 @@ fn the_glow_shades_between_love_rose_and_gold() {
 /// Given: the scene on an eighty by twenty-four area on Rose Pine with the
 /// terminal's background, where the base is see-through.
 /// When: it ticks forty times and renders.
-/// Then: no pixel is a mix of the base and love.
+/// Then: no pixel is a mix of the base and a colour of the glow: love,
+/// rose or gold. The wood's greys lie on a line from the base, so a shade
+/// between two of them would read as a mix with the base, and the test
+/// reads the glow's colours only.
 ///
 /// Why it matters: a mix with the base is an opaque colour over the
-/// terminal's own background, and lit air drawn in it shows as a smudge
-/// around the fire on a transparent terminal.
+/// terminal's own background, and lit air or a glowing edge drawn in it
+/// shows as a smudge around the fire on a transparent terminal.
 #[test]
 fn over_the_terminal_background_the_air_stays_clear() {
     // Given:
@@ -941,11 +944,13 @@ fn over_the_terminal_background_the_air_stays_clear() {
     // Then:
     for (y, row) in shown.iter().enumerate() {
         for (x, colour) in row.iter().enumerate() {
-            if let Some(colour) = colour {
-                assert!(
-                    !between(*colour, palette.base, palette.love),
-                    "{colour:?} at ({x}, {y}) mixes the base and love"
-                );
+            for other in [palette.love, palette.rose, palette.gold] {
+                if let Some(colour) = colour {
+                    assert!(
+                        !between(*colour, palette.base, other),
+                        "{colour:?} at ({x}, {y}) mixes the base and {other:?}"
+                    );
+                }
             }
         }
     }
