@@ -111,6 +111,8 @@ pub struct River {
     /// The most lanes the history holds at once.
     widest: usize,
     ticks: u64,
+    /// How far the scene has run towards its next tick.
+    progress: f64,
     /// Where the foam of each lane starts, so the lanes do not foam in step.
     phases: Vec<i64>,
     /// Seeds the ripples and the sand.
@@ -145,6 +147,7 @@ impl River {
             rows: Vec::new(),
             widest: 0,
             ticks: 0,
+            progress: 0.0,
             phases,
             salt: rng.random(),
             banks: [
@@ -160,14 +163,23 @@ impl River {
         self.reading = None;
     }
 
+    /// The ticks since the history landed, with the share of the next.
+    fn time(&self) -> f64 {
+        self.ticks as f64 + self.progress
+    }
+
+    /// The pixel rows the river has moved down.
+    fn travelled(&self) -> i64 {
+        (self.time() * SCROLL) as i64
+    }
+
     /// The world pixel row at the middle of the pane. It starts at the oldest
     /// commit, with the newer commits above it, and moves up the history,
     /// so the river flows down the pane. Past the newest commit it starts
     /// again.
     fn focus(&self) -> i64 {
         let oldest = (self.rows.len() as i64 - 1) * ROW_GAP;
-        let travelled = (self.ticks as f64 * SCROLL) as i64;
-        oldest - travelled.rem_euclid(oldest + PAUSE)
+        oldest - self.travelled().rem_euclid(oldest + PAUSE)
     }
 
     /// The commit whose stone is nearest the middle row, if one is within
@@ -302,6 +314,10 @@ impl Scene for River {
         self.ticks += 1;
     }
 
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
+    }
+
     fn render(&self, area: Rect, buf: &mut Buffer) {
         if self.reading.is_some() {
             scene::draw_notice(READING, area, self.palette, buf);
@@ -380,9 +396,14 @@ impl Scene for River {
             }
         }
 
+        // The water moves with the river and on down its lanes. The two
+        // moves count as one, so the water steps a pixel at a time between
+        // ticks. Counted apart, they step on the same tick and the water
+        // jumps two pixels.
+        let flow = (self.time() * (SCROLL + FLOW)) as i64 - self.travelled();
+
         // Ripples on the open water, short dashes across the flow that move
         // down with the foam, faster than the banks.
-        let flow = (self.ticks as f64 * FLOW) as i64;
         for y in 0..down {
             let water = top + y - flow;
             if water.rem_euclid(RIPPLE_ROWS) != 0 {
