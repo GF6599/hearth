@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::ink::{self, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME};
 use hearth::scenes::typing::Speed;
@@ -15,13 +16,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
-
-/// Each cell draws two by two pixels. A glyph's bits are its upper left,
-/// upper right, lower left and lower right quarters, from the lowest bit,
-/// and a set bit draws in the foreground.
-const QUADRANTS: [&str; 16] = [
-    " ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
-];
 
 const TILE: usize = 4;
 
@@ -39,13 +33,13 @@ fn render(scene: &Ink, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The colours of a cell's four pixels, upper left, upper right, lower
-/// left and lower right, or nothing for a glyph that is not a quadrant.
-fn pixels(buffer: &Buffer, position: ratatui::layout::Position) -> Option<[Color; 4]> {
+/// The colours of a cell's eight pixels, row by row from the top left, or
+/// nothing for a glyph that is not an octant cell.
+fn pixels(buffer: &Buffer, position: ratatui::layout::Position) -> Option<[Color; 8]> {
     let cell = &buffer[position];
-    let bits = QUADRANTS.iter().position(|each| *each == cell.symbol())?;
-    Some(std::array::from_fn(|quarter| {
-        if bits & (1 << quarter) != 0 {
+    let bits = (0..=u8::MAX).find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))?;
+    Some(std::array::from_fn(|pixel| {
+        if bits & (1 << pixel) != 0 {
             cell.fg
         } else {
             cell.bg
@@ -61,11 +55,11 @@ fn inked_pixels(buffer: &Buffer, area: Rect, base: Color) -> Vec<(usize, usize)>
         let Some(colours) = pixels(buffer, position) else {
             continue;
         };
-        let column = usize::from(position.x - area.x) * 2;
-        let row = usize::from(position.y - area.y) * 2;
-        for (quarter, colour) in colours.into_iter().enumerate() {
+        let column = usize::from(position.x - area.x) * CELL_WIDTH;
+        let row = usize::from(position.y - area.y) * CELL_HEIGHT;
+        for (pixel, colour) in colours.into_iter().enumerate() {
             if colour != base {
-                inked.push((column + quarter % 2, row + quarter / 2));
+                inked.push((column + pixel % CELL_WIDTH, row + pixel / CELL_WIDTH));
             }
         }
     }
@@ -78,7 +72,7 @@ fn tile() -> impl Iterator<Item = (usize, usize)> {
 
 /// Given: the scene on a forty by twenty area, in a dark and a light theme.
 /// When: it renders after each of four hundred ticks.
-/// Then: every cell is a quadrant glyph whose four pixels are the base or
+/// Then: every cell is an octant glyph whose eight pixels are the base or
 /// one of the five accents.
 ///
 /// Why it matters: thin ink is drawn by dither, not by a blend, so a blend
@@ -132,8 +126,37 @@ fn a_cell_draws_ink_at_half_its_width() {
         let split = AREA
             .positions()
             .filter_map(|position| pixels(&buffer, position))
-            .filter(|[upper_left, upper_right, lower_left, lower_right]| {
-                upper_left != upper_right || lower_left != lower_right
+            .filter(|colours| {
+                colours
+                    .chunks(CELL_WIDTH)
+                    .any(|row| row.iter().any(|colour| *colour != row[0]))
+            })
+            .count();
+        assert!(split > 0, "seed {seed}");
+    }
+}
+
+/// Given: the scene on a hundred by thirty area, in three seeds.
+/// When: it renders after three hundred ticks.
+/// Then: some cells show one colour in a pixel row and another in the row
+/// under it, inside the upper or the lower half of the cell.
+///
+/// Why it matters: a pixel half a cell tall draws a thread twice as
+/// coarse down as across, and the curls show steps.
+#[test]
+fn a_cell_draws_ink_at_a_quarter_of_its_height() {
+    for seed in [1, 7, 42] {
+        // When:
+        let scene = ticked(seed, &theme::ROSE_PINE, AREA, 300);
+        let buffer = render(&scene, AREA, AREA);
+
+        // Then:
+        let split = AREA
+            .positions()
+            .filter_map(|position| pixels(&buffer, position))
+            .filter(|colours| {
+                let rows: Vec<&[Color]> = colours.chunks(CELL_WIDTH).collect();
+                rows[0] != rows[1] || rows[2] != rows[3]
             })
             .count();
         assert!(split > 0, "seed {seed}");
@@ -197,7 +220,8 @@ fn two_inks_in_one_pixel_mix_by_dither() {
 /// Given: the scene on a hundred by thirty area.
 /// When: it renders after the third tick and again before the second drop
 /// can fall.
-/// Then: the later frame inks more pixels, and their mean row is lower.
+/// Then: the later frame inks more pixels, and their mean row is over two
+/// and a half cells lower.
 ///
 /// Why it matters: this is the scene. A drop that holds its shape is a
 /// blot, and one that does not sink is a stain on the glass.
@@ -227,7 +251,7 @@ fn a_drop_opens_out_as_it_sinks() {
             late.len()
         );
         assert!(
-            mean_row(&late) > mean_row(&early) + 5.0,
+            mean_row(&late) > mean_row(&early) + 2.5 * CELL_HEIGHT as f32,
             "seed {seed}: row {} then {}",
             mean_row(&early),
             mean_row(&late)
