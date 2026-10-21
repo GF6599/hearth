@@ -135,6 +135,10 @@ pub struct City {
 }
 
 impl City {
+    pub fn sky(&self, _y: usize) -> Color {
+        self.palette.base
+    }
+
     pub fn new(mut rng: Rng, palette: &'static Palette) -> Self {
         let stars = (0..STARS)
             .map(|_| (rng.random_range(0.0..1.0), rng.random_range(0.0..1.0)))

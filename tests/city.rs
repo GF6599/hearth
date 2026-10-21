@@ -2,11 +2,12 @@
 
 mod pixels;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::city::City;
 use hearth::scenes::typing::Speed;
@@ -47,8 +48,97 @@ fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
     })
 }
 
+/// The steps of coverage the canvas tells apart: it samples four by four
+/// points of each pixel.
+const COVERAGE_STEPS: usize = 16;
+
+/// The roles the city draws, each shaded by mixes that lie nearer it than
+/// any other role.
+const ROLES: [Color; 10] = [
+    PALETTE.base,
+    PALETTE.surface,
+    PALETTE.overlay,
+    PALETTE.pine,
+    PALETTE.muted,
+    PALETTE.subtle,
+    PALETTE.text,
+    PALETTE.love,
+    PALETTE.gold,
+    PALETTE.rose,
+];
+
+/// Each mix of the sky of row `y` toward the moon, from the first step of
+/// coverage to the moon itself.
+fn moonlight(scene: &City, y: usize) -> Vec<Color> {
+    (1..=COVERAGE_STEPS)
+        .map(|step| {
+            octant::mix(
+                scene.sky(y),
+                PALETTE.text,
+                step as f32 / COVERAGE_STEPS as f32,
+            )
+        })
+        .collect()
+}
+
+/// The role `colour` lies nearest.
+fn nearest(colour: Color) -> Color {
+    let channels = |colour: Color| match colour {
+        Color::Rgb(r, g, b) => [r, g, b],
+        other => panic!("{other:?} is not a colour of the theme"),
+    };
+    *ROLES
+        .iter()
+        .min_by_key(|role| {
+            channels(**role)
+                .iter()
+                .zip(channels(colour))
+                .map(|(a, b)| u32::from(a.abs_diff(b)).pow(2))
+                .sum::<u32>()
+        })
+        .unwrap()
+}
+
+/// The role each pixel of a render shows, so the tests of the skyline read
+/// a shaded wall as its wall and the sky as the sky. The sky of a row
+/// reads as the base. A mix of the sky and the moon, the moon's rim and
+/// its glow, reads as the moon from half way on and as the sky below. Any
+/// other colour reads as the role it lies nearest.
 fn frame(scene: &City, area: Rect) -> Vec<Vec<Color>> {
-    pixels(&render(scene, area, area), area)
+    let mut rows = pixels(&render(scene, area, area), area);
+    let mut known: HashMap<Color, Color> = HashMap::new();
+    for (y, row) in rows.iter_mut().enumerate() {
+        let (sky, moon) = (scene.sky(y), moonlight(scene, y));
+        for colour in row.iter_mut() {
+            *colour = if *colour == sky {
+                PALETTE.base
+            } else if let Some(step) = moon.iter().position(|each| each == colour) {
+                if (step + 1) * 2 >= COVERAGE_STEPS {
+                    PALETTE.text
+                } else {
+                    PALETTE.base
+                }
+            } else {
+                *known.entry(*colour).or_insert_with(|| nearest(*colour))
+            };
+        }
+    }
+    rows
+}
+
+/// Given: each role the city draws.
+/// When: it is read by the role it lies nearest.
+/// Then: it reads as itself.
+///
+/// Why it matters: the tests of the skyline read each pixel by its role,
+/// and a role read wrong would pass a broken picture.
+#[test]
+fn each_role_reads_as_itself() {
+    // Given:
+    for colour in ROLES {
+        // When, then:
+        assert_eq!(nearest(colour), colour, "{colour:?}");
+    }
 }
 
 /// A wall, far or near, a dark window, or the rim of a near tower.
@@ -220,8 +310,8 @@ fn the_stars_and_moon_stay_in_the_sky() {
 /// wide or more, unless it meets the pane's edge, and each lit pixel has a
 /// lit window of its colour within `RIPPLE` pixels in the row as far above
 /// the shore's cell as it is below. Over half of the lit windows whose
-/// mirror falls in the pane show in the water, and the water changes in
-/// most frames.
+/// mirror falls in the pane show in the water, on the row of their mirror
+/// or the row beside it, and the water changes in most frames.
 ///
 /// Why it matters: lit pixels on a dark band do not read as a reflection,
 /// a reflection of something that is not there reads as a fault, and water
@@ -276,11 +366,18 @@ fn the_water_mirrors_the_city_in_streaks_that_ripple() {
                     run = 0;
                 }
             }
+            // A window is two pixel rows tall, and its streak shows on one
+            // of the two rows of its mirror.
+            let mirror = y.saturating_sub(1)..(y + 2).min(rows.len());
             for (x, &window) in above.iter().enumerate() {
                 if is_window(window) {
                     windows += 1;
                     let near = x.saturating_sub(RIPPLE)..(x + RIPPLE + 1).min(across);
-                    shown += usize::from(rows[y][near].contains(&window));
+                    shown += usize::from(
+                        rows[mirror.clone()]
+                            .iter()
+                            .any(|row| row[near.clone()].contains(&window)),
+                    );
                 }
             }
         }
@@ -887,4 +984,198 @@ fn the_train_glides_between_ticks() {
         last = Some((now, between));
     }
     assert!(glided > 100, "the ends of the train glided {glided} times");
+}
+
+/// The colour most pixels of `row` show.
+fn most(row: &[Color]) -> Color {
+    *row.iter()
+        .max_by_key(|colour| row.iter().filter(|other| other == colour).count())
+        .unwrap()
+}
+
+/// The sky lightens from the top of the pane toward the horizon.
+/// Given: the scene at a hundred by thirty, from three seeds.
+/// When: it ticks and renders.
+/// Then: down the top fifth of the pane, above the towers, the colour most
+/// of each row shows never darkens, and it takes three shades or more.
+///
+/// Why it matters: a sky of one flat colour reads as a backdrop and not as
+/// a night sky that glows over the lights of a city.
+#[test]
+fn the_sky_lightens_toward_the_horizon() {
+    for seed in [7, 8, 9] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
+
+        // When:
+        scene.tick(AREA);
+        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        let sky: Vec<Color> = rows[..rows.len() / 5].iter().map(|row| most(row)).collect();
+        assert!(
+            sky.windows(2)
+                .all(|pair| theme::luma(pair[1]) >= theme::luma(pair[0])),
+            "seed {seed}: the sky from the top down is {sky:?}"
+        );
+        let mut shades = sky.clone();
+        shades.dedup();
+        assert!(shades.len() >= 3, "seed {seed}: the sky in {shades:?}");
+    }
+}
+
+/// The moon has a soft rim and a glow round it.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders.
+/// Then: over two cells of pixels show a mix of the sky and the moon, part
+/// of the way from one to the other.
+///
+/// Why it matters: a moon cut out in hard steps reads as a block of pixels
+/// and not as a round light in the sky.
+#[test]
+fn the_moon_has_a_soft_rim_and_a_glow() {
+    // Given:
+    let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+
+    // When:
+    scene.tick(AREA);
+    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+
+    // Then:
+    let soft: usize = rows
+        .iter()
+        .enumerate()
+        .map(|(y, row)| {
+            let moon = moonlight(&scene, y);
+            let part = &moon[..COVERAGE_STEPS - 1];
+            row.iter().filter(|colour| part.contains(colour)).count()
+        })
+        .sum();
+    assert!(
+        soft > 2 * CELL_WIDTH * CELL_HEIGHT,
+        "{soft} pixels mix the sky and the moon"
+    );
+}
+
+/// The reflection shimmers in streaks one pixel row tall.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders over a few seconds.
+/// Then: no lit pixel in the water has a lit pixel straight above it.
+///
+/// Why it matters: streaks two rows tall stack into blocks, and the water
+/// reads as a second grid of windows and not as light on ripples.
+#[test]
+fn the_reflection_streaks_are_one_pixel_row_tall() {
+    // Given:
+    let mut scene = City::new(Rng::seed_from_u64(7), PALETTE);
+
+    for tick in 0..FEW_SECONDS {
+        // When:
+        scene.tick(AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let water = ground(&rows) + 1 + CELL_HEIGHT;
+        for y in water + 1..rows.len() {
+            for x in 0..rows[y].len() {
+                assert!(
+                    !(is_window(rows[y][x]) && is_window(rows[y - 1][x])),
+                    "tick {tick}: a streak two rows tall at {:?}",
+                    (x, y)
+                );
+            }
+        }
+    }
+}
+
+/// Each near tower is lit from its right, the side of the moon.
+/// Given: the scene at a hundred by thirty, from three seeds.
+/// When: it ticks and renders.
+/// Then: on the ground row each near tower, a run of three or more pixels
+/// that read as its wall, is darker at its left end than at its right.
+///
+/// Why it matters: a wall of one flat colour reads as a cut-out and not as
+/// a tower that stands in the light of the moon.
+#[test]
+fn each_near_tower_is_lit_from_the_side_of_the_moon() {
+    for seed in [7, 8, 9] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
+
+        // When:
+        scene.tick(AREA);
+        let raw = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let ground = ground(&rows);
+        let row = &rows[ground];
+        let mut x = 0;
+        let mut towers = 0;
+        while x < row.len() {
+            if row[x] != PALETTE.overlay {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < row.len() && row[x] == PALETTE.overlay {
+                x += 1;
+            }
+            if x - start < 3 {
+                continue;
+            }
+            towers += 1;
+            let (left, right) = (raw[ground][start], raw[ground][x - 1]);
+            assert!(
+                theme::luma(left) < theme::luma(right),
+                "seed {seed}: the near tower at {start}..{x} runs from {left:?} to {right:?}"
+            );
+        }
+        assert!(towers >= 4, "seed {seed}: {towers} near towers");
+    }
+}
+
+/// A lit window warms the wall beside it.
+/// Given: the scene at a hundred by thirty, from three seeds.
+/// When: it ticks and renders.
+/// Then: for most lit windows of the near towers, the wall on their left is
+/// brighter than the wall on the left of a dark window in the same column.
+///
+/// Why it matters: a lit window with no light round it reads as a dot
+/// painted on the wall and not as a room with its lamp on.
+#[test]
+fn a_lit_window_warms_the_wall_beside_it() {
+    for seed in [7, 8, 9] {
+        // Given:
+        let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
+
+        // When:
+        scene.tick(AREA);
+        let raw = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = frame(&scene, AREA);
+
+        // Then:
+        let ground = ground(&rows);
+        let (mut pairs, mut warm) = (0, 0);
+        for y in 0..ground {
+            for x in 1..rows[y].len() - 1 {
+                if !is_window(rows[y][x]) || !in_near_wall(&rows[y], x) {
+                    continue;
+                }
+                let dark = (0..ground).find(|other| {
+                    rows[*other][x] == PALETTE.surface && in_near_wall(&rows[*other], x)
+                });
+                let Some(dark) = dark else {
+                    continue;
+                };
+                pairs += 1;
+                warm += usize::from(theme::luma(raw[y][x - 1]) > theme::luma(raw[dark][x - 1]));
+            }
+        }
+        assert!(pairs > 0, "seed {seed}: no lit window beside a dark one");
+        assert!(
+            warm * 2 > pairs,
+            "seed {seed}: {warm} of {pairs} lit windows warm their wall"
+        );
+    }
 }
