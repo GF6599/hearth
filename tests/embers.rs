@@ -590,3 +590,115 @@ fn the_glow_pulses_in_pixels_a_quarter_of_a_cell_tall() {
     });
     assert!(fine, "each half of a cell glows in one colour");
 }
+
+/// The shares of a tick at which a test draws a frame between two ticks.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// The cells that hold a spark, at `progress` from the last tick towards
+/// the next.
+fn sparks_at(scene: &mut Embers, progress: f64) -> Vec<(u16, u16)> {
+    scene.set_progress(progress);
+    sparks(&render(scene, AREA, AREA))
+        .into_iter()
+        .map(|(x, y, ..)| (x, y))
+        .collect()
+}
+
+/// Given: the scene on an eighty by twenty-four area.
+/// When: it runs for four hundred ticks, and draws frames at a quarter, a
+/// half and three quarters of the way to the next tick.
+/// Then: some spark shows in the cell over its own in a frame between, and
+/// it is there on the next tick.
+///
+/// Why it matters: a spark that climbs only on a tick moves a cell at a
+/// time on the tick, at a slow speed seconds apart, and a glide lets it
+/// climb when it gets there.
+#[test]
+fn a_spark_climbs_into_the_next_cell_between_two_ticks() {
+    // Given:
+    let mut scene = ticked(7, AREA, 1);
+    let mut before = sparks_at(&mut scene, 0.0);
+    let mut climbed = 0;
+
+    for _ in 0..400 {
+        // When:
+        let frames: Vec<Vec<(u16, u16)>> = BETWEEN
+            .iter()
+            .map(|progress| sparks_at(&mut scene, *progress))
+            .collect();
+        scene.tick(AREA);
+        let after = sparks_at(&mut scene, 0.0);
+
+        // Then:
+        for &(x, y) in &before {
+            let over = (x, y.wrapping_sub(1));
+            if !before.contains(&over)
+                && after.contains(&over)
+                && frames.iter().any(|frame| frame.contains(&over))
+            {
+                climbed += 1;
+            }
+        }
+        before = after;
+    }
+    assert!(climbed > 0, "no spark climbed between two ticks");
+}
+
+/// The first row of pixels in each column that is not the base colour, in
+/// a scene that draws the base in light. A spark's cell has no pixels.
+fn tops(buffer: &Buffer) -> Vec<Option<usize>> {
+    let shown = pixels(buffer);
+    (0..shown[0].len())
+        .map(|x| (0..shown.len()).find(|&y| shown[y][x] == Some(DARK)))
+        .collect()
+}
+
+/// Given: two scenes from one seed, with the base colour in light, on an
+/// eighty by twenty-four area.
+/// When: both run until a burnt log gives way to a new one, and one is told
+/// half a tick after each tick.
+/// Then: on each tick the two draw the same frame, and some column whose
+/// top is two pixels lower on the next tick, as the new log falls, has its
+/// top one pixel lower in the frame half way.
+///
+/// Why it matters: a log that falls only on a tick drops two pixels at a
+/// time, and a glide drops it one pixel at a time. A frame on a tick that
+/// changes is a tick that changes.
+#[test]
+fn a_falling_log_sits_between_two_ticks() {
+    // Given:
+    let base = two_tone(&[theme::ROSE_PINE.base]);
+    let mut glide = Embers::new(Rng::seed_from_u64(7), base);
+    let mut plain = Embers::new(Rng::seed_from_u64(7), base);
+    let quiet = *BURN_TICKS.start() - 2;
+    for _ in 0..quiet {
+        glide.tick(AREA);
+        plain.tick(AREA);
+        glide.set_progress(0.5);
+    }
+    let mut before = Vec::new();
+    let mut between = false;
+
+    for tick in quiet..*BURN_TICKS.end() + 200 {
+        // When:
+        let half = tops(&render(&glide, AREA, AREA));
+        glide.tick(AREA);
+        plain.tick(AREA);
+        glide.set_progress(0.0);
+
+        // Then:
+        let frame = render(&glide, AREA, AREA);
+        assert!(frame == render(&plain, AREA, AREA), "tick {tick}");
+        let after = tops(&frame);
+        between = before.iter().enumerate().any(|(x, top)| match top {
+            Some(y) => after[x] == Some(y + 2) && half[x] == Some(y + 1),
+            None => false,
+        });
+        if between {
+            break;
+        }
+        glide.set_progress(0.5);
+        before = after;
+    }
+    assert!(between, "no log fell between two ticks");
+}
