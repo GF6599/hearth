@@ -4,12 +4,12 @@ use std::thread;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
-use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::corpus::Corpus;
 use crate::history::{Commit, History};
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{self, Rng, Scene};
 use crate::splitmix;
 use crate::theme::Palette;
@@ -62,10 +62,8 @@ const RIPPLE_ODDS: u64 = 3;
 const MEANDER: f64 = 0.045;
 const MEANDER_REACH: f64 = 1.4;
 
-/// What a cell shows when more than one thing falls in it, from the
-/// lowest. One braille cell holds one colour, so a stone covers the water
-/// in its cells. Foam keeps the water's dots in its cells, so a band of
-/// foam leaves no gap in its lane.
+/// What a pixel shows when more than one thing falls on it, from the
+/// lowest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Layer {
     Bank,
@@ -79,6 +77,45 @@ impl Layer {
     fn is_liquid(self) -> bool {
         matches!(self, Layer::Water | Layer::Foam)
     }
+}
+
+/// The colour of each pixel of one cell, from what lies on it, over the
+/// bed of the river or the ground beside it. A cell shows two colours: the
+/// colour of its highest layer, and behind it the bed or the ground where
+/// any pixel is empty, or else the colour most of the rest takes. A pixel
+/// of a third colour takes the colour behind, so a stone covers the water
+/// in a cell with the bed in it, and no empty pixel draws. Water takes the
+/// colour of foam in front of it instead, so a band of foam leaves no gap
+/// in its lane.
+fn settle(pixels: [Option<(Layer, Color)>; 8], empty: Color) -> [Color; 8] {
+    let Some((top, front)) = pixels
+        .iter()
+        .flatten()
+        .max_by_key(|(layer, _)| *layer)
+        .copied()
+    else {
+        return [empty; 8];
+    };
+    let colours = pixels.map(|pixel| pixel.map_or(empty, |(_, colour)| colour));
+    let behind = if pixels.contains(&None) {
+        empty
+    } else {
+        colours
+            .iter()
+            .filter(|colour| **colour != front)
+            .max_by_key(|colour| {
+                let count = colours.iter().filter(|other| other == colour).count();
+                let first = colours.iter().position(|other| other == *colour);
+                (count, std::cmp::Reverse(first))
+            })
+            .copied()
+            .unwrap_or(empty)
+    };
+    pixels.map(|pixel| match pixel {
+        Some((_, colour)) if colour == front => front,
+        Some((layer, _)) if layer.is_liquid() && top.is_liquid() => front,
+        _ => behind,
+    })
 }
 
 /// One commit in the river: the lane its stone is in, and the lines from
@@ -337,24 +374,15 @@ impl Scene for River {
             })
             .collect();
 
-        let mut cells: Vec<Option<(Layer, u32, Color)>> = vec![None; columns * lines];
+        let width = columns * CELL_WIDTH;
+        let mut layers: Vec<Option<(Layer, Color)>> = vec![None; width * lines * CELL_HEIGHT];
         let mut plot = |x: i64, y: i64, layer: Layer, colour: Color| {
             if x < 0 || y < 0 || x >= across || y >= down {
                 return;
             }
-            let (x, y) = (x as usize, y as usize);
-            let index = y / CELL_HEIGHT * columns + x / CELL_WIDTH;
-            let bit = braille::dot(x % CELL_WIDTH, y % CELL_HEIGHT);
-            match &mut cells[index] {
-                Some(cell) if cell.0 == layer => cell.1 |= bit,
-                Some(cell) if cell.0.is_liquid() && layer.is_liquid() => {
-                    cell.1 |= bit;
-                    if layer > cell.0 {
-                        (cell.0, cell.2) = (layer, colour);
-                    }
-                }
-                Some(cell) if cell.0 > layer => {}
-                cell => *cell = Some((layer, bit, colour)),
+            let pixel = &mut layers[y as usize * width + x as usize];
+            if pixel.is_none_or(|(under, _)| layer > under) {
+                *pixel = Some((layer, colour));
             }
         };
 
@@ -454,17 +482,31 @@ impl Scene for River {
             }
         }
 
-        for (index, cell) in cells.into_iter().enumerate() {
-            let (column, line) = (index % columns, index / columns);
-            let (first, last) = shores[line];
-            let position = Position::new(area.x + column as u16, area.y + line as u16);
-            if (first..=last).contains(&(column as i64)) {
-                buf[position].set_bg(self.palette.overlay);
-            }
-            if let Some((_, dots, colour)) = cell {
-                buf[position].set_char(braille::glyph(dots)).set_fg(colour);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        for (line, &(first, last)) in shores.iter().enumerate() {
+            for column in 0..columns {
+                let empty = if (first..=last).contains(&(column as i64)) {
+                    self.palette.overlay
+                } else {
+                    self.palette.base
+                };
+                let at = |pixel: usize| {
+                    (
+                        column * CELL_WIDTH + pixel % CELL_WIDTH,
+                        line * CELL_HEIGHT + pixel / CELL_WIDTH,
+                    )
+                };
+                let pixels = std::array::from_fn(|pixel| {
+                    let (x, y) = at(pixel);
+                    layers[y * width + x]
+                });
+                for (pixel, colour) in settle(pixels, empty).into_iter().enumerate() {
+                    let (x, y) = at(pixel);
+                    canvas.set(x, y, colour);
+                }
             }
         }
+        canvas.render(area, buf);
 
         let Some(at_middle) = self.at_middle() else {
             return;
