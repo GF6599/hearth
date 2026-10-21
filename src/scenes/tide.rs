@@ -6,10 +6,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::dither;
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
-use crate::splitmix;
 use crate::theme::Palette;
 
 /// Ticks in one tide, from low water to high and back, about four minutes.
@@ -21,8 +19,6 @@ pub const HIGH_TIDE: f32 = 0.5;
 /// The furthest a wave runs up the sand past the still water, as a share
 /// of the pane's height.
 pub const SWASH: f32 = 0.12;
-/// The sixteenths of each tile of dry sand that are grains.
-pub const GRAINS: usize = 1;
 /// Ticks from the sea leaving a pixel of sand to the sand being dry, about
 /// half a minute.
 pub const DRY_TICKS: u32 = 500;
@@ -49,13 +45,30 @@ const WEAKEST: f32 = 0.5;
 const SET: usize = 7;
 /// The pixel rows of the foam line at the top of the sea, half a cell.
 const FOAM: usize = CELL_HEIGHT / 2;
-/// The sixteenths of the pixels in the `FOAM` rows below the foam line that
-/// are foam too, so the edge froths and is not one hard line.
-const FROTH: usize = 6;
-/// The sixteenths of sand the sea has just left that are drawn muted. The
-/// share falls as the sand dries, so the wet band fades and does not end in
-/// a hard line.
-const WET: u32 = 8;
+/// The pixel rows under the foam line over which the foam fades into the
+/// water, so the edge of a wave is soft and not one hard line.
+const FADE: usize = 6;
+/// The shades of the water from the shallows to the deep.
+const SEA_SHADES: usize = 16;
+/// The share of foam in the shallow water, and the share of the dark in the
+/// deepest water.
+const SHALLOW: f32 = 0.3;
+const DEEP: f32 = 0.55;
+/// The shades of dry sand, from a light that leans to rose to a shade that
+/// leans to muted, with gold in the middle. Each cell takes one shade, and
+/// the shade changes slowly over the beach, so the sand shows no grain.
+const SAND_SHADES: usize = 8;
+const SAND_LIGHT: f32 = 0.35;
+const SAND_SHADOW: f32 = 0.15;
+/// The steps of wetness, and the share of the dark in sand the sea has
+/// just left. The share falls as the sand dries, so the wet band fades into
+/// the dry and does not end in a hard line.
+const WET_SHADES: usize = 8;
+const WET: f32 = 0.28;
+/// The most a shell leans from love to rose, and a pebble from subtle to
+/// muted, so each one has a shade of its own.
+const SHELL_TINT: f32 = 0.5;
+const PEBBLE_TINT: f32 = 0.6;
 /// The chance that a cell the sea can reach holds a shell or a pebble.
 const OBJECT_CHANCE: f64 = 1.0 / 40.0;
 /// The pixels a shell fills, by the bits of an octant glyph, row by row
@@ -90,13 +103,79 @@ pub struct Tide {
     wetness: Vec<u32>,
     /// The shell or pebble in each cell, by row and then by column.
     objects: Vec<Option<Object>>,
+    /// The shade of the dry sand in each cell, by row and then by column.
+    sand: Vec<usize>,
+    shades: Shades,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Object {
     /// The pixels it fills, by the bits of an octant glyph.
     mask: u8,
-    shell: bool,
+    /// Its colour dry and at each step of wetness.
+    tones: [Color; WET_SHADES + 1],
+}
+
+/// Every colour the beach draws, mixed once from the palette, so a frame
+/// mixes no colour.
+#[derive(Debug)]
+struct Shades {
+    /// The water at each shade from the shallows to the deep, under each
+    /// step of the fading foam, from none to the most.
+    sea: [[Color; FADE + 1]; SEA_SHADES],
+    /// The sand at each shade, dry and at each step of wetness.
+    sand: [[Color; WET_SHADES + 1]; SAND_SHADES],
+    foam: Color,
+    /// What a wet thing darkens toward.
+    dark: Color,
+}
+
+impl Shades {
+    fn new(palette: &Palette) -> Self {
+        // A light theme's text is dark, so deep water and wet sand darken
+        // toward it.
+        let dark = if palette.is_light() {
+            palette.text
+        } else {
+            palette.surface
+        };
+        let water = [
+            octant::mix(palette.pine, palette.foam, SHALLOW),
+            palette.pine,
+            octant::mix(palette.pine, dark, DEEP),
+        ];
+        let sea = std::array::from_fn(|shade| {
+            let body = octant::ramp(&water, step(shade, SEA_SHADES));
+            std::array::from_fn(|foam| {
+                octant::mix(body, palette.foam, foam as f32 / (FADE + 1) as f32)
+            })
+        });
+        let dry = [
+            octant::mix(palette.gold, palette.rose, SAND_LIGHT),
+            palette.gold,
+            octant::mix(palette.gold, palette.muted, SAND_SHADOW),
+        ];
+        let sand = std::array::from_fn(|shade| {
+            wet_tones(octant::ramp(&dry, step(shade, SAND_SHADES)), dark)
+        });
+        Self {
+            sea,
+            sand,
+            foam: palette.foam,
+            dark,
+        }
+    }
+}
+
+/// The place of `shade` along `shades` evenly spread steps, from 0 to 1.
+fn step(shade: usize, shades: usize) -> f32 {
+    shade as f32 / (shades - 1) as f32
+}
+
+/// `dry` at each step of wetness, mixed toward `wet` as the sea just left
+/// it, so a wet thing darkens and dries back to its own colour.
+fn wet_tones(dry: Color, wet: Color) -> [Color; WET_SHADES + 1] {
+    std::array::from_fn(|wetness| octant::mix(dry, wet, WET * wetness as f32 / WET_SHADES as f32))
 }
 
 impl Tide {
@@ -116,6 +195,8 @@ impl Tide {
             rows: 0,
             wetness: Vec::new(),
             objects: Vec::new(),
+            sand: Vec::new(),
+            shades: Shades::new(palette),
             rng,
         }
     }
@@ -162,53 +243,58 @@ impl Tide {
             .collect()
     }
 
-    fn pixel(x: usize, row: usize, rows: usize, waterline: usize) -> Pixel {
-        let Some(below) = waterline.checked_sub(rows - row) else {
-            return Pixel::Sand;
-        };
-        if below < FOAM || (below < 2 * FOAM && dither::lights(FROTH, x, row)) {
-            Pixel::Foam
-        } else {
-            Pixel::Sea
-        }
-    }
-
-    /// The colours of one cell. A cell draws two colours, so where the sea
-    /// meets the sand its sea is all foam and its sand is bare, and sand
-    /// with any wet pixel shows no grains.
-    fn colours(&self, pixels: [Pixel; 8], left: usize, top: usize) -> [Color; 8] {
-        let shore = pixels.contains(&Pixel::Sand) && pixels.iter().any(|each| *each != Pixel::Sand);
+    /// The colour of each pixel of the cell whose top left pixel is at
+    /// (left, top). A pixel under the sea takes the shade of the water of
+    /// its row, under the foam that fades from the waterline. A pixel of
+    /// sand takes the shade of its cell, darkened by its own wetness. A cell
+    /// draws two colours, so where the sea meets the sand its sea is all
+    /// foam and its sand takes the mean wetness of its pixels. With more
+    /// colours, the cell would keep the pair nearest its pixels, and a dark
+    /// wet pixel could take the colour of the water.
+    fn colours(
+        &self,
+        (left, top): (usize, usize),
+        pane: (usize, usize),
+        waterlines: &[usize],
+        shades: &[usize],
+    ) -> [Color; 8] {
+        let rows = pane.1;
         let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
-        let wet = (0..pixels.len()).any(|pixel| {
+        let below: [Option<usize>; 8] = std::array::from_fn(|pixel| {
             let (x, row) = at(pixel);
-            pixels[pixel] == Pixel::Sand && self.wetness(x, row) > 0
+            waterlines[x].checked_sub(rows - row)
         });
-        if let Some(object) = self.object(left / CELL_WIDTH, top / CELL_HEIGHT)
-            && pixels.iter().all(|each| *each == Pixel::Sand)
-        {
-            let colour = if object.shell {
-                self.palette.love
-            } else {
-                self.palette.subtle
-            };
-            return std::array::from_fn(|pixel| {
-                if object.mask >> pixel & 1 == 1 {
-                    colour
-                } else {
-                    self.palette.gold
+        let wetness = |pixel: usize| {
+            let (x, row) = at(pixel);
+            self.wetness(x, row) as usize
+        };
+        let wet_step = |wetness: usize, pixels: usize| {
+            (wetness * WET_SHADES).div_ceil(pixels * DRY_TICKS as usize)
+        };
+        let sand = &self.shades.sand[self.sand_shade(left, top, pane)];
+        let dry = below.iter().filter(|below| below.is_none()).count();
+        if dry == 0 {
+            return std::array::from_fn(|pixel| match below[pixel] {
+                Some(below) if below >= FOAM => {
+                    self.shades.sea[shades[at(pixel).1]][FADE.saturating_sub(below - FOAM)]
                 }
+                _ => self.shades.foam,
             });
         }
+        if dry < 8 {
+            let wet = (0..8)
+                .filter(|pixel| below[*pixel].is_none())
+                .map(wetness)
+                .sum();
+            let shore = sand[wet_step(wet, dry)];
+            return below.map(|below| below.map_or(shore, |_| self.shades.foam));
+        }
+        let object = self.object(left / CELL_WIDTH, top / CELL_HEIGHT);
         std::array::from_fn(|pixel| {
-            let (x, row) = at(pixel);
-            match pixels[pixel] {
-                Pixel::Foam => self.palette.foam,
-                Pixel::Sea if shore => self.palette.foam,
-                Pixel::Sea => self.palette.pine,
-                Pixel::Sand if shore => self.palette.gold,
-                Pixel::Sand if wet && self.damp(x, row) => self.palette.muted,
-                Pixel::Sand if !wet && grain(x, row) => self.palette.rose,
-                Pixel::Sand => self.palette.gold,
+            let wet = wet_step(wetness(pixel), 1);
+            match object {
+                Some(object) if object.mask >> pixel & 1 == 1 => object.tones[wet],
+                _ => sand[wet],
             }
         })
     }
@@ -236,33 +322,65 @@ impl Tide {
                 let shell = self.rng.random_bool(0.5);
                 let masks: &[u8] = if shell { &SHELLS } else { &PEBBLES };
                 let mask = masks[self.rng.random_range(0..masks.len())];
-                Some(Object { mask, shell })
+                let tint = self.rng.random_range(0.0..1.0);
+                let tone = if shell {
+                    octant::mix(self.palette.love, self.palette.rose, SHELL_TINT * tint)
+                } else {
+                    octant::mix(self.palette.subtle, self.palette.muted, PEBBLE_TINT * tint)
+                };
+                Some(Object {
+                    mask,
+                    tones: wet_tones(tone, self.shades.dark),
+                })
             })
+            .collect();
+        self.sand = (0..across * down)
+            .map(|index| dune_shade(index % across, index / across))
             .collect();
     }
 
-    /// Whether the sand pixel at (x, row) is drawn wet, by the share of
-    /// `WET` that its wetness still holds.
-    fn damp(&self, x: usize, row: usize) -> bool {
-        let sixteenths = (WET * self.wetness(x, row)).div_ceil(DRY_TICKS);
-        dither::lights(sixteenths as usize, x, row)
+    /// The shade of the dry sand of the cell at (left, top) on a pane
+    /// `columns` by `rows` pixels, from the shades laid at the last tick
+    /// when the pane is the size it was then.
+    fn sand_shade(&self, left: usize, top: usize, (columns, rows): (usize, usize)) -> usize {
+        let (column, line) = (left / CELL_WIDTH, top / CELL_HEIGHT);
+        let laid = (columns, rows) == (self.columns, self.rows);
+        laid.then(|| self.sand.get(line * (columns / CELL_WIDTH) + column))
+            .flatten()
+            .copied()
+            .unwrap_or_else(|| dune_shade(column, line))
+    }
+
+    /// The shade of the water in each pixel row: the shallows above the
+    /// still water, where a wave runs up the sand, and darker with each
+    /// row down to the bottom of the pane. The rows of one cell take two
+    /// shades side by side at the most, the lower rows the darker, so a
+    /// cell keeps to two colours and the water darkens a pixel row at a
+    /// time.
+    fn sea_shades(&self, rows: usize, time: f32) -> Vec<usize> {
+        let still = rows as f32 * (1.0 - self.level(time));
+        let depth = (rows as f32 - still).max(1.0);
+        (0..rows)
+            .map(|row| {
+                let middle = (row / CELL_HEIGHT * CELL_HEIGHT) as f32 + CELL_HEIGHT as f32 / 2.0;
+                let place = ((middle - still) / depth).clamp(0.0, 1.0) * (SEA_SHADES - 1) as f32;
+                let darker = (place.fract() * CELL_HEIGHT as f32).round() as usize;
+                let shade = place as usize + usize::from(row % CELL_HEIGHT >= CELL_HEIGHT - darker);
+                shade.min(SEA_SHADES - 1)
+            })
+            .collect()
     }
 }
 
-/// Whether the sand pixel at (x, row) is a grain. Each tile of the dither
-/// holds `GRAINS`, shifted by an offset of its own, so the grains scatter
-/// and do not line up into a grid.
-fn grain(x: usize, row: usize) -> bool {
-    let tile = splitmix::mix(((x / 4) as u64) << 32 | (row / 4) as u64);
-    let (across, down) = ((tile >> 60) as usize, (tile >> 56 & 0xf) as usize);
-    dither::lights(GRAINS, x + across, row + down)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Pixel {
-    Sea,
-    Foam,
-    Sand,
+/// The shade of the dry sand of the cell at (column, line): long, low
+/// dunes across the beach, over a slower swell, so the sand changes by a
+/// shade at the most from one cell to the next.
+fn dune_shade(column: usize, line: usize) -> usize {
+    let (x, y) = (column as f32, line as f32);
+    let dunes = (0.35 * y + 0.12 * x + 0.6 * (0.05 * x).sin()).sin();
+    let swell = (0.07 * x - 0.11 * y).sin();
+    let share = 0.5 + 0.22 * dunes + 0.22 * swell;
+    (share * (SAND_SHADES - 1) as f32).round() as usize
 }
 
 impl Scene for Tide {
@@ -302,17 +420,14 @@ impl Scene for Tide {
         if columns == 0 || rows == 0 {
             return;
         }
-        let waterlines = self.waterlines(columns, rows, self.time as f32 + self.progress);
+        let time = self.time as f32 + self.progress;
+        let waterlines = self.waterlines(columns, rows, time);
+        let shades = self.sea_shades(rows, time);
         for top in (0..rows).step_by(CELL_HEIGHT) {
             for left in (0..columns).step_by(CELL_WIDTH) {
-                let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
-                let pixels = std::array::from_fn(|pixel| {
-                    let (column, row) = at(pixel);
-                    Self::pixel(column, row, rows, waterlines[column])
-                });
-                for (pixel, colour) in self.colours(pixels, left, top).into_iter().enumerate() {
-                    let (column, row) = at(pixel);
-                    canvas.set(column, row, colour);
+                let colours = self.colours((left, top), (columns, rows), &waterlines, &shades);
+                for (pixel, colour) in colours.into_iter().enumerate() {
+                    canvas.set(left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH, colour);
                 }
             }
         }
