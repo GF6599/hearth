@@ -41,13 +41,67 @@ fn hourglass(seed: u64) -> (Hourglass, Rc<Cell<Duration>>) {
 }
 
 fn hourglass_with(seed: u64, lengths: Lengths) -> (Hourglass, Rc<Cell<Duration>>) {
+    hourglass_on(seed, PALETTE, lengths)
+}
+
+fn hourglass_on(
+    seed: u64,
+    palette: &'static Palette,
+    lengths: Lengths,
+) -> (Hourglass, Rc<Cell<Duration>>) {
     let now = Rc::new(Cell::new(Duration::ZERO));
     let hand = Rc::clone(&now);
     let clock = Clock::new(move || hand.get());
     (
-        Hourglass::new(Rng::seed_from_u64(seed), PALETTE, clock, lengths),
+        Hourglass::new(Rng::seed_from_u64(seed), palette, clock, lengths),
         now,
     )
+}
+
+/// The colour of each part of the hourglass on the base.
+const PARTS: [Color; 7] = [
+    PALETTE.base,
+    GLASS,
+    FRAME,
+    WORK_SAND,
+    BREAK_SAND,
+    DONE,
+    TO_DO,
+];
+
+/// The distance between two colours in RGB.
+fn distance(one: Color, other: Color) -> f32 {
+    match (one, other) {
+        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
+            .into_iter()
+            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
+            .sum::<f32>()
+            .sqrt(),
+        _ => f32::INFINITY,
+    }
+}
+
+/// The part a pixel shows: the part whose colour lies nearest its own. The
+/// sand is shaded, so its pixels are mixes near the sand's colour, and
+/// each must still read as that sand and as no other part.
+fn part(colour: Color) -> Color {
+    PARTS
+        .into_iter()
+        .min_by(|one, other| distance(colour, *one).total_cmp(&distance(colour, *other)))
+        .unwrap()
+}
+
+/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
+/// one to the other, to a step of rounding, and a twentieth of the way or
+/// more from each. A pixel a shape covers by a sixteenth or more mixes by
+/// at least that, and a shade a step from either is no mix.
+fn between(colour: Color, one: Color, other: Color) -> bool {
+    let (span, near, far) = (
+        distance(one, other),
+        distance(one, colour),
+        distance(colour, other),
+    );
+    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
 }
 
 fn render(scene: &Hourglass, area: Rect, canvas: Rect) -> Buffer {
@@ -110,7 +164,7 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
         let (top, bottom) = sand(&buffer, AREA);
         assert_eq!(top + bottom, total, "grains at {step:?}");
         for ((x, y), colour) in lit_pixels(&buffer, AREA) {
-            if colour != WORK_SAND {
+            if part(colour) != WORK_SAND {
                 continue;
             }
             let row = u16::try_from(y / CELL_HEIGHT).unwrap();
@@ -148,10 +202,10 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
         shows(&buffer, (column, row), GLASS)
             || lit
                 .iter()
-                .any(|(pixel, colour)| *pixel == (x, y) && *colour == WORK_SAND)
+                .any(|(pixel, colour)| *pixel == (x, y) && part(*colour) == WORK_SAND)
     };
     for ((x, y), colour) in &lit {
-        if *colour == WORK_SAND && *y >= neck {
+        if part(*colour) == WORK_SAND && *y >= neck {
             assert!(
                 held(*x, y + 1) && held(x - 1, y + 1) && held(x + 1, y + 1),
                 "a grain at {:?} does not rest",
@@ -253,7 +307,7 @@ fn hourglass_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     let lit = lit_pixels(&buffer, AREA);
-    assert!(lit.iter().any(|(_, colour)| *colour == WORK_SAND));
+    assert!(lit.iter().any(|(_, colour)| part(*colour) == WORK_SAND));
     assert!(lit.iter().any(|(_, colour)| *colour == GLASS));
 }
 
@@ -340,13 +394,13 @@ fn the_glass_has_round_bulbs_in_a_frame() {
     }
 }
 
-/// The grains of one colour above the neck and below it. The neck is the
-/// middle row of the pane.
+/// The grains of one colour above the neck and below it: the pixels that
+/// read as that sand. The neck is the middle row of the pane.
 fn sand_in(buffer: &Buffer, area: Rect, colour: Color) -> (usize, usize) {
     let neck = usize::from(area.height / 2) * CELL_HEIGHT;
     lit_pixels(buffer, area)
         .into_iter()
-        .filter(|(_, lit)| *lit == colour)
+        .filter(|(_, lit)| part(*lit) == colour)
         .fold((0, 0), |(top, bottom), ((_, y), _)| {
             if y < neck {
                 (top + 1, bottom)
@@ -832,4 +886,167 @@ fn the_glass_is_one_smooth_outline_with_a_clear_neck() {
             (x, y)
         );
     }
+}
+
+/// The sand is lit on its top and shaded below.
+/// Given: a glass at a hundred by thirty, a quarter through the work phase,
+/// with its sand settled.
+/// When: it renders.
+/// Then: in the top bulb, the pixels on the top of the sand are lighter on
+/// average than the pixels of sand eight rows under them, and every pixel
+/// of sand reads as the work sand.
+///
+/// Why it matters: sand in one flat colour reads as a cut-out shape, and a
+/// lit top over a shaded body reads as a heap of grains.
+#[test]
+fn the_sand_is_lit_on_top_and_shaded_below() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    run(&mut scene, &now, WORK / 4, AREA);
+    for _ in 0..SETTLE {
+        scene.tick(AREA);
+    }
+
+    // When:
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let neck = usize::from(AREA.height / 2) * CELL_HEIGHT;
+    let sand: Vec<((usize, usize), Color)> = lit_pixels(&buffer, AREA)
+        .into_iter()
+        .filter(|((_, y), colour)| *y < neck && part(*colour) == WORK_SAND)
+        .collect();
+    let at = |x: usize, y: usize| {
+        sand.iter()
+            .find(|(pixel, _)| *pixel == (x, y))
+            .map(|(_, colour)| *colour)
+    };
+    let (mut tops, mut depths) = (Vec::new(), Vec::new());
+    for &((x, y), colour) in &sand {
+        let on_top = y == 0 || at(x, y - 1).is_none();
+        if let (true, Some(deep)) = (on_top, at(x, y + 8)) {
+            tops.push(theme::luma(colour));
+            depths.push(theme::luma(deep));
+        }
+    }
+    assert!(!tops.is_empty(), "no column of sand eight rows deep");
+    let mean = |values: &[u32]| values.iter().sum::<u32>() / values.len() as u32;
+    assert!(
+        mean(&tops) > mean(&depths),
+        "the top of the sand has a mean luma of {} and its depths {}",
+        mean(&tops),
+        mean(&depths)
+    );
+}
+
+/// The outline is soft at its edge.
+/// Given: a glass at a hundred by thirty.
+/// When: it renders.
+/// Then: some pixel within two pixels of a pixel of the glass is a mix of
+/// the glass and the base.
+///
+/// Why it matters: an outline in whole pixels of one colour steps at each
+/// pixel, and a mix at its edge lets it follow the curve between them.
+#[test]
+fn the_outline_has_mixes_of_the_glass_and_the_base_at_its_edge() {
+    // Given:
+    let (mut scene, _) = hourglass(7);
+    scene.tick(AREA);
+
+    // When:
+    let lit = lit_pixels(&render(&scene, AREA, AREA), AREA);
+
+    // Then:
+    let glass: Vec<(usize, usize)> = lit
+        .iter()
+        .filter(|(_, colour)| *colour == GLASS)
+        .map(|(pixel, _)| *pixel)
+        .collect();
+    let soft = lit.iter().any(|((x, y), colour)| {
+        between(*colour, PALETTE.base, GLASS)
+            && glass
+                .iter()
+                .any(|(gx, gy)| gx.abs_diff(*x) <= 2 && gy.abs_diff(*y) <= 2)
+    });
+    assert!(soft, "no mix of the glass and the base by the outline");
+}
+
+/// Over the terminal's background the outline stays hard.
+/// Given: a glass at a hundred by thirty on Rose Pine with the terminal's
+/// background, where the base is see-through.
+/// When: it runs a quarter of the work phase and renders.
+/// Then: no pixel but a role of the theme is a mix of the base with the
+/// glass or with the sand. The muted marks lie between the base and the
+/// glass, and they are a role and no mix.
+///
+/// Why it matters: a mix with the base is an opaque colour over the
+/// terminal's own background, and shows as a smudge over a transparent
+/// terminal.
+#[test]
+fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
+    // Given:
+    let palette = &theme::FLAT_THEMES[0];
+    assert!(palette.see_through);
+    let (mut scene, now) = hourglass_on(7, palette, Lengths::DEFAULT);
+
+    // When:
+    run(&mut scene, &now, WORK / 4, AREA);
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let roles = [
+        palette.base,
+        palette.overlay,
+        palette.muted,
+        palette.subtle,
+        palette.text,
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.pine,
+        palette.foam,
+        palette.iris,
+    ];
+    for ((x, y), colour) in pixels::showing(&buffer, AREA, |colour| !roles.contains(&colour)) {
+        for other in [palette.subtle, palette.gold] {
+            assert!(
+                !between(colour, palette.base, other),
+                "{colour:?} at {:?} mixes the base and {other:?}",
+                (x, y)
+            );
+        }
+    }
+}
+
+/// A falling grain is a soft point.
+/// Given: a glass at a hundred by thirty, a quarter through the work phase.
+/// When: it runs a few seconds more, with a frame after each tick.
+/// Then: some frame shows a pixel below the neck in a mix of the base and
+/// the work sand.
+///
+/// Why it matters: a grain that falls as one hard pixel reads as a fault
+/// in the glass, and a soft edge reads as a grain in the light.
+#[test]
+fn a_falling_grain_is_a_soft_point() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    run(&mut scene, &now, WORK / 4, AREA);
+    let neck = usize::from(AREA.height / 2) * CELL_HEIGHT;
+    let mut soft = false;
+
+    // When:
+    for _ in 0..100 {
+        now.set(now.get() + TICK_RATE);
+        scene.tick(AREA);
+        let lit = lit_pixels(&render(&scene, AREA, AREA), AREA);
+
+        // Then:
+        soft |= lit
+            .iter()
+            .any(|((_, y), colour)| *y > neck && between(*colour, PALETTE.base, WORK_SAND));
+        if soft {
+            break;
+        }
+    }
+    assert!(soft, "no grain fell with a soft edge");
 }
