@@ -564,3 +564,206 @@ fn the_hawk_draws_in_love_over_the_flock() {
     }
     assert!(!love.is_empty(), "the hawk is not drawn");
 }
+
+/// The shares of a tick that the frames between two ticks show.
+const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+/// The colours a bird draws in, faint and bright.
+const BIRDS: [Color; 2] = [theme::ROSE_PINE.subtle, theme::ROSE_PINE.text];
+/// No other bird comes this close to a bird that a test follows alone, in
+/// pixels, on either tick. A bird moves less than two pixels a tick, so
+/// the two never share a pixel between the ticks.
+const ALONE: f32 = 8.0;
+
+/// The pixels a place can show in from one tick to the next: every pixel
+/// from the pixel of the first place to the pixel of the second, on both
+/// axes.
+fn span(from: (f32, f32), to: (f32, f32)) -> ((usize, usize), (usize, usize)) {
+    let (a, b) = (
+        (from.0 as usize, from.1 as usize),
+        (to.0 as usize, to.1 as usize),
+    );
+    ((a.0.min(b.0), a.1.min(b.1)), (a.0.max(b.0), a.1.max(b.1)))
+}
+
+fn within(pixel: (usize, usize), span: ((usize, usize), (usize, usize))) -> bool {
+    (span.0.0..=span.1.0).contains(&pixel.0) && (span.0.1..=span.1.1).contains(&pixel.1)
+}
+
+/// Each bird glides from its place on one tick to its place on the next.
+/// Given: the scene on a hundred by thirty area, a hundred ticks in.
+/// When: on each tick for half a minute, it renders at a quarter, a half
+/// and three quarters of the way to its next tick, then ticks.
+/// Then: every pixel in a bird's colour lies between the pixels of some bird
+/// on the two ticks, and between its two pixels each bird shows. Of the
+/// birds that fly alone and change pixel from one tick to the next, more
+/// than half show in a new pixel before the tick.
+///
+/// Why it matters: at a quarter speed a bird that moves only on a tick
+/// jumps once every sixteen frames, and the flock reads as a stutter and
+/// not as a fold.
+#[test]
+fn each_bird_glides_between_ticks() {
+    // Given:
+    let mut scene = ticked(7, AREA, 100);
+    let (mut moved, mut early) = (0, 0);
+
+    for tick in 0..500 {
+        let before: Vec<(f32, f32)> = scene.birds().collect();
+
+        // When:
+        let frames: Vec<BTreeSet<(usize, usize)>> = BETWEEN
+            .iter()
+            .map(|&progress| {
+                scene.set_progress(progress);
+                pixels_in(&render(&scene, AREA, AREA), AREA, &BIRDS)
+            })
+            .collect();
+        scene.set_progress(0.0);
+        scene.tick(AREA);
+        let after: Vec<(f32, f32)> = scene.birds().collect();
+
+        // Then:
+        let spans: Vec<_> = before
+            .iter()
+            .zip(&after)
+            .map(|(from, to)| span(*from, *to))
+            .collect();
+        for (progress, shown) in BETWEEN.iter().zip(&frames) {
+            for pixel in shown {
+                assert!(
+                    spans.iter().any(|span| within(*pixel, *span)),
+                    "tick {tick}: a bird at {pixel:?} at {progress} of a tick, between no two places"
+                );
+            }
+            for (index, span) in spans.iter().enumerate() {
+                assert!(
+                    shown.iter().any(|pixel| within(*pixel, *span)),
+                    "tick {tick}: bird {index} not between {span:?} at {progress} of a tick"
+                );
+            }
+        }
+        for (index, (from, to)) in before.iter().zip(&after).enumerate() {
+            let alone = before.iter().zip(&after).enumerate().all(|(other, near)| {
+                other == index
+                    || ((near.0.0 - from.0).hypot(near.0.1 - from.1) > ALONE
+                        && (near.1.0 - to.0).hypot(near.1.1 - to.1) > ALONE)
+            });
+            let first = (from.0 as usize, from.1 as usize);
+            if !alone || first == (to.0 as usize, to.1 as usize) {
+                continue;
+            }
+            moved += 1;
+            let shown_at = |shown: &BTreeSet<(usize, usize)>| {
+                shown
+                    .iter()
+                    .copied()
+                    .find(|pixel| within(*pixel, spans[index]))
+            };
+            early += usize::from(frames.iter().any(|shown| shown_at(shown) != Some(first)));
+        }
+    }
+    assert!(moved > 100, "{moved} birds alone changed pixel");
+    assert!(
+        early * 2 > moved,
+        "{early} of {moved} birds alone show in a new pixel before the tick"
+    );
+}
+
+/// The hawk glides from its place on one tick to its place on the next.
+/// Given: the scene on a hundred by thirty area.
+/// When: on each tick of a pass of the hawk, it renders at a quarter, a half
+/// and three quarters of the way to its next tick, then ticks.
+/// Then: while the hawk is well inside the pane on both ticks, its front
+/// pixel never goes back. Of the ticks on which its front changes pixel,
+/// more than half show the new pixel before the tick.
+///
+/// Why it matters: at a quarter speed a hawk that moves only on a tick
+/// jumps once every sixteen frames, and its pass reads as a stutter.
+#[test]
+fn the_hawk_glides_between_ticks() {
+    // Given:
+    let (width, _) = pixels_of(AREA);
+    let mut scene = Murmuration::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+    let (mut moved, mut early) = (0, 0);
+    let front = |buffer: &Buffer, heading: f32| {
+        pixels_in(buffer, AREA, &[theme::ROSE_PINE.love])
+            .into_iter()
+            .map(|(x, _)| heading * x as f32)
+            .fold(f32::MIN, f32::max)
+    };
+
+    for tick in 0..HAWK_EVERY.end() * 2 + 600 {
+        let Some(from) = scene.hawk().filter(|(x, _)| (8.0..width - 8.0).contains(x)) else {
+            scene.tick(AREA);
+            continue;
+        };
+
+        // When:
+        let mut frames = vec![render(&scene, AREA, AREA)];
+        for progress in BETWEEN {
+            scene.set_progress(progress);
+            frames.push(render(&scene, AREA, AREA));
+        }
+        scene.set_progress(0.0);
+        scene.tick(AREA);
+        let Some(to) = scene.hawk().filter(|(x, _)| (8.0..width - 8.0).contains(x)) else {
+            continue;
+        };
+        frames.push(render(&scene, AREA, AREA));
+
+        // Then:
+        let heading = (to.0 - from.0).signum();
+        let fronts: Vec<f32> = frames.iter().map(|frame| front(frame, heading)).collect();
+        for pair in fronts.windows(2) {
+            assert!(
+                pair[0] <= pair[1],
+                "tick {tick}: the hawk goes back from {from:?} to {to:?}: {fronts:?}"
+            );
+        }
+        if fronts[0] < fronts[4] {
+            moved += 1;
+            early += usize::from(fronts[3] > fronts[0]);
+        }
+    }
+    assert!(moved > 50, "the hawk changed pixel on {moved} ticks");
+    assert!(
+        early * 2 > moved,
+        "the hawk shows in a new pixel before the tick on {early} of {moved} ticks"
+    );
+}
+
+/// A frame on a tick is the frame the scene drew before it glided.
+/// Given: two scenes from one seed, one of them given a share of a tick
+/// before each tick and none after it.
+/// When: both tick and render through a pass of the hawk and a resize.
+/// Then: every frame of the two is the same.
+///
+/// Why it matters: the frame on a tick is the one every other test of the
+/// scene reads, so a glide must not move it.
+#[test]
+fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
+    // Given:
+    let mut glided = ticked(7, AREA, 1);
+    let mut still = ticked(7, AREA, 1);
+    let small = Rect::new(0, 0, 60, 20);
+
+    for tick in 0..HAWK_EVERY.end() + 600 {
+        // When:
+        let area = if tick < *HAWK_EVERY.end() {
+            AREA
+        } else {
+            small
+        };
+        glided.set_progress(0.5);
+        glided.set_progress(0.0);
+        glided.tick(area);
+        still.tick(area);
+
+        // Then:
+        assert_eq!(
+            render(&glided, area, area),
+            render(&still, area, area),
+            "tick {tick}"
+        );
+    }
+}
