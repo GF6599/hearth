@@ -11,6 +11,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
+use hearth::octant;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::FINDING;
 use hearth::theme::{self, Palette};
@@ -326,5 +327,41 @@ fn the_typing_minimap_shows_the_terminal_between_its_lines() {
             dots += usize::from(is_dots(cell.symbol()));
         }
         assert!(dots > 20, "{name}: {dots} cells of dots");
+    }
+}
+
+/// An octant glyph drawn in the base turns over, so the other colour stays
+/// in front.
+/// Given: on each theme, an octant glyph in the base over the pine, and the
+/// same glyph in the base over the base.
+/// When: each cell clears to the terminal's background.
+/// Then: the first shows the pixels the glyph leaves out in the pine over
+/// the terminal, and the second shows the terminal alone.
+///
+/// Why it matters: an octant glyph left in the base paints the theme's base
+/// over a transparent terminal, and its pine fills the whole cell.
+#[test]
+fn an_octant_glyph_in_the_base_turns_over() {
+    let glyph = octant::glyph(0b0110_1001);
+    let turned = octant::glyph(0b1001_0110);
+    for (name, palette) in theme::THEMES {
+        for (back, expected) in [
+            (palette.pine, (turned.to_string(), palette.pine)),
+            (palette.base, (" ".to_string(), Color::Reset)),
+        ] {
+            // Given:
+            let mut cell = Cell::default();
+            cell.set_char(glyph).set_fg(palette.base).set_bg(back);
+
+            // When:
+            octant::clear(&mut cell, palette.base);
+
+            // Then:
+            assert_eq!(
+                (cell.symbol().to_string(), cell.fg, cell.bg),
+                (expected.0, expected.1, Color::Reset),
+                "{name} over {back:?}"
+            );
+        }
     }
 }

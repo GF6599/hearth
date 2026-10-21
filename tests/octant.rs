@@ -153,6 +153,55 @@ fn each_pattern_draws_the_glyph_its_name_describes() {
     }
 }
 
+/// Each glyph turns over to the glyph of the pixels it leaves out.
+/// Given: the glyph of every pattern of the eight pixels of a cell.
+/// When: its complement is looked up, and then the complement of that.
+/// Then: the complement's name fills every pixel the glyph leaves out and
+/// no other, and its complement is the glyph again.
+///
+/// Why it matters: a block drawn in the base turns over when the base
+/// clears to the terminal's own background. A complement with a stray or a
+/// missing pixel draws the picture with a hole or a blot in each such cell.
+#[test]
+fn each_glyph_turns_over_to_the_pixels_it_leaves_out() {
+    let names = names();
+    for bits in 0..=u8::MAX {
+        // Given:
+        let glyph = octant::glyph(bits).to_string();
+
+        // When:
+        let turned = octant::complement(&glyph)
+            .unwrap_or_else(|| panic!("{bits:08b} drew {glyph:?}, which does not turn over"));
+        let back = octant::complement(&turned.to_string());
+
+        // Then:
+        let name = names
+            .get(&turned)
+            .unwrap_or_else(|| panic!("{glyph:?} turned over to {turned:?}, which has no name"));
+        assert_eq!(
+            pixels(name),
+            !bits,
+            "{glyph:?} turned over to {turned:?}, {name}"
+        );
+        assert_eq!(back, glyph.chars().next(), "{turned:?} turned back");
+    }
+}
+
+/// A glyph that is no block does not turn over.
+/// Given: a letter, a braille dot, and two block glyphs in one symbol.
+/// When: the complement of each is looked up.
+/// Then: none has one.
+///
+/// Why it matters: a letter or a dot drawn in the base would turn into a
+/// block that hides the picture around it.
+#[test]
+fn a_glyph_that_is_no_block_does_not_turn_over() {
+    for glyph in ["a", "⠁", "▀▀"] {
+        // When, then:
+        assert_eq!(octant::complement(glyph), None, "{glyph:?}");
+    }
+}
+
 /// A cell of two colours shows each pixel in its own colour.
 /// Given: every pattern of eight pixels in the base and one ink, and every
 /// pattern in two inks.
