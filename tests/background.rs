@@ -19,7 +19,7 @@ use hearth::scenes::typing::FINDING;
 use hearth::theme::{self, Palette};
 use pixels::PIXELS;
 use ratatui::buffer::{Buffer, Cell};
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
@@ -164,9 +164,16 @@ fn the_terminal_background_leaves_no_theme_background() {
 /// Then: every cell shows the same glyph and colours, and every pixel of an
 /// octant glyph the same colour, when the theme's base and surface read as
 /// the terminal's, and murmuration's overlay too, because its whole sky
-/// clears. The one other change is the typing scene's minimap: each cell
-/// it draws in blocks shows octant pixels in one of the block's colours,
-/// because blocks over the terminal's background read as a solid panel.
+/// clears. A background or a pixel that is a mix and no colour of the
+/// palette is not compared, nor any pixel of an octant cell beside a cell
+/// that shows one over either background: over the theme a soft edge or a
+/// sky mixes into the base, and over the terminal the sky is the base and
+/// the edge is hard, so a cell can keep another pair of colours. A soft
+/// edge reaches past one cell, and a cell that keeps no mix of it can
+/// still change its pair. The one other change is the typing scene's
+/// minimap: each cell it draws in blocks shows octant pixels in one of the
+/// block's colours, because blocks over the terminal's background read as
+/// a solid panel.
 ///
 /// Why it matters: a half block whose top was the base, cleared and not
 /// turned over, draws its lower colour over the whole cell and doubles the
@@ -182,6 +189,7 @@ fn the_terminal_background_keeps_every_picture() {
         );
         let palette = palette(name);
         let theirs = [palette.base, palette.surface];
+        let mixed = |colour: &Color| *colour != Color::Reset && !roles(palette).contains(colour);
 
         for args in starts() {
             // When:
@@ -194,6 +202,24 @@ fn the_terminal_background_keeps_every_picture() {
                 behind.push(palette.overlay);
             }
             let typing = args.contains(&SceneKind::Typing.name());
+            let shows_mix = |position: Position| {
+                let (one, other) = (
+                    seen(&before[position], &behind),
+                    seen(&after[position], &[]),
+                );
+                [one, other]
+                    .iter()
+                    .any(|(colours, _, _, back)| colours.iter().flatten().chain([back]).any(mixed))
+            };
+            let soft = |position: Position| {
+                (position.y.saturating_sub(1)..=position.y + 1)
+                    .flat_map(|y| {
+                        (position.x.saturating_sub(1)..=position.x + 1)
+                            .map(move |x| Position::new(x, y))
+                    })
+                    .filter(|beside| AREA.contains(*beside))
+                    .any(shows_mix)
+            };
             for position in AREA.positions() {
                 let at = format!("{name} {args:?} at {position:?}");
                 let painted = seen(&before[position], &behind);
@@ -206,10 +232,38 @@ fn the_terminal_background_keeps_every_picture() {
                     assert_eq!(cell.bg, Color::Reset, "{at}");
                     continue;
                 }
-                assert_eq!(seen(&after[position], &[]), painted, "{at}");
+                let shown = seen(cell, &[]);
+                match (&painted, &shown) {
+                    ((Some(_), ..), (Some(_), ..)) if soft(position) => {}
+                    ((None, glyph, fore, back), (None, shown_glyph, shown_fore, shown_back))
+                        if glyph == shown_glyph =>
+                    {
+                        assert_eq!(shown_fore, fore, "fg {at}");
+                        if !mixed(back) {
+                            assert_eq!(shown_back, back, "bg {at}");
+                        }
+                    }
+                    _ => assert_eq!(shown, painted, "{at}"),
+                }
             }
         }
     }
+}
+
+/// The colours of the palette that a picture draws in.
+const fn roles(palette: &Palette) -> [Color; 10] {
+    [
+        palette.overlay,
+        palette.muted,
+        palette.subtle,
+        palette.text,
+        palette.love,
+        palette.gold,
+        palette.rose,
+        palette.pine,
+        palette.foam,
+        palette.iris,
+    ]
 }
 
 /// An octant glyph that holds at least one pixel.
