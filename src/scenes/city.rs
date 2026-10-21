@@ -4,6 +4,7 @@ use std::f64::consts::TAU;
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
@@ -52,8 +53,8 @@ const PILLAR_GAP: usize = 28;
 /// the most carriages in a train.
 const CARRIAGE: (usize, usize) = (20, 2);
 const CARRIAGES: (usize, usize) = (3, 5);
-/// The pixels a train moves in a tick. Even, so a carriage always covers
-/// whole cells.
+/// The pixels a train moves in a tick. Even, so at each tick a carriage
+/// covers whole cells.
 const TRAIN_SPEED: i64 = 2;
 /// The ticks from one train to the next, at the least and the most.
 const TRAIN_GAP: (u64, u64) = (300, 900);
@@ -129,6 +130,8 @@ pub struct City {
     dusk: f64,
     train: Option<Train>,
     next_train: u64,
+    /// How far the scene has run from its last tick towards its next.
+    progress: f64,
 }
 
 impl City {
@@ -151,6 +154,7 @@ impl City {
             dusk,
             train: None,
             next_train,
+            progress: 0.0,
         }
     }
 
@@ -336,27 +340,30 @@ impl City {
         }
     }
 
-    /// The far towers and their antennas, then the near ones in front. Each
+    /// The colour of `tower` at a pixel of it, without its windows. Each
     /// tower has a rim on its roof and on its right edge, the side of the
     /// moon, in a lighter tone than its wall, so towers side by side read
     /// apart.
+    fn wall(&self, tower: &Tower, x: usize, y: usize) -> Color {
+        let (wall, rim) = if tower.near {
+            (self.palette.overlay, self.palette.pine)
+        } else {
+            (self.palette.surface, self.palette.overlay)
+        };
+        if y < tower.top + THIN || x == tower.left + tower.width - 1 {
+            rim
+        } else {
+            wall
+        }
+    }
+
+    /// The far towers and their antennas, then the near ones in front.
     fn draw_towers(&self, canvas: &mut Canvas, shore: usize) {
         for near in [false, true] {
-            let (wall, rim) = if near {
-                (self.palette.overlay, self.palette.pine)
-            } else {
-                (self.palette.surface, self.palette.overlay)
-            };
             for tower in self.towers.iter().filter(|tower| tower.near == near) {
-                let right = tower.left + tower.width - 1;
                 for y in tower.top..shore {
-                    for x in tower.left..=right {
-                        let colour = if y < tower.top + THIN || x == right {
-                            rim
-                        } else {
-                            wall
-                        };
-                        canvas.set(x, y, colour);
+                    for x in tower.left..tower.left + tower.width {
+                        canvas.set(x, y, self.wall(tower, x, y));
                     }
                 }
             }
@@ -406,14 +413,19 @@ impl City {
         let Some(train) = self.train else {
             return;
         };
+        // The train moves on a whole pixel at a time towards where the next
+        // tick puts it, so it glides at an even pace at any rate.
+        let glide = (TRAIN_SPEED as f64 * self.progress).floor() as i64;
+        let left = train.left + if train.forward { glide } else { -glide };
         let car = (CARRIAGE.0 + CARRIAGE.1) as i64;
+        let carries = |x: usize| {
+            let along = x as i64 - left;
+            (0..train.length()).contains(&along) && along % car < CARRIAGE.0 as i64
+        };
         let top = line - 2 * CELL_HEIGHT;
         for y in top..line {
-            for x in 0..across {
-                let along = x as i64 - train.left;
-                if along < 0 || along >= train.length() || along % car >= CARRIAGE.0 as i64 {
-                    continue;
-                }
+            for x in (0..across).filter(|x| carries(*x)) {
+                let along = x as i64 - left;
                 let inside = (2..CARRIAGE.0 as i64 - 2).contains(&(along % car));
                 let window = (y - top) / THIN == 1;
                 let colour = if window && inside && along % 2 == 0 {
@@ -424,6 +436,30 @@ impl City {
                 canvas.set(x, y, colour);
             }
         }
+        // Between ticks a carriage can cover half a cell at each end. The
+        // other half shows the wall behind without its window, so the cell
+        // holds two colours and the end of the carriage stays straight.
+        for x in (0..across).step_by(CELL_WIDTH) {
+            let behind = match (carries(x), carries(x + 1)) {
+                (true, false) => x + 1,
+                (false, true) => x,
+                _ => continue,
+            };
+            for y in top..line {
+                canvas.set(behind, y, self.behind(behind, y));
+            }
+        }
+    }
+
+    /// The colour of the nearest tower at a pixel, without its windows, or
+    /// the sky where no tower stands. The near towers come last, so the
+    /// first found from the end stands in front.
+    fn behind(&self, x: usize, y: usize) -> Color {
+        self.towers
+            .iter()
+            .rev()
+            .find(|tower| (tower.left..tower.left + tower.width).contains(&x) && y >= tower.top)
+            .map_or(self.palette.base, |tower| self.wall(tower, x, y))
     }
 
     /// The water line at the shore, and from a cell under the shore the near
@@ -567,5 +603,9 @@ impl Scene for City {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.pixels().render(area, buf);
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
     }
 }
