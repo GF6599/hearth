@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
 use std::time::Duration;
@@ -8,8 +8,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
-use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::clock::Clock;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -88,7 +88,8 @@ const WIDTH: i32 = CELL_WIDTH as i32;
 const HEIGHT: i32 = CELL_HEIGHT as i32;
 
 /// The glass in cells. Its walls and its inside are whole cells, so a wall
-/// and the sand never share a cell, which holds one colour.
+/// and the sand never share a cell. A cell holds two colours, and the
+/// empty glass takes one wherever the sand does not fill the cell.
 #[derive(Debug, Clone, Copy)]
 struct Glass {
     /// The column of the neck, the middle of the glass.
@@ -223,6 +224,7 @@ fn profile(along: f32) -> f32 {
 
 #[derive(Debug, Clone, Copy)]
 struct Colours {
+    base: Color,
     frame: Color,
     glass: Color,
     work: Color,
@@ -236,6 +238,7 @@ struct Colours {
 impl Colours {
     fn of(palette: &Palette) -> Self {
         Self {
+            base: palette.base,
             frame: palette.pine,
             glass: palette.subtle,
             work: palette.gold,
@@ -326,8 +329,7 @@ pub struct Hourglass {
     /// Whether each dot of the pane holds a grain, row by row.
     sand: Vec<bool>,
     /// Whether each dot of the pane is inside the glass, row by row: inside
-    /// the outline, in a cell that holds no dot of a wall, because a cell
-    /// takes one colour.
+    /// the outline, in a cell that holds no dot of a wall.
     inside: Vec<bool>,
     total: usize,
     /// The grains above the neck.
@@ -600,6 +602,24 @@ impl Hourglass {
     }
 }
 
+/// Paints the pixel at (x, y), and drops one left of or above the pane.
+fn plot(canvas: &mut Canvas, x: i32, y: i32, colour: Color) {
+    if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) {
+        canvas.set(x, y, colour);
+    }
+}
+
+/// Paints `rows` of the pixels of a cell. A plate is half a cell thick, on
+/// the side of its cell that faces the glass. A finished round fills its
+/// cell, and a round to come the middle two rows of its cell.
+fn fill(canvas: &mut Canvas, (column, row): (i32, i32), rows: Range<i32>, colour: Color) {
+    for y in rows {
+        for x in 0..WIDTH {
+            plot(canvas, column * WIDTH + x, row * HEIGHT + y, colour);
+        }
+    }
+}
+
 impl Scene for Hourglass {
     fn tick(&mut self, area: Rect) {
         if (area.width, area.height) != (self.width, self.height) {
@@ -638,58 +658,47 @@ impl Scene for Hourglass {
         let Some(glass) = self.glass else {
             return;
         };
-        let mut cells: BTreeMap<(i32, i32), (u32, Color)> = BTreeMap::new();
-        let plot =
-            |cells: &mut BTreeMap<(i32, i32), (u32, Color)>, x: i32, y: i32, colour: Color| {
-                let entry = cells
-                    .entry((x.div_euclid(WIDTH), y.div_euclid(HEIGHT)))
-                    .or_insert((0, colour));
-                entry.0 |= braille::dot(
-                    usize::try_from(x.rem_euclid(WIDTH)).unwrap_or(0),
-                    usize::try_from(y.rem_euclid(HEIGHT)).unwrap_or(0),
-                );
-            };
+        let mut canvas = Canvas::new(area.width, area.height, self.colours.base);
         for (x, y) in glass.walls() {
-            plot(&mut cells, x, y, self.colours.glass);
-            plot(&mut cells, glass.mirror(x), y, self.colours.glass);
+            plot(&mut canvas, x, y, self.colours.glass);
+            plot(&mut canvas, glass.mirror(x), y, self.colours.glass);
         }
         let across = usize::from(self.width) * CELL_WIDTH;
+        let sand = match self.phase.kind {
+            Kind::Work => self.colours.work,
+            Kind::Break => self.colours.rest,
+        };
         for (index, _) in self.sand.iter().enumerate().filter(|(_, grain)| **grain) {
             let (x, y) = (index % across, index / across);
-            let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
-                continue;
-            };
-            let colour = match self.phase.kind {
-                Kind::Work => self.colours.work,
-                Kind::Break => self.colours.rest,
-            };
-            plot(&mut cells, x, y, colour);
+            if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
+                plot(&mut canvas, x, y, sand);
+            }
         }
-        let mut glyphs: Vec<((i32, i32), char, Color)> = cells
-            .into_iter()
-            .map(|(cell, (dots, colour))| (cell, braille::glyph(dots), colour))
-            .collect();
         let (left, right) = (
             glass.centre - glass.reach - POST - 1,
             glass.centre + glass.reach + POST + 1,
         );
         let (top, bottom) = (glass.neck - glass.bulb - 1, glass.neck + glass.bulb + 1);
+        let frame = self.colours.frame;
         for column in left..=right {
-            glyphs.push(((column, top - 1), '▄', self.colours.frame));
-            glyphs.push(((column, bottom + 1), '▀', self.colours.frame));
-        }
-        for row in top..=bottom {
-            glyphs.push(((left, row), '┃', self.colours.frame));
-            glyphs.push(((right, row), '┃', self.colours.frame));
+            fill(&mut canvas, (column, top - 1), HEIGHT / 2..HEIGHT, frame);
+            fill(&mut canvas, (column, bottom + 1), 0..HEIGHT / 2, frame);
         }
         for round in 0..ROUNDS {
             let row = glass.neck - 3 + 2 * i32::try_from(round).unwrap_or(0);
-            let mark = if round < self.phase.done {
-                ('⣿', self.colours.done)
+            let (rows, colour) = if round < self.phase.done {
+                (0..HEIGHT, self.colours.done)
             } else {
-                ('⠶', self.colours.to_do)
+                (HEIGHT / 4..HEIGHT * 3 / 4, self.colours.to_do)
             };
-            glyphs.push(((right + MARKS, row), mark.0, mark.1));
+            fill(&mut canvas, (right + MARKS, row), rows, colour);
+        }
+        canvas.render(area, buf);
+
+        let mut glyphs: Vec<((i32, i32), char, Color)> = Vec::new();
+        for row in top..=bottom {
+            glyphs.push(((left, row), '┃', self.colours.frame));
+            glyphs.push(((right, row), '┃', self.colours.frame));
         }
         glyphs.extend(self.hint(glass, bottom + 2));
 
