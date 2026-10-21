@@ -3,8 +3,9 @@ use std::collections::VecDeque;
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
-use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -15,6 +16,20 @@ pub const HOLD_GENERATIONS: usize = 48;
 /// One live cell in this many at a reseed.
 const SEED_SPARSITY: u32 = 3;
 
+/// The generations a cell takes to turn from the young colour at its birth
+/// to the settled colour. A cell that lives past them rests in the settled
+/// colour.
+const SETTLE_GENERATIONS: u8 = 2;
+
+/// The ticks a dead cell takes to fade to the base. A quarter of a second
+/// at the tick rate, so what moves leaves a short trail and the board does
+/// not smear.
+const FADE_TICKS: u8 = 4;
+
+/// The coverage of a cell's colour over the base in the tick it dies. A
+/// trail fainter than a live cell does not read as one.
+const TRAIL: f32 = 0.6;
+
 #[derive(Debug)]
 pub struct Life {
     rng: Rng,
@@ -23,6 +38,18 @@ pub struct Life {
     height: usize,
     /// Generations alive, zero for a dead cell.
     age: Vec<u8>,
+    /// Ticks since a cell died, zero for a live cell and for a cell whose
+    /// fade has ended.
+    dead_for: Vec<u8>,
+    /// The age at which each fading cell died, which picks the colour it
+    /// fades from.
+    died_at: Vec<u8>,
+    shades: Shades,
+    /// The cells of the last tick. The board changes only at a tick, and
+    /// a cell of three colours or more costs a search for its nearest
+    /// pair, so each frame between two ticks copies the cells and does not
+    /// draw them again.
+    cells: Buffer,
     /// The two generations before this one, newest last.
     history: VecDeque<Vec<bool>>,
     held: usize,
@@ -36,6 +63,10 @@ impl Life {
             width: 0,
             height: 0,
             age: Vec::new(),
+            dead_for: Vec::new(),
+            died_at: Vec::new(),
+            shades: Shades::new(palette),
+            cells: Buffer::empty(Rect::ZERO),
             history: VecDeque::with_capacity(2),
             held: 0,
         }
@@ -50,9 +81,7 @@ impl Life {
             .max()
             .unwrap_or(0);
         let mut life = Self::new(rng, palette);
-        life.width = width;
-        life.height = rows.len();
-        life.age = vec![0; width * rows.len()];
+        life.resize(width, rows.len());
         for (y, row) in rows.iter().enumerate() {
             for (x, cell) in row.chars().enumerate() {
                 if cell == '#' {
@@ -69,6 +98,49 @@ impl Life {
         (0..self.height)
             .flat_map(|y| (0..self.width).map(move |x| (x, y)))
             .filter(|(x, y)| self.age[y * self.width + x] > 0)
+    }
+
+    fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        self.age = vec![0; width * height];
+        self.dead_for = vec![0; width * height];
+        self.died_at = vec![0; width * height];
+    }
+
+    /// Starts the fade of each cell that was alive in `before` and is dead
+    /// now, and moves each fade on by a tick.
+    fn bury(&mut self, before: &[u8]) {
+        let fades = self.dead_for.iter_mut().zip(&mut self.died_at);
+        for ((&now, &was), (dead_for, died_at)) in self.age.iter().zip(before).zip(fades) {
+            if now > 0 {
+                *dead_for = 0;
+            } else if was > 0 {
+                (*dead_for, *died_at) = (1, was);
+            } else if *dead_for > 0 {
+                *dead_for = (*dead_for + 1) % (FADE_TICKS + 1);
+            }
+        }
+    }
+
+    /// Each cell is one pixel. A disc or a soft square would cover only
+    /// part of its pixel and blur the board's exact shape into the base, so
+    /// a cell fills its pixel, and the softness is in time: a cell shades
+    /// by age while it lives and fades to the base once it dies.
+    fn draw(&self, area: Rect, buf: &mut Buffer) {
+        let mut canvas = Canvas::new(area.width, area.height, self.palette);
+        for y in 0..self.height.min(canvas.height()) {
+            for x in 0..self.width.min(canvas.width()) {
+                let index = y * self.width + x;
+                let colour = match (self.age[index], self.dead_for[index]) {
+                    (0, 0) => continue,
+                    (0, dead_for) => self.shades.fading(self.died_at[index], dead_for),
+                    (age, _) => self.shades.live(age),
+                };
+                canvas.set(x, y, colour);
+            }
+        }
+        canvas.render(area, buf);
     }
 
     fn alive(&self) -> Vec<bool> {
@@ -135,47 +207,83 @@ impl Scene for Life {
         let width = usize::from(area.width) * CELL_WIDTH;
         let height = usize::from(area.height) * CELL_HEIGHT;
         if (width, height) != (self.width, self.height) {
-            self.width = width;
-            self.height = height;
-            self.age = vec![0; width * height];
+            self.resize(width, height);
             self.reseed();
         }
         if width == 0 || height == 0 {
             return;
         }
+        let before = self.age.clone();
         self.step();
         let dead = self.age.iter().all(|&age| age == 0);
         if dead || self.held >= HOLD_GENERATIONS {
             self.reseed();
         }
+        self.bury(&before);
+        let mut cells = Buffer::empty(area);
+        self.draw(area, &mut cells);
+        self.cells = cells;
     }
 
-    /// A cell holds two colours, and in nearly every cell the dead cells
-    /// take one of them. So the live cells of a cell take one colour, the
-    /// colour of most of them, and the cell keeps the shape of the board.
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let mut canvas = Canvas::new(area.width, area.height, self.palette);
-        for top in (0..self.height.min(canvas.height())).step_by(CELL_HEIGHT) {
-            for left in (0..self.width.min(canvas.width())).step_by(CELL_WIDTH) {
-                let age = |x: usize, y: usize| self.age[y * self.width + x];
-                let live = || {
-                    (top..top + CELL_HEIGHT)
-                        .flat_map(|y| (left..left + CELL_WIDTH).map(move |x| (x, y)))
-                        .filter(|(x, y)| *x < self.width && *y < self.height && age(*x, *y) > 0)
-                };
-                let (count, young) = live().fold((0, 0), |(count, young), (x, y)| {
-                    (count + 1, young + usize::from(age(x, y) == 1))
-                });
-                let colour = if young * 2 > count {
-                    self.palette.rose
-                } else {
-                    self.palette.iris
-                };
-                for (x, y) in live() {
-                    canvas.set(x, y, colour);
-                }
+        if self.cells.area == area {
+            for position in area.positions() {
+                buf[position].clone_from(&self.cells[position]);
             }
+        } else {
+            self.draw(area, buf);
         }
-        canvas.render(area, buf);
+    }
+}
+
+/// The colour of a live cell by its age, and of a dead cell by the age it
+/// died at and the ticks since. A frame holds thousands of cells and only
+/// a few ages, so the scene mixes each colour once and not once for each
+/// cell.
+#[derive(Debug)]
+struct Shades {
+    live: [Color; SETTLE_GENERATIONS as usize + 1],
+    fading: [[Color; FADE_TICKS as usize]; SETTLE_GENERATIONS as usize + 1],
+}
+
+impl Shades {
+    fn new(palette: &Palette) -> Self {
+        let settling = |since_birth: usize| {
+            octant::mix(
+                palette.rose,
+                palette.iris,
+                since_birth as f32 / f32::from(SETTLE_GENERATIONS),
+            )
+        };
+        // A fade mixes with the base, so it blends through a canvas, which
+        // keeps the edge hard where the base is see-through.
+        let mut canvas = Canvas::new(1, 1, palette);
+        let mut over_base = |colour: Color, coverage: f32| {
+            canvas.set(0, 0, palette.base);
+            canvas.blend(0, 0, colour, coverage);
+            canvas.get(0, 0).unwrap_or(palette.base)
+        };
+        Self {
+            live: std::array::from_fn(settling),
+            fading: std::array::from_fn(|since_birth| {
+                let colour = settling(since_birth);
+                std::array::from_fn(|ticks| {
+                    let left = f32::from(FADE_TICKS) - ticks as f32;
+                    over_base(colour, TRAIL * left / f32::from(FADE_TICKS))
+                })
+            }),
+        }
+    }
+
+    /// The colour of a cell `age` generations old.
+    fn live(&self, age: u8) -> Color {
+        self.live[usize::from(age.min(SETTLE_GENERATIONS + 1) - 1)]
+    }
+
+    /// The colour of a cell that died at `age`, `dead_for` ticks ago, from
+    /// 1 to `FADE_TICKS`.
+    fn fading(&self, age: u8, dead_for: u8) -> Color {
+        let age = usize::from(age.clamp(1, SETTLE_GENERATIONS + 1) - 1);
+        self.fading[age][usize::from(dead_for.clamp(1, FADE_TICKS) - 1)]
     }
 }

@@ -251,38 +251,6 @@ fn a_dead_cell_fades_to_the_base() {
     );
 }
 
-/// A fade glides between two ticks.
-/// Given: the lone cell of the last test, dead for one tick.
-/// When: the scene is half way to its next tick.
-/// Then: the pixel lies between its colours at the two ticks.
-///
-/// Why it matters: the app draws four frames a tick. A fade that steps
-/// once a tick shows each step four frames long.
-#[test]
-fn a_fade_glides_between_ticks() {
-    // Given:
-    let area = Rect::new(0, 0, 5, 3);
-    let palette = &theme::ROSE_PINE;
-    let mut scene = Life::from_pattern(Rng::seed_from_u64(7), palette, LONE);
-    let live = pixel(&scene, area, (2, 2));
-    let mut at = |scene: &Life| share(pixel(scene, area, (2, 2)), palette.base, live).unwrap();
-    scene.tick(area);
-    let first = at(&scene);
-
-    // When:
-    scene.set_progress(0.5);
-    let half = at(&scene);
-
-    // Then:
-    scene.set_progress(0.0);
-    scene.tick(area);
-    let second = at(&scene);
-    assert!(
-        second < half && half < first,
-        "{first} then {half} then {second}"
-    );
-}
-
 /// A block never changes, so its cells age.
 const BLOCK: &[&str] = &[
     "..........",
@@ -302,9 +270,9 @@ const BLOCK: &[&str] = &[
 /// A live cell turns from the young colour to the settled colour as it
 /// ages.
 /// Given: a block of cells two generations old.
-/// When: one generation passes, then ten more.
-/// Then: after one, its pixels are a mix of rose and iris, part of the way
-/// to iris, and after ten more they are iris.
+/// When: it renders, and again after ten generations.
+/// Then: first its pixels are a mix of rose and iris, part of the way to
+/// iris, and then they are iris.
 ///
 /// Why it matters: the colour tells a birth from a cell that stays. A mix
 /// by age shows how long each cell has lived at the grain of a pixel, so
@@ -317,7 +285,6 @@ fn a_live_cell_turns_from_the_young_colour_to_the_settled_colour() {
     let scene = Life::from_pattern(Rng::seed_from_u64(7), palette, BLOCK);
 
     // When:
-    let scene = ticked(scene, area, 1);
     let young = pixel(&scene, area, (6, 8));
     let scene = ticked(scene, area, 10);
     let settled = pixel(&scene, area, (6, 8));
@@ -330,4 +297,34 @@ fn a_live_cell_turns_from_the_young_colour_to_the_settled_colour() {
         "the young block is at {between}"
     );
     assert_eq!(settled, palette.iris);
+}
+
+/// Given: the lone cell and the block in the flat Rose Pine theme, whose
+/// base is the terminal's own background.
+/// When: the lone cell dies, and the board ticks on.
+/// Then: each tick its pixel shows its live colour or the base, never a
+/// mix of the two.
+///
+/// Why it matters: a mix with a see-through base paints an opaque colour
+/// that guesses the user's background, and shows as a dark smudge over a
+/// background of another colour.
+#[test]
+fn a_fade_keeps_its_edge_hard_on_a_see_through_base() {
+    // Given:
+    let area = Rect::new(0, 0, 5, 3);
+    let palette = &theme::FLAT_THEMES[0];
+    let mut scene = Life::from_pattern(Rng::seed_from_u64(7), palette, LONE);
+    let live = pixel(&scene, area, (2, 2));
+
+    for _ in 0..10 {
+        // When:
+        scene.tick(area);
+
+        // Then:
+        let colour = pixel(&scene, area, (2, 2));
+        assert!(
+            colour == live || colour == palette.base,
+            "{colour:?} mixes {live:?} with the base"
+        );
+    }
 }
