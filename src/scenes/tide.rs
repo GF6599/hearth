@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::dither;
-use crate::quadrant;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::splitmix;
 use crate::theme::Palette;
@@ -47,8 +47,10 @@ const RIPPLE_DRIFT: f32 = 0.004;
 /// `SET` has its own strength, so the run-up varies from wave to wave.
 const WEAKEST: f32 = 0.5;
 const SET: usize = 7;
-/// The sixteenths of the pixels below the foam line that are foam too, so
-/// the edge froths and is not one hard line.
+/// The pixel rows of the foam line at the top of the sea, half a cell.
+const FOAM: usize = CELL_HEIGHT / 2;
+/// The sixteenths of the pixels in the `FOAM` rows below the foam line that
+/// are foam too, so the edge froths and is not one hard line.
 const FROTH: usize = 6;
 /// The sixteenths of sand the sea has just left that are drawn muted. The
 /// share falls as the sand dries, so the wet band fades and does not end in
@@ -56,10 +58,13 @@ const FROTH: usize = 6;
 const WET: u32 = 8;
 /// The chance that a cell the sea can reach holds a shell or a pebble.
 const OBJECT_CHANCE: f64 = 1.0 / 40.0;
-/// The pixels a shell fills, by the bits of a quadrant glyph: ▟, ▙ and ▄.
-const SHELLS: [u8; 3] = [0b1110, 0b1101, 0b1100];
-/// A pebble is one pixel, on the lower left or lower right of its cell.
-const PEBBLES: [u8; 2] = [0b0100, 0b1000];
+/// The pixels a shell fills, by the bits of an octant glyph, row by row
+/// from the top: a cone that opens up to the right, one that opens up to
+/// the left, and a clam across the middle of its cell.
+const SHELLS: [u8; 3] = [0b1111_1000, 0b1111_0100, 0b0011_1100];
+/// A pebble is one pixel across and two down, on the lower left or the
+/// lower right of its cell.
+const PEBBLES: [u8; 2] = [0b0101_0000, 0b1010_0000];
 
 #[derive(Debug)]
 pub struct Tide {
@@ -75,7 +80,7 @@ pub struct Tide {
     ripple_length: f32,
     ripple_phase: f32,
     strengths: [f32; SET],
-    /// The pane in pixels, two a cell across and two a cell down.
+    /// The pane in pixels, two a cell across and four a cell down.
     columns: usize,
     rows: usize,
     /// Ticks until each pixel of sand is dry, by row and then by column.
@@ -86,7 +91,7 @@ pub struct Tide {
 
 #[derive(Debug, Clone, Copy)]
 struct Object {
-    /// The pixels it fills, by the bits of a quadrant glyph.
+    /// The pixels it fills, by the bits of an octant glyph.
     mask: u8,
     shell: bool,
 }
@@ -153,29 +158,27 @@ impl Tide {
     }
 
     fn pixel(x: usize, row: usize, rows: usize, waterline: usize) -> Pixel {
-        let from_bottom = rows - row;
-        if from_bottom == waterline
-            || (from_bottom + 1 == waterline && dither::lights(FROTH, x, row))
-        {
+        let Some(below) = waterline.checked_sub(rows - row) else {
+            return Pixel::Sand;
+        };
+        if below < FOAM || (below < 2 * FOAM && dither::lights(FROTH, x, row)) {
             Pixel::Foam
-        } else if from_bottom < waterline {
-            Pixel::Sea
         } else {
-            Pixel::Sand
+            Pixel::Sea
         }
     }
 
     /// The colours of one cell. A cell draws two colours, so where the sea
     /// meets the sand its sea is all foam and its sand is bare, and sand
     /// with any wet pixel shows no grains.
-    fn colours(&self, pixels: [Pixel; 4], left: usize, top: usize) -> [Color; 4] {
+    fn colours(&self, pixels: [Pixel; 8], left: usize, top: usize) -> [Color; 8] {
         let shore = pixels.contains(&Pixel::Sand) && pixels.iter().any(|each| *each != Pixel::Sand);
-        let at = |quarter: usize| (left + quarter % 2, top + quarter / 2);
-        let wet = (0..4).any(|quarter| {
-            let (x, row) = at(quarter);
-            pixels[quarter] == Pixel::Sand && self.wetness(x, row) > 0
+        let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
+        let wet = (0..pixels.len()).any(|pixel| {
+            let (x, row) = at(pixel);
+            pixels[pixel] == Pixel::Sand && self.wetness(x, row) > 0
         });
-        if let Some(object) = self.object(left / 2, top / 2)
+        if let Some(object) = self.object(left / CELL_WIDTH, top / CELL_HEIGHT)
             && pixels.iter().all(|each| *each == Pixel::Sand)
         {
             let colour = if object.shell {
@@ -183,17 +186,17 @@ impl Tide {
             } else {
                 self.palette.subtle
             };
-            return std::array::from_fn(|quarter| {
-                if object.mask >> quarter & 1 == 1 {
+            return std::array::from_fn(|pixel| {
+                if object.mask >> pixel & 1 == 1 {
                     colour
                 } else {
                     self.palette.gold
                 }
             });
         }
-        std::array::from_fn(|quarter| {
-            let (x, row) = at(quarter);
-            match pixels[quarter] {
+        std::array::from_fn(|pixel| {
+            let (x, row) = at(pixel);
+            match pixels[pixel] {
                 Pixel::Foam => self.palette.foam,
                 Pixel::Sea if shore => self.palette.foam,
                 Pixel::Sea => self.palette.pine,
@@ -206,22 +209,22 @@ impl Tide {
     }
 
     fn object(&self, x: usize, y: usize) -> Option<Object> {
-        let across = self.columns / 2;
+        let across = self.columns / CELL_WIDTH;
         self.objects.get(y * across + x).copied().flatten()
     }
 
     /// Lays shells and pebbles on the cells the sea reaches and also
     /// leaves, so each one is covered and uncovered as the tide turns.
     fn scatter(&mut self) {
-        let (across, down) = (self.columns / 2, self.rows / 2);
+        let (across, down) = (self.columns / CELL_WIDTH, self.rows / CELL_HEIGHT);
         let rows = self.rows as f32;
         let reached = self.rows - ((HIGH_TIDE + SWASH) * rows).floor() as usize;
         let left = self
             .rows
-            .saturating_sub((LOW_TIDE * rows).ceil() as usize + 2);
+            .saturating_sub((LOW_TIDE * rows).ceil() as usize + CELL_HEIGHT);
         self.objects = (0..across * down)
             .map(|index| {
-                let top = index / across * 2;
+                let top = index / across * CELL_HEIGHT;
                 if !(reached..=left).contains(&top) || !self.rng.random_bool(OBJECT_CHANCE) {
                     return None;
                 }
@@ -260,7 +263,10 @@ enum Pixel {
 impl Scene for Tide {
     fn tick(&mut self, area: Rect) {
         self.time = self.time.wrapping_add(1);
-        let (columns, rows) = (usize::from(area.width) * 2, usize::from(area.height) * 2);
+        let (columns, rows) = (
+            usize::from(area.width) * CELL_WIDTH,
+            usize::from(area.height) * CELL_HEIGHT,
+        );
         if (columns, rows) != (self.columns, self.rows) {
             self.columns = columns;
             self.rows = rows;
@@ -282,25 +288,25 @@ impl Scene for Tide {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let (columns, rows) = (usize::from(area.width) * 2, usize::from(area.height) * 2);
+        let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
+        let (columns, rows) = (canvas.width(), canvas.height());
         if columns == 0 || rows == 0 {
             return;
         }
         let waterlines = self.waterlines(columns, rows);
-        for y in 0..area.height {
-            for x in 0..area.width {
-                let (left, top) = (usize::from(x) * 2, usize::from(y) * 2);
-                let pixels = std::array::from_fn(|quarter| {
-                    let (column, row) = (left + quarter % 2, top + quarter / 2);
+        for top in (0..rows).step_by(CELL_HEIGHT) {
+            for left in (0..columns).step_by(CELL_WIDTH) {
+                let at = |pixel: usize| (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
+                let pixels = std::array::from_fn(|pixel| {
+                    let (column, row) = at(pixel);
                     Self::pixel(column, row, rows, waterlines[column])
                 });
-                let colours = self.colours(pixels, left, top);
-                let (glyph, fore, back) = quadrant::cell(colours, self.palette.base);
-                buf[(area.x + x, area.y + y)]
-                    .set_char(glyph)
-                    .set_fg(fore)
-                    .set_bg(back);
+                for (pixel, colour) in self.colours(pixels, left, top).into_iter().enumerate() {
+                    let (column, row) = at(pixel);
+                    canvas.set(column, row, colour);
+                }
             }
         }
+        canvas.render(area, buf);
     }
 }
