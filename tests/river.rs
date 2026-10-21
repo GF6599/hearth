@@ -2,6 +2,7 @@
 
 mod pixels;
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use hearth::cli::Cli;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::history::{DEPTH, History};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{ALL, Rng, Scene, SceneKind, Settings};
 use hearth::scenes::river::{NOTICE, READING, River};
 use hearth::scenes::typing::Speed;
@@ -890,5 +892,93 @@ fn a_stone_sits_in_the_water_of_its_lane() {
             .count();
     }
     assert!(shared > 0, "no cell shows a stone and water together");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// Each pixel of a ripple on the open water, as (column, row) in pixels
+/// from the top left of the area. A ripple lies on one row of pixels, so a
+/// cell with more water than that is a lane.
+fn ripples(buffer: &Buffer, area: Rect) -> HashSet<(usize, usize)> {
+    let cell = |(x, y): (usize, usize)| {
+        &buffer[(
+            area.x + (x / CELL_WIDTH) as u16,
+            area.y + (y / CELL_HEIGHT) as u16,
+        )]
+    };
+    pixels::showing(buffer, area, |colour| colour == PALETTE.pine)
+        .into_iter()
+        .map(|(place, _)| place)
+        .filter(|place| count(cell(*place), &[PALETTE.pine, PALETTE.foam]) <= CELL_WIDTH)
+        .collect()
+}
+
+/// The pixel rows down, up to a cell, by which the pixels of `to` best
+/// match the pixels of `from`.
+fn shift(from: &HashSet<(usize, usize)>, to: &HashSet<(usize, usize)>) -> usize {
+    (0..=CELL_HEIGHT)
+        .max_by_key(|rows| {
+            from.iter()
+                .filter(|(x, y)| to.contains(&(*x, y + rows)))
+                .count()
+        })
+        .unwrap()
+}
+
+/// The ripples glide down the river between two ticks.
+/// Given: the river of a linear history of thirty commits, at the first
+/// tick after which its ripples move down two pixel rows.
+/// When: it renders a quarter, a half and three quarters of the way to the
+/// next tick, and again at no progress.
+/// Then: at no progress the frame is the frame of a scene that was never
+/// given progress. The ripples move down in the order of the progress,
+/// and half way to the next tick they have moved down by one pixel row.
+///
+/// Why it matters: at a slow rate a scene ticks once in eight or sixteen
+/// frames, and water that waits for the tick moves in jumps of two pixels.
+#[test]
+fn the_ripples_glide_between_two_ticks() {
+    // Given:
+    let repo = linear("glide", 30);
+    let mut scene = river(&repo);
+    let mut next = river(&repo);
+    next.tick(AREA);
+    let (mut from, mut to) = (
+        ripples(&render(&scene, AREA, AREA), AREA),
+        ripples(&render(&next, AREA, AREA), AREA),
+    );
+    for _ in 0..8 {
+        if shift(&from, &to) == 2 {
+            break;
+        }
+        scene.tick(AREA);
+        next.tick(AREA);
+        (from, to) = (to, ripples(&render(&next, AREA, AREA), AREA));
+    }
+    assert_eq!(shift(&from, &to), 2, "the ripples never move two rows");
+    let still = render(&scene, AREA, AREA);
+
+    // When:
+    let mut path = vec![0];
+    for progress in [0.25, 0.5, 0.75] {
+        scene.set_progress(progress);
+        path.push(shift(&from, &ripples(&render(&scene, AREA, AREA), AREA)));
+    }
+    path.push(2);
+    scene.set_progress(0.0);
+
+    // Then:
+    assert_eq!(
+        render(&scene, AREA, AREA),
+        still,
+        "the frame at no progress"
+    );
+    assert!(
+        path.windows(2).all(|pair| pair[0] <= pair[1]),
+        "the ripples move {path:?} from one tick to the next"
+    );
+    assert_eq!(
+        path[2], 1,
+        "half way the ripples move {path:?} from one tick to the next"
+    );
     let _ = fs::remove_dir_all(&repo);
 }
