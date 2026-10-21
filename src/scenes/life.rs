@@ -64,6 +64,13 @@ impl Life {
         life
     }
 
+    /// The live cells, as (column, row) on the board.
+    pub fn live_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        (0..self.height)
+            .flat_map(|y| (0..self.width).map(move |x| (x, y)))
+            .filter(|(x, y)| self.age[y * self.width + x] > 0)
+    }
+
     fn alive(&self) -> Vec<bool> {
         self.age.iter().map(|&age| age > 0).collect()
     }

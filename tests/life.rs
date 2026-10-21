@@ -27,6 +27,11 @@ fn alive(buffer: &Buffer, area: Rect) -> BTreeSet<(u16, u16)> {
         .collect()
 }
 
+/// The live cells of the board, as (column, row).
+fn board(scene: &Life) -> BTreeSet<(usize, usize)> {
+    scene.live_cells().collect()
+}
+
 fn ticked(mut scene: Life, area: Rect, generations: usize) -> Life {
     for _ in 0..generations {
         scene.tick(area);
@@ -65,8 +70,8 @@ fn a_glider_moves_one_cell_in_four_generations() {
     let scene = ticked(scene, area, 4);
 
     // Then:
-    let expected: BTreeSet<(u16, u16)> = [(2, 1), (3, 2), (1, 3), (2, 3), (3, 3)].into();
-    assert_eq!(alive(&render(&scene, area), area), expected);
+    let expected: BTreeSet<(usize, usize)> = [(2, 1), (3, 2), (1, 3), (2, 3), (3, 3)].into();
+    assert_eq!(board(&scene), expected);
 }
 
 const BLINKER: &[&str] = &[
@@ -95,8 +100,8 @@ const BLINKER: &[&str] = &[
 fn a_blinker_reseeds_after_the_hold_count() {
     // Given:
     let area = Rect::new(0, 0, 5, 3);
-    let horizontal: BTreeSet<(u16, u16)> = [(3, 4), (4, 4), (5, 4)].into();
-    let vertical: BTreeSet<(u16, u16)> = [(4, 3), (4, 4), (4, 5)].into();
+    let horizontal: BTreeSet<(usize, usize)> = [(3, 4), (4, 4), (5, 4)].into();
+    let vertical: BTreeSet<(usize, usize)> = [(4, 3), (4, 4), (4, 5)].into();
 
     // When:
     let held = ticked(
@@ -111,9 +116,9 @@ fn a_blinker_reseeds_after_the_hold_count() {
     );
 
     // Then:
-    let before = alive(&render(&held, area), area);
+    let before = board(&held);
     assert!(before == horizontal || before == vertical, "{before:?}");
-    let after = alive(&render(&reseeded, area), area);
+    let after = board(&reseeded);
     assert!(after != horizontal && after != vertical, "{after:?}");
 }
 
