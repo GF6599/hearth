@@ -61,6 +61,27 @@ const RIPPLE_ODDS: u64 = 3;
 /// cells. Each bank has its own phase, so the river widens and narrows.
 const MEANDER: f64 = 0.045;
 const MEANDER_REACH: f64 = 1.4;
+/// The shades of the water across a lane, from its sides to its middle,
+/// and how far its middle leans to foam and its sides to the bed.
+const LANE_SHADES: usize = 4;
+const LANE_LIGHT: f32 = 0.25;
+const LANE_DARK: f32 = 0.25;
+/// The steps of foam a cell of a lane holds, by the share of its rows the
+/// band covers. Each row next to a band holds half its foam, so a band
+/// fades in and out as it runs down from one cell to the next.
+const FOAM_STEPS: usize = 8;
+/// How far a ripple leans from the bed to pine.
+const RIPPLE: f32 = 0.45;
+/// The shades of a stone from its lit left side to its shaded right, and
+/// how far each side leans to the text and to the bed.
+const STONE_SHADES: usize = 5;
+const STONE_LIGHT: f32 = 0.25;
+const STONE_DARK: f32 = 0.2;
+/// How far the wet sand at the water's edge leans to pine, and how far the
+/// bed leans to gold in each cell from a bank, so the shore slopes into the
+/// water.
+const WET_SAND: f32 = 0.3;
+const SHALLOWS: [f32; 2] = [0.16, 0.08];
 
 /// What a pixel shows when more than one thing falls on it, from the
 /// lowest.
@@ -76,10 +97,11 @@ enum Layer {
 /// The bed or the ground shows behind a cell with an empty pixel, so a
 /// stone covers the water in a cell with the bed in it. Water takes the
 /// colour of foam in front of it, so a band of foam leaves no gap in its
-/// lane.
+/// lane, and each shade of a layer takes the shade in front, so a cell of
+/// wet and dry sand leaves no gap in its bank.
 impl octant::Layer for Layer {
     fn joins(self, top: Self) -> bool {
-        self.is_liquid() && top.is_liquid()
+        self == top || self.is_liquid() && top.is_liquid()
     }
 }
 
@@ -100,9 +122,66 @@ struct Row {
     lines: Vec<(usize, usize)>,
 }
 
+/// Every colour the river draws, mixed once from the palette, so a frame
+/// mixes no colour.
+#[derive(Debug)]
+struct Shades {
+    /// The water across a lane, from its sides to its middle, under each
+    /// step of foam.
+    lanes: [[Color; FOAM_STEPS + 1]; LANE_SHADES],
+    ripple: Color,
+    /// A stone and the stone of a merge, from the lit side to the shaded.
+    stones: [[Color; STONE_SHADES]; 2],
+    /// The wet sand at the water's edge, and the dry sand beyond.
+    banks: [Color; 2],
+    /// The bed from a bank toward the middle of the river, and the middle.
+    shallows: [Color; 3],
+}
+
+impl Shades {
+    fn new(palette: &Palette) -> Self {
+        let water = [
+            octant::mix(palette.pine, palette.overlay, LANE_DARK),
+            palette.pine,
+            octant::mix(palette.pine, palette.foam, LANE_LIGHT),
+        ];
+        let lanes = std::array::from_fn(|shade| {
+            let body = octant::ramp(&water, shade as f32 / (LANE_SHADES - 1) as f32);
+            std::array::from_fn(|step| {
+                octant::mix(body, palette.foam, step as f32 / FOAM_STEPS as f32)
+            })
+        });
+        let stones = [palette.subtle, palette.iris].map(|stone| {
+            let sides = [
+                octant::mix(stone, palette.text, STONE_LIGHT),
+                stone,
+                octant::mix(stone, palette.overlay, STONE_DARK),
+            ];
+            std::array::from_fn(|shade| {
+                octant::ramp(&sides, shade as f32 / (STONE_SHADES - 1) as f32)
+            })
+        });
+        Self {
+            lanes,
+            ripple: octant::mix(palette.overlay, palette.pine, RIPPLE),
+            stones,
+            banks: [
+                octant::mix(palette.gold, palette.pine, WET_SAND),
+                palette.gold,
+            ],
+            shallows: [
+                octant::mix(palette.overlay, palette.gold, SHALLOWS[0]),
+                octant::mix(palette.overlay, palette.gold, SHALLOWS[1]),
+                palette.overlay,
+            ],
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct River {
     palette: &'static Palette,
+    shades: Shades,
     /// The history on its way from a thread that runs git, until it lands.
     /// A large repository takes a while, and the app must not wait on it.
     reading: Option<Receiver<History>>,
@@ -115,7 +194,7 @@ pub struct River {
     progress: f64,
     /// Where the foam of each lane starts, so the lanes do not foam in step.
     phases: Vec<i64>,
-    /// Seeds the ripples and the sand.
+    /// Seeds the ripples.
     salt: u64,
     /// Where the wander of each bank starts, as an angle.
     banks: [f64; 2],
@@ -142,6 +221,7 @@ impl River {
             .collect();
         Self {
             palette,
+            shades: Shades::new(palette),
             reading,
             history: History::default(),
             rows: Vec::new(),
@@ -207,7 +287,7 @@ impl River {
     }
 
     /// A number from `place` that looks random and is the same every frame,
-    /// so the ripples and the sand stay put on the water and the shore.
+    /// so the ripples stay put on the water.
     fn noise(&self, place: (i64, i64)) -> u64 {
         splitmix::mix(
             self.salt
@@ -351,13 +431,19 @@ impl Scene for River {
             .max(span / CELL_WIDTH as i64 / 2 + SHORE)
             .min(columns as i64 / 2 - 3)
             .max(0);
-        let shores: Vec<(i64, i64)> = (0..lines as i64)
-            .map(|line| {
+        // The first and last pixel of the water on each pixel row, so a
+        // bank wanders a pixel at a time and not a cell.
+        let edges: Vec<(i64, i64)> = (0..down)
+            .map(|y| {
                 let wander = |side: usize| {
-                    let at = (top + line * CELL_HEIGHT as i64) as f64 * MEANDER + self.banks[side];
-                    (at.sin() * MEANDER_REACH).round() as i64
+                    let at = (top + y) as f64 * MEANDER + self.banks[side];
+                    (at.sin() * MEANDER_REACH * CELL_WIDTH as f64).round() as i64
                 };
-                (centre - half + wander(0), centre + half + wander(1))
+                let cell = CELL_WIDTH as i64;
+                (
+                    (centre - half) * cell + wander(0),
+                    (centre + half) * cell + cell - 1 + wander(1),
+                )
             })
             .collect();
 
@@ -373,25 +459,14 @@ impl Scene for River {
             }
         };
 
-        // The shore: a line of sand beside the water and loose grains
-        // beyond it, both fixed to the ground so they flow with the river.
-        for (line, &(first, last)) in shores.iter().enumerate() {
-            for y in line as i64 * CELL_HEIGHT as i64..(line as i64 + 1) * CELL_HEIGHT as i64 {
-                let ground = top + y;
-                for (edge, outward) in [
-                    (first * CELL_WIDTH as i64 - 1, -1),
-                    (last * CELL_WIDTH as i64 + CELL_WIDTH as i64, 1),
-                ] {
-                    plot(edge, y, Layer::Bank, self.palette.gold);
-                    for step in 1..6 {
-                        let x = edge + outward * step;
-                        if self
-                            .noise((x * outward, ground))
-                            .is_multiple_of(step as u64 + 1)
-                        {
-                            plot(x, y, Layer::Bank, self.palette.gold);
-                        }
-                    }
+        // The shore: wet sand beside the water and dry sand beyond it, a
+        // cell wide each.
+        for (y, &(first, last)) in edges.iter().enumerate() {
+            for (band, colour) in [(1, self.shades.banks[0]), (2, self.shades.banks[1])] {
+                for pixel in 0..CELL_WIDTH as i64 {
+                    let step = (band - 1) * CELL_WIDTH as i64 + pixel + 1;
+                    plot(first - step, y as i64, Layer::Bank, colour);
+                    plot(last + step, y as i64, Layer::Bank, colour);
                 }
             }
         }
@@ -409,8 +484,8 @@ impl Scene for River {
             if water.rem_euclid(RIPPLE_ROWS) != 0 {
                 continue;
             }
-            let (first, last) = shores[(y / CELL_HEIGHT as i64) as usize];
-            let (from, to) = (first * CELL_WIDTH as i64, (last + 1) * CELL_WIDTH as i64);
+            let (from, to) = edges[y as usize];
+            let to = to + 1;
             for place in (from / 6)..=(to / 6) {
                 let noise = self.noise((place, water.div_euclid(RIPPLE_ROWS)));
                 if !noise.is_multiple_of(RIPPLE_ODDS) {
@@ -419,7 +494,7 @@ impl Scene for River {
                 let start = place * 6 + (noise >> 8) as i64 % 2;
                 for x in start..start + 2 + (noise >> 16) as i64 % 3 {
                     if (from..to).contains(&x) {
-                        plot(x, y, Layer::Ripple, self.palette.pine);
+                        plot(x, y, Layer::Ripple, self.shades.ripple);
                     }
                 }
             }
@@ -428,15 +503,31 @@ impl Scene for River {
         let first = ((top - ROW_GAP) / ROW_GAP).max(0) as usize;
         let last = ((top + down) / ROW_GAP + 1).max(0) as usize;
         let shown = first..=last.min(self.rows.len() - 1);
+        // A lane is lighter in its middle than at its sides, a cell at a
+        // time, and the foam of a cell is the share of its rows the band
+        // covers, so the band glides from one cell to the next.
+        let shade = |offset: i64| {
+            let pair = (offset & !1) as f64 + 0.5;
+            let half = water as f64 / 2.0;
+            let near = 1.0 - (pair - (water as f64 - 1.0) / 2.0).abs() / half;
+            ((near * (LANE_SHADES - 1) as f64).round() as usize).min(LANE_SHADES - 1)
+        };
         let mut wet = |x: i64, y: i64, lane: usize| {
             let phase = self.phases[lane % PHASES];
-            let (layer, colour) = if (top + y - flow + phase).rem_euclid(FOAM_PERIOD) < FOAM {
-                (Layer::Foam, self.palette.foam)
-            } else {
-                (Layer::Water, self.palette.pine)
-            };
+            let cell = y.div_euclid(CELL_HEIGHT as i64) * CELL_HEIGHT as i64;
+            let halves: i64 = (cell..cell + CELL_HEIGHT as i64)
+                .map(
+                    |row| match (top + row - flow + phase).rem_euclid(FOAM_PERIOD) {
+                        band if band < FOAM => 2,
+                        band if band == FOAM || band == FOAM_PERIOD - 1 => 1,
+                        _ => 0,
+                    },
+                )
+                .sum();
+            let step = (halves as usize * FOAM_STEPS).div_ceil(2 * CELL_HEIGHT);
+            let layer = if step > 0 { Layer::Foam } else { Layer::Water };
             for across in x..x + water {
-                plot(across, y, layer, colour);
+                plot(across, y, layer, self.shades.lanes[shade(across - x)][step]);
             }
         };
         for index in shown.clone() {
@@ -459,29 +550,43 @@ impl Scene for River {
         for index in shown {
             let row = &self.rows[index];
             let (x, y) = (lane_x(row.lane), index as i64 * ROW_GAP - top);
-            let colour = if row.merge {
-                self.palette.iris
-            } else {
-                self.palette.subtle
-            };
+            let stone = &self.shades.stones[usize::from(row.merge)];
+            // Lit from the left a cell at a time, so each cell of the stone
+            // is one colour.
+            let cells = (water + 4) / CELL_WIDTH as i64;
             for dy in -2..=1 {
                 for dx in -2..=water + 1 {
                     let corner = (dx == -2 || dx == water + 1) && (dy == -2 || dy == 1);
                     if !corner {
-                        plot(x + dx, y + dy, Layer::Stone, colour);
+                        let cell = (dx + 2) / CELL_WIDTH as i64;
+                        let shade =
+                            cell as usize * (STONE_SHADES - 1) / (cells - 1).max(1) as usize;
+                        plot(x + dx, y + dy, Layer::Stone, stone[shade]);
                     }
                 }
             }
         }
 
         let mut canvas = Canvas::new(area.width, area.height, self.palette);
-        for (line, &(first, last)) in shores.iter().enumerate() {
+        for line in 0..lines {
+            // A cell lies in the river when any of its rows does. The bank
+            // lies between the water and the ground, so no cell holds both.
+            let rows = &edges[line * CELL_HEIGHT..(line + 1) * CELL_HEIGHT];
+            let first = rows.iter().map(|edge| edge.0).min().unwrap_or(0);
+            let last = rows.iter().map(|edge| edge.1).max().unwrap_or(0);
+            let (first, last) = (
+                first.div_euclid(CELL_WIDTH as i64),
+                last.div_euclid(CELL_WIDTH as i64),
+            );
             for column in 0..columns {
-                let empty = if (first..=last).contains(&(column as i64)) {
-                    self.palette.overlay
+                let column = column as i64;
+                let empty = if (first..=last).contains(&column) {
+                    let from_bank = (column - first).min(last - column) as usize;
+                    self.shades.shallows[from_bank.min(SHALLOWS.len())]
                 } else {
                     self.palette.base
                 };
+                let column = column as usize;
                 let at = |pixel: usize| {
                     (
                         column * CELL_WIDTH + pixel % CELL_WIDTH,
