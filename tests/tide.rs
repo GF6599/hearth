@@ -8,7 +8,7 @@ use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
-use hearth::scenes::tide::{DRY_TICKS, GRAINS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
+use hearth::scenes::tide::{DRY_TICKS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -59,8 +59,64 @@ fn cells(grid: &[Vec<Color>]) -> Vec<((usize, usize), Vec<Color>)> {
         .collect()
 }
 
+/// The red, green and blue of a colour the scene draws.
+fn channels(colour: Color) -> (u8, u8, u8) {
+    match colour {
+        Color::Rgb(r, g, b) => (r, g, b),
+        other => panic!("{other:?} is not a colour of the theme"),
+    }
+}
+
+/// The scene shades each part with mixes of theme colours, so a test reads
+/// a part by its hue and not by one exact colour. In Rose Pine the sea's
+/// roles, pine and foam, hold more green than red, and so does every mix
+/// of them. Sand, shells and pebbles hold more red than green.
 fn is_sea(colour: Color) -> bool {
-    colour == PALETTE.pine || colour == PALETTE.foam
+    let (r, g, _) = channels(colour);
+    g > r
+}
+
+/// Sand is warm: red over green over blue, as gold and rose are.
+fn is_sand(colour: Color) -> bool {
+    let (r, g, b) = channels(colour);
+    r > g && g >= b
+}
+
+/// A shell is pink: red over blue over green, as love is.
+fn is_shell(colour: Color) -> bool {
+    let (r, g, b) = channels(colour);
+    r > b && b > g
+}
+
+/// A pebble is grey: blue over red, and red over green, as subtle is.
+fn is_pebble(colour: Color) -> bool {
+    let (r, g, b) = channels(colour);
+    b > r && r >= g
+}
+
+/// Given: the Rose Pine roles of each part of the beach.
+/// When: each is read by the hue tests above.
+/// Then: each role reads as its part and as no other.
+///
+/// Why it matters: the other tests read the beach by these hue tests, and a
+/// hue test that reads a role wrong would pass a broken picture.
+#[test]
+fn each_role_reads_as_its_part_of_the_beach() {
+    // Given:
+    let parts = [is_sea, is_sand, is_shell, is_pebble];
+    for (role, part) in [
+        (PALETTE.pine, 0),
+        (PALETTE.foam, 0),
+        (PALETTE.gold, 1),
+        (PALETTE.rose, 1),
+        (PALETTE.love, 2),
+        (PALETTE.subtle, 3),
+    ] {
+        // When, then:
+        for (index, reads) in parts.iter().enumerate() {
+            assert_eq!(reads(role), index == part, "{role:?} as part {index}");
+        }
+    }
 }
 
 /// How many pixels of each column, from the bottom, are sea.
@@ -160,17 +216,21 @@ fn the_tide_rises_and_falls_between_its_bounds() {
     }
 }
 
-/// Dry sand is gold, with a sparse, even scatter of rose grains.
+/// The most a channel of dry sand changes from one pixel to the next, so
+/// the sand shades with no single grain that stands out.
+const SAND_STEP: u8 = 12;
+
+/// Dry sand is gold, shaded gently over the beach.
 /// Given: the scene at a hundred by thirty.
-/// When: the pixels above the highest reach of the sea are read in tiles
-/// of four by four.
-/// Then: each tile holds exactly `GRAINS` rose pixels, and every other
-/// pixel is gold.
+/// When: the pixels above the highest reach of the sea are read.
+/// Then: every pixel is sand, the sand shows four shades or more, and no
+/// channel changes by more than `SAND_STEP` from a pixel to the one on its
+/// right or under it.
 ///
-/// Why it matters: grains on the background read as stars in a night sky
-/// and not as a beach, and grains that clump or thin out read as a stain.
+/// Why it matters: single grains on one flat colour read as a speckle of
+/// blocks, and flat sand reads as a painted wall and not as a beach.
 #[test]
-fn dry_sand_is_gold_with_an_even_scatter_of_rose_grains() {
+fn dry_sand_is_shaded_gently_with_no_speckle() {
     // Given:
     let scene = ticked(7, AREA, 200);
 
@@ -180,20 +240,31 @@ fn dry_sand_is_gold_with_an_even_scatter_of_rose_grains() {
     let dry = rows - ((HIGH_TIDE + SWASH) * rows as f32).ceil() as usize - 1;
 
     // Then:
-    for top in (0..dry / 4 * 4).step_by(4) {
-        for left in (0..grid[0].len()).step_by(4) {
-            let tile: Vec<Color> = (0..16)
-                .map(|at| grid[top + at / 4][left + at % 4])
-                .collect();
-            let rose = tile.iter().filter(|each| **each == PALETTE.rose).count();
-            let gold = tile.iter().filter(|each| **each == PALETTE.gold).count();
-            assert_eq!(
-                (rose, gold),
-                (GRAINS, 16 - GRAINS),
-                "tile at ({left}, {top})"
-            );
+    let mut shades: Vec<Color> = Vec::new();
+    for y in 0..dry {
+        for x in 0..grid[0].len() {
+            let colour = grid[y][x];
+            assert!(is_sand(colour), "{colour:?} at ({x}, {y})");
+            if !shades.contains(&colour) {
+                shades.push(colour);
+            }
+            for (other, at) in [
+                (grid[y].get(x + 1), (x + 1, y)),
+                (grid.get(y + 1).map(|row| &row[x]), (x, y + 1)),
+            ] {
+                let Some(other) = other.filter(|_| at.1 < dry) else {
+                    continue;
+                };
+                let ((r, g, b), (r2, g2, b2)) = (channels(colour), channels(*other));
+                let step = r.abs_diff(r2).max(g.abs_diff(g2)).max(b.abs_diff(b2));
+                assert!(
+                    step <= SAND_STEP,
+                    "{colour:?} at ({x}, {y}) beside {other:?} at {at:?}"
+                );
+            }
         }
     }
+    assert!(shades.len() >= 4, "dry sand in {shades:?}");
 }
 
 /// Sand that the water leaves stays wet for a while, then dries.
@@ -232,18 +303,20 @@ fn sand_the_sea_leaves_dries_in_a_fixed_time() {
     }
 }
 
-/// Wet sand is drawn darker than dry sand, and its grains hide.
+/// Wet sand is drawn darker than dry sand, and lightens as it dries.
 /// Given: the scene at a hundred by thirty, over two minutes.
-/// When: every sand pixel is read with its wetness.
-/// Then: a muted pixel is always wet, a rose grain is always dry, and wet
-/// sand shows on screen.
+/// When: every sand pixel is read with its wetness, in four bands from dry
+/// to just left by the sea.
+/// Then: each band shows, and the mean brightness of each band is below
+/// the band that is drier.
 ///
 /// Why it matters: if the wet sand looks like the dry, the drying cannot
-/// be seen, and the tide leaves no trace.
+/// be seen and the tide leaves no trace, and wet sand that turns dry in one
+/// step leaves a hard line where it should fade.
 #[test]
-fn wet_sand_is_muted_and_its_grains_hide() {
+fn wet_sand_is_darker_and_lightens_as_it_dries() {
     let mut scene = ticked(7, AREA, 0);
-    let mut muted_seen = 0;
+    let mut bands = [(0_u64, 0_u64); 4];
     for tick in 0..2000 {
         scene.tick(AREA);
         if tick % 25 != 0 {
@@ -252,22 +325,35 @@ fn wet_sand_is_muted_and_its_grains_hide() {
 
         // When:
         let grid = pixels(&render(&scene, AREA, AREA), AREA);
-
-        // Then:
         for (row, line) in grid.iter().enumerate() {
             for (x, colour) in line.iter().enumerate() {
+                if !is_sand(*colour) {
+                    continue;
+                }
                 let wetness = scene.wetness(x, row);
-                if *colour == PALETTE.muted {
-                    assert!(wetness > 0, "tick {tick}: dry muted pixel ({x}, {row})");
-                    muted_seen += 1;
-                }
-                if *colour == PALETTE.rose {
-                    assert_eq!(wetness, 0, "tick {tick}: wet grain ({x}, {row})");
-                }
+                let band = if wetness == 0 {
+                    0
+                } else {
+                    1 + (3 * (wetness - 1) / DRY_TICKS) as usize
+                };
+                bands[band].0 += u64::from(theme::luma(*colour));
+                bands[band].1 += 1;
             }
         }
     }
-    assert!(muted_seen > 0, "no wet sand was ever drawn");
+
+    // Then:
+    let means: Vec<u64> = bands
+        .iter()
+        .map(|(sum, count)| {
+            assert!(*count > 0, "a band of wetness never shows: {bands:?}");
+            sum / count
+        })
+        .collect();
+    assert!(
+        means.windows(2).all(|pair| pair[0] > pair[1]),
+        "mean brightness from dry to wet: {means:?}"
+    );
 }
 
 /// The whole beach is sand, and none of it is the background.
@@ -306,7 +392,7 @@ fn no_part_of_the_beach_is_the_background() {
 }
 
 fn is_shell_or_pebble(colour: Color) -> bool {
-    colour == PALETTE.love || colour == PALETTE.subtle
+    is_shell(colour) || is_pebble(colour)
 }
 
 /// Shells and pebbles lie where the sea reaches, and the sea hides them.
@@ -412,7 +498,7 @@ fn a_shell_is_drawn_at_a_quarter_of_a_cell() {
 
             // Then:
             for (_, cell) in cells(&grid) {
-                if !cell.contains(&PALETTE.love) {
+                if !cell.iter().any(|each| is_shell(*each)) {
                     continue;
                 }
                 let rows: Vec<&[Color]> = cell.chunks(CELL_WIDTH).collect();
@@ -423,6 +509,138 @@ fn a_shell_is_drawn_at_a_quarter_of_a_cell() {
             fine > 0,
             "seed {seed}: every shell is a block of half cells"
         );
+    }
+}
+
+/// The sea darkens from its edge down to the bottom of the pane.
+/// Given: the scene of three seeds, over one whole tide.
+/// When: each column of the sea is read from its top pixel down, every
+/// fifty ticks.
+/// Then: no pixel is brighter than the one above it, and over the whole
+/// tide the sea shows eight shades or more.
+///
+/// Why it matters: a sea of one flat colour reads as a painted band, and a
+/// lighter pixel under a darker one reads as a stain in the water.
+#[test]
+fn the_sea_darkens_with_depth() {
+    for seed in [1, 7, 42] {
+        let mut scene = ticked(seed, AREA, 1);
+        let mut shades: Vec<Color> = Vec::new();
+        for tick in 0..TIDE_TICKS {
+            scene.tick(AREA);
+            if tick % 50 != 0 {
+                continue;
+            }
+
+            // When:
+            let grid = pixels(&render(&scene, AREA, AREA), AREA);
+
+            // Then:
+            for (x, line) in waterlines(&grid).into_iter().enumerate() {
+                let sea: Vec<Color> = grid[grid.len() - line..].iter().map(|row| row[x]).collect();
+                for (depth, pair) in sea.windows(2).enumerate() {
+                    assert!(
+                        theme::luma(pair[1]) <= theme::luma(pair[0]),
+                        "seed {seed}, tick {tick}: column {x} lightens from {:?} to {:?} at depth {depth}",
+                        pair[0],
+                        pair[1]
+                    );
+                }
+                for colour in sea {
+                    if !shades.contains(&colour) {
+                        shades.push(colour);
+                    }
+                }
+            }
+        }
+        assert!(shades.len() >= 8, "seed {seed}: the sea in {shades:?}");
+    }
+}
+
+/// The foam at the edge of the sea fades into the water under it.
+/// Given: the scene of three seeds, over one whole tide.
+/// When: the top two cells of pixels of each column of the sea are read,
+/// every fifty ticks.
+/// Then: in most of those columns they hold three colours or more, foam at
+/// the top and mixes of foam and the water under it.
+///
+/// Why it matters: a band of foam that ends in a hard line on the water
+/// reads as a stripe of paint and not as froth on a wave.
+#[test]
+fn the_foam_fades_into_the_sea() {
+    for seed in [1, 7, 42] {
+        let mut scene = ticked(seed, AREA, 1);
+        let (mut soft, mut columns) = (0, 0);
+        for tick in 0..TIDE_TICKS {
+            scene.tick(AREA);
+            if tick % 50 != 0 {
+                continue;
+            }
+
+            // When:
+            let grid = pixels(&render(&scene, AREA, AREA), AREA);
+            for (x, line) in waterlines(&grid).into_iter().enumerate() {
+                if line < 2 * CELL_HEIGHT {
+                    continue;
+                }
+                let top = grid.len() - line;
+                let mut edge: Vec<Color> = Vec::new();
+                for row in &grid[top..top + 2 * CELL_HEIGHT] {
+                    if !edge.contains(&row[x]) {
+                        edge.push(row[x]);
+                    }
+                }
+                columns += 1;
+                soft += usize::from(edge.len() >= 3);
+            }
+        }
+
+        // Then:
+        assert!(
+            soft * 2 > columns,
+            "seed {seed}: {soft} of {columns} columns fade from the foam"
+        );
+    }
+}
+
+/// Each shell and pebble has a shade of its own.
+/// Given: the scene of three seeds, over one whole tide.
+/// When: the colours of the shells and of the pebbles are read every fifty
+/// ticks.
+/// Then: the shells show three colours or more, and so do the pebbles.
+///
+/// Why it matters: shells all in one flat colour read as a pattern stamped
+/// on the sand and not as things that lie on a beach.
+#[test]
+fn shells_and_pebbles_are_shaded() {
+    for seed in [1, 7, 42] {
+        let mut scene = ticked(seed, AREA, 1);
+        let (mut shells, mut pebbles): (Vec<Color>, Vec<Color>) = (Vec::new(), Vec::new());
+        for tick in 0..TIDE_TICKS {
+            scene.tick(AREA);
+            if tick % 50 != 0 {
+                continue;
+            }
+
+            // When:
+            let grid = pixels(&render(&scene, AREA, AREA), AREA);
+            for colour in grid.into_iter().flatten() {
+                let seen = if is_shell(colour) {
+                    &mut shells
+                } else if is_pebble(colour) {
+                    &mut pebbles
+                } else {
+                    continue;
+                };
+                if !seen.contains(&colour) {
+                    seen.push(colour);
+                }
+            }
+        }
+
+        // Then:
+        assert!(shells.len() >= 3, "seed {seed}: shells in {shells:?}");
+        assert!(pebbles.len() >= 3, "seed {seed}: pebbles in {pebbles:?}");
     }
 }
 
