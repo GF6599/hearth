@@ -8,7 +8,6 @@
 //!              ├── dither    The ordered dither the scenes share
 //!              ├── splitmix  The hash the scenes share for fixed noise
 //!              ├── app       The panes, the picker, and the keys
-//!              ├── braille   Eight dots to a cell, in braille glyphs
 //!              ├── events    Terminal events → App mutations
 //!              ├── mark      The {hearth} lockup above the picker
 //!              ├── pane      One scene, its seed, and the ticks it owes
@@ -19,7 +18,6 @@
 //!              ├── history   The commits the river scene draws
 //!              ├── highlight Colours a source file by its grammar
 //!              ├── minimap   A whole file drawn small, two lines to a row
-//!              ├── quadrant  Four pixels to a cell, in quadrant glyphs
 //!              ├── octant    Eight pixels to a cell, in octant glyphs
 //!              ├── snippet   Cuts a source file into one snippet per function
 //!              ├── tree      The rows of a file tree for one open path
@@ -27,7 +25,6 @@
 //! ```
 
 pub mod app;
-pub mod braille;
 pub mod cli;
 pub mod clock;
 pub mod config;
@@ -41,7 +38,6 @@ pub mod minimap;
 pub mod octant;
 pub mod pane;
 pub mod picker;
-pub mod quadrant;
 pub mod scene;
 pub mod scenes;
 pub mod snippet;
