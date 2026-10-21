@@ -168,8 +168,8 @@ fn a_turn_from_right_to_down_draws_a_joined_line_of_pixels() {
 
 /// Given: a pipe at pixel (18, 9), in the last column, moving right.
 /// When: it moves right twice.
-/// Then: the second step draws its path in the first two pixels of the
-/// same pixel row, and only the two cells at either edge show the pipe.
+/// Then: the second step lights the first two pixels of the same pixel
+/// row, and only the two cells at either edge show the pipe.
 #[test]
 fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
     // Given, when:
@@ -188,7 +188,7 @@ fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
     let buffer = render(&scene, area);
     let lit = lit(&buffer, palette.base);
     let line = BTreeSet::from([(18, 9), (19, 9), (0, 9), (1, 9)]);
-    assert_eq!(places(&paths(&lit, palette)), line);
+    assert_eq!(places(&lit), line);
     assert_eq!(drawn(&buffer), 2);
 }
 
