@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use rand::RngExt;
@@ -6,8 +6,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
 
-use crate::braille::{self, CELL_HEIGHT, CELL_WIDTH};
 use crate::dither;
+use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -65,7 +65,8 @@ const FIGURE_TICKS: u32 = DRAW_TICKS + HOLD_TICKS + FADE_TICKS;
 pub const TRAIL: usize = 10;
 /// Ticks from one shooting star to the next, about 18 to 45 seconds. A
 /// shooting star waits while a figure shows, and a figure waits while a
-/// shooting star flies, because one braille cell holds one colour.
+/// shooting star flies. A cell holds two colours and the sky takes one, so
+/// where the two lines crossed one would draw in the colour of the other.
 const METEOR_WAIT: RangeInclusive<u32> = 300..=750;
 /// How far a shooting star flies before it burns out, in dots.
 const METEOR_RUN: RangeInclusive<f32> = 40.0..=80.0;
@@ -439,6 +440,50 @@ impl Figure {
     }
 }
 
+impl Constellations {
+    /// Draws the dots of the lines on a canvas over the cells they cross
+    /// alone. The lines are a few short strokes, so a canvas over the whole
+    /// pane would spend most of each frame on empty sky.
+    fn draw_lines(&self, lines: &[((i32, i32), Color)], area: Rect, buf: &mut Buffer) {
+        let (width, height) = (CELL_WIDTH as i32, CELL_HEIGHT as i32);
+        let cells: Vec<(i32, i32)> = lines
+            .iter()
+            .map(|((x, y), _)| (x.div_euclid(width), y.div_euclid(height)))
+            .filter(|(column, row)| {
+                (0..i32::from(area.width)).contains(column)
+                    && (0..i32::from(area.height)).contains(row)
+            })
+            .collect();
+        let (Some(left), Some(right), Some(top), Some(bottom)) = (
+            cells.iter().map(|cell| cell.0).min(),
+            cells.iter().map(|cell| cell.0).max(),
+            cells.iter().map(|cell| cell.1).min(),
+            cells.iter().map(|cell| cell.1).max(),
+        ) else {
+            return;
+        };
+        let (Ok(columns), Ok(rows), Ok(column), Ok(row)) = (
+            u16::try_from(right - left + 1),
+            u16::try_from(bottom - top + 1),
+            u16::try_from(left),
+            u16::try_from(top),
+        ) else {
+            return;
+        };
+        let mut canvas = Canvas::new(columns, rows, self.palette.base);
+        for &((x, y), colour) in lines {
+            let (Ok(x), Ok(y)) = (
+                usize::try_from(x - left * width),
+                usize::try_from(y - top * height),
+            ) else {
+                continue;
+            };
+            canvas.set(x, y, colour);
+        }
+        canvas.render(Rect::new(area.x + column, area.y + row, columns, rows), buf);
+    }
+}
+
 impl Scene for Constellations {
     fn tick(&mut self, area: Rect) {
         if (area.width, area.height) != (self.width, self.height) {
@@ -476,30 +521,19 @@ impl Scene for Constellations {
         };
         let at = |x: i32, y: i32| Position::new(area.x + x as u16, area.y + y as u16);
 
-        let mut draw_dots = |dots: Vec<(i32, i32)>, colour: Color| {
-            let mut cells = BTreeMap::new();
-            for (x, y) in dots {
-                let (column, row) = (x / CELL_WIDTH as i32, y / CELL_HEIGHT as i32);
-                let bit = braille::dot(
-                    (x % CELL_WIDTH as i32) as usize,
-                    (y % CELL_HEIGHT as i32) as usize,
-                );
-                *cells.entry((column, row)).or_insert(0) |= bit;
-            }
-            for ((column, row), dots) in cells {
-                if inside(column, row) {
-                    buf[at(column, row)]
-                        .set_char(braille::glyph(dots))
-                        .set_fg(colour);
-                }
-            }
-        };
+        let mut lines: Vec<((i32, i32), Color)> = Vec::new();
         if let Some(figure) = &self.figure {
-            draw_dots(figure.dots(), figure.colour);
+            lines.extend(figure.dots().into_iter().map(|dot| (dot, figure.colour)));
         }
         if let Some(meteor) = &self.meteor {
-            draw_dots(meteor.dots(), self.palette.gold);
+            lines.extend(
+                meteor
+                    .dots()
+                    .into_iter()
+                    .map(|dot| (dot, self.palette.gold)),
+            );
         }
+        self.draw_lines(&lines, area, buf);
 
         for star in &self.stars {
             let (x, y) = (i32::from(star.x), i32::from(star.y));
