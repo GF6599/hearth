@@ -1,4 +1,4 @@
-use std::ops::{Range, RangeInclusive};
+use std::ops::RangeInclusive;
 
 use rand::RngExt;
 use ratatui::buffer::Buffer;
@@ -6,7 +6,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::config::Background;
-use crate::dither;
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
@@ -16,8 +15,19 @@ use crate::theme::{self, Palette};
 pub const PIXELS_PER_BIRD: usize = 80;
 pub const FLOCK: RangeInclusive<usize> = 60..=500;
 
-/// A cell with more pixels than this draws in the bright role.
-const FAINT_PIXELS: u32 = 2;
+/// How strongly a bird covers its pixels, against the share of its square
+/// on each, so a bird between four pixels still reads as a bird and not as
+/// a smudge.
+const BIRD_STRENGTH: f32 = 1.6;
+/// The cover past which a pixel turns from subtle toward text, and the
+/// cover more at which it is text, so a dense fold of the flock is
+/// brighter than its edge.
+const FAINT_COVER: f32 = 1.0;
+const BRIGHT_COVER: f32 = 1.5;
+/// The steps a cover rounds to. The canvas samples its own shapes in
+/// sixteenths of a pixel, and a cell shows two colours, so a finer cover
+/// shows no more and only adds colours for each cell to choose between.
+const COVER_STEPS: f32 = 16.0;
 
 /// Distances in pixels, speeds in pixels a tick.
 const VISION: f32 = 8.0;
@@ -49,16 +59,15 @@ const FLEE_RADIUS: f32 = 12.0;
 /// The hawk flies at this share of the sky's height, so a bird that flees
 /// up or down never meets the top or the trees near it.
 const HAWK_BAND: (f32, f32) = (0.25, 0.6);
-/// The hawk's pixels around its centre: two wings swept up from a body.
-const HAWK_SHAPE: [(isize, isize); 8] = [
-    (-3, -1),
-    (-2, -1),
-    (-1, 0),
-    (0, 0),
-    (1, 0),
-    (2, -1),
-    (3, -1),
-    (0, 1),
+/// The hawk's outline around its centre, in pixels: two wings swept up
+/// from a body that hangs below them.
+const HAWK_SHAPE: [(f32, f32); 6] = [
+    (-3.5, -1.4),
+    (0.0, -0.2),
+    (3.5, -1.4),
+    (3.5, -0.4),
+    (0.0, 1.4),
+    (-3.5, -0.4),
 ];
 
 /// The trees take one cell row for each this many rows of the pane, and
@@ -71,6 +80,38 @@ const POINTED_WIDTH: usize = 3;
 /// One crown in this many is pointed.
 const POINTED_ODDS: u32 = 3;
 const CROWN_GAP: RangeInclusive<usize> = 0..=3;
+/// The points across each pixel column at which the skyline is read, so a
+/// slope of the trees mixes into the sky across its pixels too.
+const SKYLINE_SAMPLES: [f32; 2] = [-0.25, 0.25];
+
+/// One crown of the trees: its first cell column, its width in cells, its
+/// height in halves of a cell, and whether it is pointed.
+#[derive(Debug, Clone, Copy)]
+struct Crown {
+    start: usize,
+    width: usize,
+    top: usize,
+    pointed: bool,
+}
+
+impl Crown {
+    /// Its height in halves of a cell, `across` cells from its left edge,
+    /// or none past its edges.
+    fn height(&self, across: f32) -> Option<f32> {
+        if !(0.0..self.width as f32).contains(&across) {
+            return None;
+        }
+        // Twice the distance from the middle, so the drop matches the
+        // crown's cells at their middles.
+        let off_middle = (2.0 * across - self.width as f32).abs();
+        let drop = if self.pointed {
+            off_middle
+        } else {
+            off_middle * off_middle / (2 * self.width) as f32
+        };
+        Some((self.top as f32 - drop).max(1.0))
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Bird {
@@ -106,8 +147,12 @@ pub struct Murmuration {
     /// The pixels above the trees, where the flock flies.
     sky: usize,
     tree_rows: usize,
-    /// The height of the trees in each cell column, in halves of a cell.
-    trees: Vec<usize>,
+    /// The crowns of the trees, left to right.
+    crowns: Vec<Crown>,
+    /// The sky and the trees, which change only with the size of the pane,
+    /// drawn once for each size. A frame copies it, so each mixes only the
+    /// birds and the hawk.
+    backdrop: Option<Canvas>,
     birds: Vec<Bird>,
     hawk: Option<Hawk>,
     /// Ticks until the next hawk.
@@ -131,7 +176,8 @@ impl Murmuration {
             height: 0,
             sky: 0,
             tree_rows: 0,
-            trees: Vec::new(),
+            crowns: Vec::new(),
+            backdrop: None,
             birds: Vec::new(),
             hawk: None,
             hawk_wait: 0,
@@ -357,11 +403,11 @@ impl Murmuration {
 }
 
 impl Murmuration {
-    /// A line of crowns over a ground one pixel high: mostly domes, and now
-    /// and then a narrow pointed one. No crown fills every tree row, so the
-    /// sky shows between the tallest trees.
+    /// A line of crowns over a ground half a cell high: mostly domes, and
+    /// now and then a narrow pointed one. No crown fills every tree row, so
+    /// the sky shows between the tallest trees.
     fn grow_trees(&mut self, columns: usize) {
-        self.trees = vec![1; columns];
+        self.crowns.clear();
         let tallest = self.tree_rows * 2;
         if tallest < 3 {
             return;
@@ -375,19 +421,26 @@ impl Murmuration {
                 self.rng.random_range(DOME_WIDTH)
             };
             let top = self.rng.random_range(2..tallest);
-            for (offset, height) in self.trees.iter_mut().skip(x).take(width).enumerate() {
-                // Twice the distance from the middle, so an even width has
-                // a middle between two cells.
-                let off_middle = (2 * offset).abs_diff(width - 1);
-                let drop = if pointed {
-                    off_middle
-                } else {
-                    off_middle * off_middle / (2 * width)
-                };
-                *height = (*height).max(top.saturating_sub(drop).max(1));
-            }
+            self.crowns.push(Crown {
+                start: x,
+                width,
+                top,
+                pointed,
+            });
             x += width + self.rng.random_range(CROWN_GAP);
         }
+    }
+
+    /// The height of the trees at `x` pixels from the left, in pixels: the
+    /// tallest crown there, or the ground.
+    fn skyline(&self, x: f32) -> f32 {
+        let across = x / CELL_WIDTH as f32;
+        let halves = self
+            .crowns
+            .iter()
+            .filter_map(|crown| crown.height(across - crown.start as f32))
+            .fold(1.0, f32::max);
+        halves * (CELL_HEIGHT / 2) as f32
     }
 
     /// Base, surface and overlay from the darkest to the lightest, so the
@@ -405,20 +458,47 @@ impl Murmuration {
         bands
     }
 
-    /// The sky in thirds of `bands` from the top. Two thirds blend over the
-    /// rows either side of their edge, a quarter, a half and three quarters
-    /// of the cells in the lower one, in an ordered dither that reads as a
-    /// gradient and not as a pattern.
-    fn sky_colour(bands: [Color; 3], x: usize, row: usize, sky_rows: usize) -> Color {
-        let mut band = 0;
-        for edge in 1..bands.len() {
-            let start = edge * sky_rows / bands.len();
-            let quarters = (row + 2).saturating_sub(start).min(4);
-            if dither::lights(quarters * 4, x, row) {
-                band = edge;
+    /// The sky of a pane `columns` by `rows` cells, lightening half a cell
+    /// at a time from the darkest band at the top through the middle band
+    /// to the lightest over the trees, with the trees in front. The three
+    /// bands lie a few levels apart, so a finer step shows no more, and a
+    /// cell of two halves keeps both colours exactly.
+    fn backdrop(&self, columns: u16, rows: u16) -> Canvas {
+        let mut canvas = Canvas::new(columns, rows, self.palette);
+        let bands = self.sky_bands();
+        let sky = usize::from(rows).saturating_sub(self.tree_rows) * CELL_HEIGHT;
+        let bottom = usize::from(rows) * CELL_HEIGHT;
+        let half = CELL_HEIGHT / 2;
+        let halves = sky / half;
+        // A gradient one pixel a half cell, so the canvas mixes the bands.
+        let mut ruler = Canvas::new(1, rows, self.palette);
+        ruler.gradient(0..halves / 2, bands[0], bands[1]);
+        ruler.gradient(halves / 2..halves, bands[1], bands[2]);
+        for step in 0..halves {
+            let colour = ruler.get(0, step).unwrap_or(bands[2]);
+            canvas.gradient(step * half..(step + 1) * half, colour, colour);
+        }
+        canvas.gradient(sky..bottom, bands[2], bands[2]);
+        if self.tree_rows == 0 {
+            return canvas;
+        }
+        // The centre of the pixel at row y lies at y, so the ground's lower
+        // edge lies half a pixel below the last row.
+        let ground = bottom as f32 - 0.5;
+        for x in 0..canvas.width() {
+            let tops = SKYLINE_SAMPLES.map(|offset| ground - self.skyline(x as f32 + offset));
+            for y in sky..bottom {
+                let coverage = tops
+                    .iter()
+                    .map(|top| (y as f32 + 0.5 - top).clamp(0.0, 1.0))
+                    .sum::<f32>()
+                    / tops.len() as f32;
+                if coverage > 0.0 {
+                    canvas.blend(x, y, self.palette.muted, coverage);
+                }
             }
         }
-        bands[band]
+        canvas
     }
 }
 
@@ -433,6 +513,7 @@ impl Scene for Murmuration {
             self.tree_rows = (rows / PANE_ROWS_PER_TREE_ROW).min(MOST_TREE_ROWS);
             self.sky = (rows - self.tree_rows) * CELL_HEIGHT;
             self.grow_trees(usize::from(area.width));
+            self.backdrop = Some(self.backdrop(area.width, area.height));
             self.spawn();
             self.next = None;
         }
@@ -463,97 +544,105 @@ impl Scene for Murmuration {
         let columns = usize::from(area.width);
         let rows = usize::from(area.height);
         let sky_rows = rows.saturating_sub(self.tree_rows);
-        let bands = self.sky_bands();
-        let mut canvas = Canvas::new(area.width, area.height, self.palette);
-        let fill = |canvas: &mut Canvas, column: usize, rows: Range<usize>, colour: Color| {
-            for y in rows {
-                for x in column * CELL_WIDTH..(column + 1) * CELL_WIDTH {
-                    canvas.set(x, y, colour);
-                }
+        let fresh;
+        let backdrop = match &self.backdrop {
+            Some(backdrop)
+                if (backdrop.width(), backdrop.height())
+                    == (columns * CELL_WIDTH, rows * CELL_HEIGHT) =>
+            {
+                backdrop
+            }
+            _ => {
+                fresh = self.backdrop(area.width, area.height);
+                &fresh
             }
         };
-        let skies: Vec<Color> = (0..columns * sky_rows)
-            .map(|index| Self::sky_colour(bands, index % columns, index / columns, sky_rows))
-            .collect();
-        for (index, &sky) in skies.iter().enumerate() {
-            let (column, row) = (index % columns, index / columns);
-            fill(
-                &mut canvas,
-                column,
-                row * CELL_HEIGHT..(row + 1) * CELL_HEIGHT,
-                sky,
-            );
-        }
+        let mut canvas = backdrop.clone();
+        let (width, sky) = (canvas.width(), sky_rows * CELL_HEIGHT);
 
-        // The pixels of the birds in each cell, so the birds of a cell take
-        // one shade.
-        let mut cells = vec![0_u8; columns * sky_rows];
+        // How many birds cover each pixel of the sky. A bird is one pixel
+        // across, shared between the four pixels nearest its middle by how
+        // much of each it covers. A bird at (x, y) sits on the pixel whose
+        // centre lies at the middle of its square, half a pixel on.
+        let mut cover = vec![0.0_f32; width * sky];
         for (x, y) in self.birds_between() {
-            let (x, y) = (x as usize, y as usize);
-            let (column, row) = (x / CELL_WIDTH, y / CELL_HEIGHT);
-            if column < columns && row < sky_rows {
-                cells[row * columns + column] |=
-                    1 << (y % CELL_HEIGHT * CELL_WIDTH + x % CELL_WIDTH);
+            let (x, y) = (x - 0.5, y - 0.5);
+            let (left, top) = (x.floor(), y.floor());
+            let (right, low) = (x - left, y - top);
+            for (dx, dy, share) in [
+                (0, 0, (1.0 - right) * (1.0 - low)),
+                (1, 0, right * (1.0 - low)),
+                (0, 1, (1.0 - right) * low),
+                (1, 1, right * low),
+            ] {
+                let (column, row) = (left as isize + dx, top as isize + dy);
+                if let (Ok(column), Ok(row)) = (usize::try_from(column), usize::try_from(row))
+                    && column < width
+                    && row < sky
+                {
+                    cover[row * width + column] += share * BIRD_STRENGTH;
+                }
             }
         }
-        for (index, &birds) in cells.iter().enumerate() {
-            let (column, row) = (index % columns, index / columns);
-            let colour = if birds.count_ones() > FAINT_PIXELS {
-                self.palette.text
-            } else {
-                self.palette.subtle
-            };
-            for pixel in (0..8).filter(|pixel| birds >> pixel & 1 == 1) {
-                canvas.set(
-                    column * CELL_WIDTH + pixel % CELL_WIDTH,
-                    row * CELL_HEIGHT + pixel / CELL_WIDTH,
-                    colour,
-                );
+        let mut shades = [None; (COVER_STEPS * (FAINT_COVER + BRIGHT_COVER)) as usize + 1];
+        let mut flown = vec![false; columns * sky_rows];
+        for (index, &birds) in cover.iter().enumerate() {
+            let step = (birds.min(FAINT_COVER + BRIGHT_COVER) * COVER_STEPS).round();
+            if step > 0.0 {
+                let (x, y) = (index % width, index / width);
+                flown[y / CELL_HEIGHT * columns + x / CELL_WIDTH] = true;
+                let birds = step / COVER_STEPS;
+                let colour = *shades[step as usize].get_or_insert_with(|| {
+                    octant::mix(
+                        self.palette.subtle,
+                        self.palette.text,
+                        (birds - FAINT_COVER) / BRIGHT_COVER,
+                    )
+                });
+                canvas.blend(x, y, colour, birds.min(1.0));
             }
         }
         // The flock keeps clear of the hawk, so a cell of the hawk holds the
         // sky and the hawk.
-        if let Some(hawk) = self.hawk_between() {
-            let centre = (hawk.0.floor() as isize, hawk.1.floor() as isize);
-            for (dx, dy) in HAWK_SHAPE {
-                if let (Ok(x), Ok(y)) = (
-                    usize::try_from(centre.0 + dx),
-                    usize::try_from(centre.1 + dy),
-                ) && y < sky_rows * CELL_HEIGHT
-                {
-                    canvas.set(x, y, self.palette.love);
-                }
-            }
-        }
-
-        let tallest = self.tree_rows * 2;
-        for row in sky_rows..rows {
-            for column in 0..columns {
-                let height = self.trees.get(column).copied().unwrap_or(0);
-                let upper = (row - sky_rows) * 2;
-                for half in [upper, upper + 1] {
-                    let colour = if tallest - half <= height {
-                        self.palette.muted
-                    } else {
-                        bands[2]
-                    };
-                    let top = row * CELL_HEIGHT + (half - upper) * CELL_HEIGHT / 2;
-                    fill(&mut canvas, column, top..top + CELL_HEIGHT / 2, colour);
+        if let Some((x, y)) = self.hawk_between() {
+            let corners = HAWK_SHAPE.map(|(dx, dy)| (x + dx, y + dy));
+            canvas.polygon(&corners, self.palette.love);
+            for (x, y) in corners {
+                let (column, row) = (x / CELL_WIDTH as f32, y / CELL_HEIGHT as f32);
+                for row in row.floor() as isize - 1..=row.floor() as isize + 1 {
+                    for column in column.floor() as isize - 1..=column.floor() as isize + 1 {
+                        if let (Ok(column), Ok(row)) =
+                            (usize::try_from(column), usize::try_from(row))
+                            && column < columns
+                            && row < sky_rows
+                        {
+                            flown[row * columns + column] = true;
+                        }
+                    }
                 }
             }
         }
         canvas.render(area, buf);
 
         // A cell of the sky keeps the sky behind its birds, as the base
-        // stays behind, so the bands of the sky read as one background.
-        for (index, &sky) in skies.iter().enumerate() {
+        // stays behind, so the sky reads as one background.
+        for (index, _) in flown.iter().enumerate().filter(|(_, flown)| **flown) {
             let (column, row) = (index % columns, index / columns);
             let cell = &mut buf[(area.x + column as u16, area.y + row as u16)];
-            if cell.fg != sky || cell.bg == sky {
+            let skies = (0..CELL_WIDTH * CELL_HEIGHT).filter_map(|pixel| {
+                backdrop.get(
+                    column * CELL_WIDTH + pixel % CELL_WIDTH,
+                    row * CELL_HEIGHT + pixel / CELL_WIDTH,
+                )
+            });
+            let (front, back) = skies.fold((false, false), |(front, back), sky| {
+                (front || sky == cell.fg, back || sky == cell.bg)
+            });
+            if !front || back {
                 continue;
             }
             if let Some(turned) = octant::complement(cell.symbol()) {
-                let bird = cell.bg;
+                let (bird, sky) = (cell.bg, cell.fg);
                 cell.set_char(turned).set_fg(bird).set_bg(sky);
             }
         }
