@@ -15,7 +15,7 @@ use hearth::cli::Cli;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::history::{DEPTH, History};
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{ALL, Rng, Scene, SceneKind, Settings};
 use hearth::scenes::river::{NOTICE, READING, River};
 use hearth::scenes::typing::Speed;
@@ -132,31 +132,97 @@ fn rows(buffer: &Buffer, area: Rect) -> Vec<String> {
 
 type Cells = Vec<(u16, u16)>;
 
-/// How many pixels of a cell show one of `colours`, and none for a cell
+/// What a pixel of the river shows. The scene shades each part with mixes
+/// of theme colours, so a test reads a part by its hue and its brightness
+/// and not by one exact colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    /// The ground beyond the banks, in the base.
+    Ground,
+    /// The bed of the river: dark, and not the base.
+    Bed,
+    /// Sand: warm, red over green over blue, as gold is.
+    Sand,
+    /// Water, as pine is: more green than red.
+    Water,
+    /// Foam: water brighter than the mix half way from pine to foam.
+    Foam,
+    /// A stone: bright, blue over red over green, as subtle is.
+    Stone,
+    /// The stone of a merge: a stone with clearly more red than green, as
+    /// iris is.
+    Merge,
+}
+
+fn part(colour: Color) -> Part {
+    let Color::Rgb(r, g, b) = colour else {
+        panic!("{colour:?} is not a colour of the theme");
+    };
+    let luma = theme::luma(colour);
+    if colour == PALETTE.base {
+        Part::Ground
+    } else if g > r {
+        let half = theme::luma(octant::mix(PALETTE.pine, PALETTE.foam, 0.5));
+        if luma > half { Part::Foam } else { Part::Water }
+    } else if r > g && g >= b {
+        Part::Sand
+    } else if luma <= theme::luma(PALETTE.muted) {
+        Part::Bed
+    } else if r >= g + 16 {
+        Part::Merge
+    } else {
+        Part::Stone
+    }
+}
+
+/// Given: the Rose Pine roles of each part of the river.
+/// When: each is read as a part.
+/// Then: each role reads as its own part.
+///
+/// Why it matters: the other tests read the river by its parts, and a part
+/// read wrong would pass a broken picture.
+#[test]
+fn each_role_reads_as_its_part_of_the_river() {
+    // Given:
+    for (role, expected) in [
+        (PALETTE.base, Part::Ground),
+        (PALETTE.overlay, Part::Bed),
+        (PALETTE.gold, Part::Sand),
+        (PALETTE.pine, Part::Water),
+        (PALETTE.foam, Part::Foam),
+        (PALETTE.subtle, Part::Stone),
+        (PALETTE.iris, Part::Merge),
+    ] {
+        // When, then:
+        assert_eq!(part(role), expected, "{role:?}");
+    }
+}
+
+/// How many pixels of a cell show one of `parts`, and none for a cell
 /// that holds no octant glyph, such as a letter of a subject.
-fn count(cell: &Cell, colours: &[Color]) -> usize {
+fn count(cell: &Cell, parts: &[Part]) -> usize {
     pixels::shown(cell).map_or(0, |shown| {
         shown
             .iter()
-            .filter(|colour| colours.contains(colour))
+            .filter(|colour| parts.contains(&part(**colour)))
             .count()
     })
 }
 
-/// The cells of the area that draw something in one of `colours`.
-fn cells(buffer: &Buffer, area: Rect, colours: &[Color]) -> Cells {
+/// The cells of the area that draw something in one of `parts`.
+fn cells(buffer: &Buffer, area: Rect, parts: &[Part]) -> Cells {
     area.positions()
-        .filter(|position| count(&buffer[*position], colours) > 0)
+        .filter(|position| count(&buffer[*position], parts) > 0)
         .map(|position| (position.x, position.y))
         .collect()
 }
 
-/// The cells of the lanes: pine or foam in five pixels or more. A ripple on
-/// the open water is pine too, but it lies on one row of pixels, two at the
-/// most in a cell.
+/// The cells of the lanes: water or foam in five pixels or more. A ripple
+/// on the open water is water too, but it lies on one row of pixels, two
+/// at the most in a cell.
 fn lanes(buffer: &Buffer, area: Rect) -> Cells {
     area.positions()
-        .filter(|position| count(&buffer[*position], &[PALETTE.pine, PALETTE.foam]) >= 5)
+        .filter(|position| count(&buffer[*position], &[Part::Water, Part::Foam]) >= 5)
         .map(|position| (position.x, position.y))
         .collect()
 }
@@ -307,8 +373,8 @@ fn a_branch_that_splits_and_merges_draws_two_lanes_that_meet() {
     let buffer = render(&scene, AREA, AREA);
 
     // Then:
-    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
-    let merges = groups(cells(&buffer, AREA, &[PALETTE.iris]));
+    let stones = groups(cells(&buffer, AREA, &[Part::Stone, Part::Merge]));
+    let merges = groups(cells(&buffer, AREA, &[Part::Merge]));
     assert_eq!(stones.len(), 4, "{:#?}", rows(&buffer, AREA));
     assert_eq!(merges.len(), 1, "{:#?}", rows(&buffer, AREA));
     let stone_rows: Vec<u16> = stones.iter().flatten().map(|(_, y)| *y).collect();
@@ -449,7 +515,7 @@ fn a_clone_holds_enough_history_for_the_river() {
 
     // Then:
     let buffer = render(&scene, AREA, AREA);
-    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
+    let stones = groups(cells(&buffer, AREA, &[Part::Stone, Part::Merge]));
     assert_eq!(stones.len(), 3, "{:#?}", rows(&buffer, AREA));
     let _ = fs::remove_dir_all(&remote);
     let _ = fs::remove_dir_all(&cache);
@@ -478,7 +544,7 @@ fn with_no_repo_the_history_is_the_current_directory() {
 
     // Then:
     let buffer = render(&scene, AREA, AREA);
-    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
+    let stones = groups(cells(&buffer, AREA, &[Part::Stone, Part::Merge]));
     assert_eq!(stones.len(), 4, "{:#?}", rows(&buffer, AREA));
     assert_eq!(middle_subject(&buffer, AREA).as_deref(), Some("start"));
     std::env::set_current_dir(std::env::temp_dir()).unwrap();
@@ -631,7 +697,7 @@ fn the_stones_flow_down_the_pane() {
         // When:
         scene.tick(AREA);
         let buffer = render(&scene, AREA, AREA);
-        let stones = cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]);
+        let stones = cells(&buffer, AREA, &[Part::Stone, Part::Merge]);
         let Some(top) = stones.iter().map(|(_, y)| *y).min() else {
             continue;
         };
@@ -679,8 +745,8 @@ fn the_water_flows_along_the_lanes() {
         // When:
         scene.tick(AREA);
         let buffer = render(&scene, AREA, AREA);
-        let stones = cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]);
-        let foam = cells(&buffer, AREA, &[PALETTE.foam]);
+        let stones = cells(&buffer, AREA, &[Part::Stone, Part::Merge]);
+        let foam = cells(&buffer, AREA, &[Part::Foam]);
 
         // Then:
         if !foam.is_empty() {
@@ -723,7 +789,7 @@ fn the_river_reads_the_history_while_it_shows_a_notice() {
     // Then:
     assert!(first.iter().any(|row| row.contains(READING)), "{first:#?}");
     let buffer = render(&scene, AREA, AREA);
-    let stones = groups(cells(&buffer, AREA, &[PALETTE.subtle, PALETTE.iris]));
+    let stones = groups(cells(&buffer, AREA, &[Part::Stone, Part::Merge]));
     assert_eq!(stones.len(), 4, "{:#?}", rows(&buffer, AREA));
     let _ = fs::remove_dir_all(&repo);
 }
@@ -799,13 +865,7 @@ fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
         let buffer = render(&scene, AREA, AREA);
 
         // Then:
-        let river = [
-            PALETTE.overlay,
-            PALETTE.pine,
-            PALETTE.foam,
-            PALETTE.subtle,
-            PALETTE.iris,
-        ];
+        let river = [Part::Bed, Part::Water, Part::Foam, Part::Stone, Part::Merge];
         let mut rivers = Vec::new();
         let rows_text = rows(&buffer, AREA);
         for y in AREA.top()..AREA.bottom() {
@@ -837,7 +897,7 @@ fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
             for bank in [first.checked_sub(1), Some(last + 1)] {
                 let bank = bank.expect("a bank inside the pane");
                 assert!(
-                    count(&buffer[(bank, y)], &[PALETTE.gold]) > 0,
+                    count(&buffer[(bank, y)], &[Part::Sand]) > 0,
                     "row {y}: no bank at {bank}"
                 );
             }
@@ -846,7 +906,7 @@ fn the_river_fills_the_middle_of_the_pane_between_two_banks() {
         for (x, y) in cells(
             &buffer,
             AREA,
-            &[PALETTE.pine, PALETTE.foam, PALETTE.subtle, PALETTE.iris],
+            &[Part::Water, Part::Foam, Part::Stone, Part::Merge],
         ) {
             assert!(
                 rivers
@@ -886,8 +946,8 @@ fn a_stone_sits_in_the_water_of_its_lane() {
             .positions()
             .filter(|position| {
                 let cell = &buffer[*position];
-                count(cell, &[PALETTE.subtle, PALETTE.iris]) > 0
-                    && count(cell, &[PALETTE.pine, PALETTE.foam]) > 0
+                count(cell, &[Part::Stone, Part::Merge]) > 0
+                    && count(cell, &[Part::Water, Part::Foam]) > 0
             })
             .count();
     }
@@ -905,10 +965,10 @@ fn ripples(buffer: &Buffer, area: Rect) -> HashSet<(usize, usize)> {
             area.y + (y / CELL_HEIGHT) as u16,
         )]
     };
-    pixels::showing(buffer, area, |colour| colour == PALETTE.pine)
+    pixels::showing(buffer, area, |colour| part(colour) == Part::Water)
         .into_iter()
         .map(|(place, _)| place)
-        .filter(|place| count(cell(*place), &[PALETTE.pine, PALETTE.foam]) <= CELL_WIDTH)
+        .filter(|place| count(cell(*place), &[Part::Water, Part::Foam]) <= CELL_WIDTH)
         .collect()
 }
 
@@ -979,6 +1039,184 @@ fn the_ripples_glide_between_two_ticks() {
     assert_eq!(
         path[2], 1,
         "half way the ripples move {path:?} from one tick to the next"
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// The brightest pixel of a cell that shows one of `parts`, by luma, or
+/// none.
+fn brightest(cell: &Cell, parts: &[Part]) -> Option<u32> {
+    pixels::shown(cell)?
+        .into_iter()
+        .filter(|colour| parts.contains(&part(*colour)))
+        .map(theme::luma)
+        .max()
+}
+
+/// The water is lighter in the middle of its lane than at its sides.
+/// Given: the river of a linear history of five commits, one lane four
+/// cells wide.
+/// When: it renders.
+/// Then: in most rows where the lane shows as water in four cells side by
+/// side, its two middle cells are brighter than its two outer cells.
+///
+/// Why it matters: a lane of one flat colour reads as a pipe drawn on the
+/// bed and not as water that runs deeper in its middle.
+#[test]
+fn the_water_is_lighter_in_the_middle_of_its_lane() {
+    // Given:
+    let repo = linear("shaded", 5);
+    let mut scene = river(&repo);
+
+    // When:
+    scene.tick(AREA);
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let (mut rows, mut shaded) = (0, 0);
+    for y in AREA.top()..AREA.bottom() {
+        let lane: Vec<u32> = (AREA.left()..AREA.right())
+            .filter(|x| count(&buffer[(*x, y)], &[Part::Water]) >= 5)
+            .filter(|x| count(&buffer[(*x, y)], &[Part::Foam, Part::Stone, Part::Merge]) == 0)
+            .filter_map(|x| brightest(&buffer[(x, y)], &[Part::Water]))
+            .collect();
+        if lane.len() != 4 {
+            continue;
+        }
+        rows += 1;
+        shaded += usize::from(lane[1].min(lane[2]) > lane[0].max(lane[3]));
+    }
+    assert!(
+        rows > 0,
+        "no row shows the lane: {:#?}",
+        self::rows(&buffer, AREA)
+    );
+    assert!(
+        shaded * 2 > rows,
+        "{shaded} of {rows} rows are lighter in the middle"
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// The foam fades in and out as it runs down its lane.
+/// Given: the river of a linear history of five commits.
+/// When: it ticks and renders for a few seconds.
+/// Then: its foam shows in three shades or more.
+///
+/// Why it matters: foam of one flat colour that jumps from cell to cell
+/// reads as a block that blinks and not as froth carried by the water.
+#[test]
+fn the_foam_fades_in_and_out_along_its_lane() {
+    // Given:
+    let repo = linear("froth", 5);
+    let mut scene = river(&repo);
+    let mut shades: Vec<Color> = Vec::new();
+
+    for _ in 0..100 {
+        // When:
+        scene.tick(AREA);
+        let buffer = render(&scene, AREA, AREA);
+        for (_, colour) in pixels::showing(&buffer, AREA, |colour| part(colour) == Part::Foam) {
+            if !shades.contains(&colour) {
+                shades.push(colour);
+            }
+        }
+    }
+
+    // Then:
+    assert!(shades.len() >= 3, "the foam in {shades:?}");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// Each stone is lit from its left and shaded on its right.
+/// Given: the river of a repository whose history splits and merges.
+/// When: it renders.
+/// Then: in each stone the brightest stone pixel is brighter than the
+/// darkest, and lies in a column left of it.
+///
+/// Why it matters: a stone of one flat colour reads as a flat tile on the
+/// water and not as a stone that stands up out of it.
+#[test]
+fn each_stone_is_lit_from_one_side() {
+    // Given:
+    let repo = branched("lit");
+    let mut scene = river(&repo);
+
+    // When:
+    scene.tick(AREA);
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let stones = groups(cells(&buffer, AREA, &[Part::Stone, Part::Merge]));
+    assert_eq!(stones.len(), 4, "{:#?}", rows(&buffer, AREA));
+    for stone in stones {
+        let lit: Vec<(u16, u32)> = stone
+            .iter()
+            .filter_map(|(x, y)| {
+                brightest(&buffer[(*x, *y)], &[Part::Stone, Part::Merge]).map(|luma| (*x, luma))
+            })
+            .collect();
+        let brightest = lit.iter().max_by_key(|(_, luma)| *luma).unwrap();
+        let darkest = lit.iter().min_by_key(|(_, luma)| *luma).unwrap();
+        assert!(
+            brightest.1 > darkest.1 && brightest.0 < darkest.0,
+            "the stone in cells {stone:?} is brightest at {brightest:?} and darkest at {darkest:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// The banks are bands of shaded sand, and the bed turns sandy beside them.
+/// Given: the river of a linear history of five commits.
+/// When: it renders.
+/// Then: the banks show two shades of sand or more, and in most rows the
+/// bed in the cell beside each bank differs from the bed in the middle
+/// of the river.
+///
+/// Why it matters: a bank of one hard line beside a flat bed reads as the
+/// edge of a drawing and not as a shore that slopes into the water.
+#[test]
+fn the_banks_slope_softly_into_the_bed() {
+    // Given:
+    let repo = linear("shore", 5);
+    let mut scene = river(&repo);
+
+    // When:
+    scene.tick(AREA);
+    let buffer = render(&scene, AREA, AREA);
+
+    // Then:
+    let mut sand: Vec<Color> = Vec::new();
+    for (_, colour) in pixels::showing(&buffer, AREA, |colour| part(colour) == Part::Sand) {
+        if !sand.contains(&colour) {
+            sand.push(colour);
+        }
+    }
+    assert!(sand.len() >= 2, "the banks in {sand:?}");
+    let bed = |x: u16, y: u16| {
+        pixels::shown(&buffer[(x, y)])
+            .and_then(|shown| shown.into_iter().find(|colour| part(*colour) == Part::Bed))
+    };
+    let (mut rows, mut sandy) = (0, 0);
+    for y in AREA.top()..AREA.bottom() {
+        let river: Vec<u16> = (AREA.left()..AREA.right())
+            .filter(|x| bed(*x, y).is_some())
+            .collect();
+        let (Some(first), Some(last)) = (river.first(), river.last()) else {
+            continue;
+        };
+        let middle = river
+            .iter()
+            .map(|x| (x.abs_diff((first + last) / 2), *x))
+            .min()
+            .map(|(_, x)| x)
+            .unwrap();
+        rows += 1;
+        sandy += usize::from(bed(*first, y) != bed(middle, y) && bed(*last, y) != bed(middle, y));
+    }
+    assert!(
+        sandy * 2 > rows,
+        "{sandy} of {rows} rows have a sandy bed beside the banks"
     );
     let _ = fs::remove_dir_all(&repo);
 }
