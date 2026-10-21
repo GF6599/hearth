@@ -9,7 +9,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::scene::{Rng, Scene, TICK_RATE};
+use hearth::scene::{FRAME_RATE, Rng, Scene};
 use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
 use hearth::theme;
 use rand::SeedableRng;
@@ -283,8 +283,8 @@ fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
 }
 
 /// Given: a file of one long line, so no newline pauses the typing.
-/// When: the scene ticks for three seconds of wall time at 50 and at 100
-/// keystrokes per second.
+/// When: the scene ticks once a frame for three seconds of wall time at 50
+/// and at 100 keystrokes per second.
 /// Then: it types about 150 and about 300 glyphs.
 ///
 /// Why it matters: the speed is a promise in keystrokes per second, so
@@ -292,7 +292,7 @@ fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
 #[test]
 fn the_scene_types_at_the_speed_it_is_given() {
     let area = Rect::new(0, 0, 1100, 5);
-    let ticks = (3.0 / TICK_RATE.as_secs_f64()).round() as usize;
+    let frames = (3.0 / FRAME_RATE.as_secs_f64()).round() as usize;
     for (speed, expected) in [("50", 150), ("100", 300)] {
         // Given:
         let scene = Typing::new(
@@ -303,7 +303,7 @@ fn the_scene_types_at_the_speed_it_is_given() {
         );
 
         // When:
-        let buffer = render(&ticked(scene, area, ticks), area, area);
+        let buffer = render(&ticked(scene, area, frames), area, area);
 
         // Then:
         let count = typed(&buffer).len();
