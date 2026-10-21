@@ -69,6 +69,9 @@ pub struct Solar {
     width: u16,
     height: u16,
     time: u32,
+    /// The share of a tick since the last, so a planet glides along its
+    /// orbit between two ticks.
+    progress: f64,
     /// Where each planet starts on its orbit, as an angle.
     phases: [f32; ORBITS.len()],
 }
@@ -80,18 +83,20 @@ impl Solar {
             width: 0,
             height: 0,
             time: 0,
+            progress: 0.0,
             phases: std::array::from_fn(|_| rng.random_range(0.0..TAU)),
         }
     }
 
-    /// Where the Moon is, in pixels from the top left of the pane.
+    /// Where the Moon is, in pixels from the top left of the pane, at the
+    /// share of a tick the scene was last given.
     pub fn moon(&self) -> (f32, f32) {
-        let angle = TAU * turned(self.time, MOON_TICKS);
+        let angle = TAU * turned(self.ticks(), MOON_TICKS);
         place(self.planets()[EARTH], MOON_ACROSS, angle)
     }
 
     /// Each planet's middle, Mercury first, in pixels from the top left of
-    /// the pane.
+    /// the pane, at the share of a tick the scene was last given.
     pub fn planets(&self) -> Vec<(f32, f32)> {
         let (centre, across) = self.frame();
         ORBITS
@@ -105,8 +110,13 @@ impl Solar {
     fn angles(&self) -> [f32; ORBITS.len()] {
         std::array::from_fn(|index| {
             let period = MERCURY_TICKS * (ORBITS[index] / ORBITS[0]).powf(1.5);
-            (self.phases[index] + TAU * turned(self.time, period)).rem_euclid(TAU)
+            (self.phases[index] + TAU * turned(self.ticks(), period)).rem_euclid(TAU)
         })
+    }
+
+    /// The ticks run, with the share of the next one.
+    fn ticks(&self) -> f64 {
+        f64::from(self.time) + self.progress
     }
 
     /// The middle of the pane and the half width of the outermost orbit, in
@@ -120,11 +130,11 @@ impl Solar {
     }
 }
 
-/// The share of a turn made after `time` ticks, at `period` ticks a turn.
+/// The share of a turn made after `ticks`, at `period` ticks a turn.
 /// Whole turns come off in f64 first, because an angle that grows without
 /// end in f32 loses the precision of one tick within a day.
-fn turned(time: u32, period: f32) -> f32 {
-    (f64::from(time) / f64::from(period)).fract() as f32
+fn turned(ticks: f64, period: f32) -> f32 {
+    (ticks / f64::from(period)).fract() as f32
 }
 
 /// The place at `angle` on the orbit `across` pixels wide each side of the
@@ -174,6 +184,10 @@ impl Scene for Solar {
         self.width = area.width;
         self.height = area.height;
         self.time = self.time.wrapping_add(1);
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
