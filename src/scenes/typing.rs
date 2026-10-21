@@ -498,10 +498,11 @@ impl Typing {
         let mut canvas = Canvas::new(width, frame.height, self.palette);
         // Over the terminal's own background each line takes one row of
         // pixels and leaves the row under it clear, because two full halves
-        // of lines read as a solid panel there. Two lines of two colours
-        // then make a cell of three, and the canvas draws the lower line in
-        // the upper line's colour.
-        let rows: [Range<usize>; 2] = if self.background == Background::Terminal {
+        // of lines read as a solid panel there. A cell then holds the base
+        // and the lines, and it draws two colours, so both lines take the
+        // upper line's colour.
+        let terminal = self.background == Background::Terminal;
+        let rows: [Range<usize>; 2] = if terminal {
             [0..1, CELL_HEIGHT / 2..CELL_HEIGHT / 2 + 1]
         } else {
             [0..CELL_HEIGHT / 2, CELL_HEIGHT / 2..CELL_HEIGHT]
@@ -509,7 +510,8 @@ impl Typing {
         for (row, cells) in cells.iter().enumerate() {
             for (column, &(upper, lower)) in cells.iter().enumerate() {
                 for (half, line) in rows.iter().zip([upper, lower]) {
-                    let Some(colour) = line else { continue };
+                    let Some(own) = line else { continue };
+                    let colour = if terminal { upper.unwrap_or(own) } else { own };
                     for dy in half.clone() {
                         for dx in 0..CELL_WIDTH {
                             canvas.set(column * CELL_WIDTH + dx, row * CELL_HEIGHT + dy, colour);
