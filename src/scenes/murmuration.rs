@@ -11,15 +11,15 @@ use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
 
-/// The flock holds one bird for this many dots of the pane, within the
+/// The flock holds one bird for this many pixels of the pane, within the
 /// bounds of `FLOCK`.
 pub const DOTS_PER_BIRD: usize = 80;
 pub const FLOCK: RangeInclusive<usize> = 60..=500;
 
-/// A cell with more dots than this draws in the bright role.
-const FAINT_DOTS: u32 = 2;
+/// A cell with more pixels than this draws in the bright role.
+const FAINT_PIXELS: u32 = 2;
 
-/// Distances in dots, speeds in dots a tick.
+/// Distances in pixels, speeds in pixels a tick.
 const VISION: f32 = 8.0;
 const PERSONAL_SPACE: f32 = 2.0;
 const MIN_SPEED: f32 = 0.6;
@@ -31,15 +31,15 @@ const SEPARATION: f32 = 0.08;
 /// edge instead of piling against it.
 const EDGE_MARGIN: f32 = 10.0;
 const EDGE_TURN: f32 = 0.12;
-/// The flock starts as a disc whose radius is this many dots times the
+/// The flock starts as a disc whose radius is this many pixels times the
 /// square root of its size, so a flock of any size starts as dense.
 const SPAWN_SPREAD: f32 = 1.5;
-/// Keeps a clamped bird strictly inside the last dot.
+/// Keeps a clamped bird strictly inside the last pixel.
 const INSIDE: f32 = 0.01;
 
 /// Ticks from one pass of the hawk to the next, about 30 to 60 seconds.
 pub const HAWK_EVERY: RangeInclusive<u32> = 480..=960;
-/// No bird comes this close to the hawk, in dots.
+/// No bird comes this close to the hawk, in pixels.
 pub const HAWK_CLEARANCE: f32 = 6.0;
 /// Slower than a fleeing bird, so a bird that flees always gains on it.
 const HAWK_SPEED: f32 = 1.2;
@@ -49,7 +49,7 @@ const FLEE_RADIUS: f32 = 12.0;
 /// The hawk flies at this share of the sky's height, so a bird that flees
 /// up or down never meets the top or the trees near it.
 const HAWK_BAND: (f32, f32) = (0.25, 0.6);
-/// The hawk's dots around its centre: two wings swept up from a body.
+/// The hawk's pixels around its centre: two wings swept up from a body.
 const HAWK_SHAPE: [(isize, isize); 8] = [
     (-3, -1),
     (-2, -1),
@@ -91,10 +91,10 @@ struct Hawk {
 pub struct Murmuration {
     rng: Rng,
     palette: &'static Palette,
-    /// The pane in dots.
+    /// The pane in pixels.
     width: usize,
     height: usize,
-    /// The dots above the trees, where the flock flies.
+    /// The pixels above the trees, where the flock flies.
     sky: usize,
     tree_rows: usize,
     /// The height of the trees in each cell column, in halves of a cell.
@@ -130,12 +130,12 @@ impl Murmuration {
         self
     }
 
-    /// The centre of the hawk in dots, while it crosses the sky.
+    /// The centre of the hawk in pixels, while it crosses the sky.
     pub fn hawk(&self) -> Option<(f32, f32)> {
         self.hawk.map(|hawk| (hawk.x, hawk.y))
     }
 
-    /// Every bird's place, in dots from the top left of the pane.
+    /// Every bird's place, in pixels from the top left of the pane.
     pub fn birds(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
         self.birds.iter().map(|bird| (bird.x, bird.y))
     }
@@ -144,11 +144,11 @@ impl Murmuration {
         self.birds.clear();
         self.hawk = None;
         self.hawk_wait = self.rng.random_range(HAWK_EVERY);
-        let dots = self.width * self.height;
-        if dots == 0 || self.sky == 0 {
+        let pixels = self.width * self.height;
+        if pixels == 0 || self.sky == 0 {
             return;
         }
-        let count = (dots / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
+        let count = (pixels / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
         let (width, height) = (self.width as f32, self.sky as f32);
         let centre = (width / 2.0, height / 2.0);
         let radius = (count as f32).sqrt() * SPAWN_SPREAD;
@@ -426,7 +426,7 @@ impl Scene for Murmuration {
         }
         for (index, &birds) in cells.iter().enumerate() {
             let (column, row) = (index % columns, index / columns);
-            let colour = if birds.count_ones() > FAINT_DOTS {
+            let colour = if birds.count_ones() > FAINT_PIXELS {
                 self.palette.text
             } else {
                 self.palette.subtle

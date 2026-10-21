@@ -266,7 +266,7 @@ impl Ink {
 
     /// The ink of each accent in each pixel. A particle shares its ink
     /// among the four pixels nearest it, by how near each is, so a cloud
-    /// that thins stays a cloud and does not break into lone dots.
+    /// that thins stays a cloud and does not break into lone pixels.
     fn inks(&self) -> Vec<[f32; 5]> {
         let (columns, rows) = (self.width * PIXELS_ACROSS, self.rows * PIXELS_DOWN);
         let mut inks = vec![[0.0_f32; 5]; columns * rows];

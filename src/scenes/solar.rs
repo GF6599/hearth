@@ -22,27 +22,27 @@ const MERCURY_TICKS: f32 = 133.0;
 /// at a slant. Low enough that Mercury passes in front of the sun and
 /// behind it.
 const TILT: f32 = 0.4;
-/// Dots between the outermost orbit and the edge of the pane.
+/// Pixels between the outermost orbit and the edge of the pane.
 const MARGIN: f32 = 2.0;
 /// The sun's radius as a share of the outermost orbit's half width.
 const SUN_SHARE: f32 = 0.13;
-/// Dots along an orbit from one drawn dot to the next.
+/// Pixels along an orbit from one drawn pixel to the next.
 const ORBIT_GAP: f32 = 3.0;
-/// Each planet's radius in dots, Mercury to Neptune: the rocky four small,
+/// Each planet's radius in pixels, Mercury to Neptune: the rocky four small,
 /// the gas giants large. A radius of 2.6 or more always lights five rows of
-/// dots, so every planet spans two rows of cells.
+/// pixels, so every planet spans two rows of cells.
 const RADII: [f32; 8] = [2.6, 2.8, 2.8, 2.6, 4.4, 3.8, 3.2, 3.2];
 const SATURN: usize = 5;
 const EARTH: usize = 2;
-/// Saturn's ring, as a half width in dots and a height as a share of it.
+/// Saturn's ring, as a half width in pixels and a height as a share of it.
 const RING_ACROSS: f32 = 8.0;
 const RING_TILT: f32 = 0.3;
-/// The Moon's orbit round Earth, as a half width in dots, and its period.
+/// The Moon's orbit round Earth, as a half width in pixels, and its period.
 const MOON_ACROSS: f32 = 7.0;
 const MOON_TICKS: f32 = 40.0;
 /// How far a trail reaches behind its planet, as a share of a turn.
 const TRAIL_TURN: f32 = 1.0 / 8.0;
-/// Dots along an orbit from one trail place to the next.
+/// Pixels along an orbit from one trail place to the next.
 const TRAIL_GAP: f32 = 1.0;
 /// The fraction of the golden ratio. Its multiples spread the trail's dither
 /// thresholds evenly with no pattern that the eye picks up.
@@ -84,13 +84,13 @@ impl Solar {
         }
     }
 
-    /// Where the Moon is, in dots from the top left of the pane.
+    /// Where the Moon is, in pixels from the top left of the pane.
     pub fn moon(&self) -> (f32, f32) {
         let angle = TAU * turned(self.time, MOON_TICKS);
         place(self.planets()[EARTH], MOON_ACROSS, angle)
     }
 
-    /// Each planet's middle, Mercury first, in dots from the top left of
+    /// Each planet's middle, Mercury first, in pixels from the top left of
     /// the pane.
     pub fn planets(&self) -> Vec<(f32, f32)> {
         let (centre, across) = self.frame();
@@ -110,7 +110,7 @@ impl Solar {
     }
 
     /// The middle of the pane and the half width of the outermost orbit, in
-    /// dots. The orbit fits the width or the height, whichever is tighter.
+    /// pixels. The orbit fits the width or the height, whichever is tighter.
     fn frame(&self) -> ((f32, f32), f32) {
         let width = f32::from(self.width) * CELL_WIDTH as f32;
         let height = f32::from(self.height) * CELL_HEIGHT as f32;
@@ -127,7 +127,7 @@ fn turned(time: u32, period: f32) -> f32 {
     (f64::from(time) / f64::from(period)).fract() as f32
 }
 
-/// The place at `angle` on the orbit `across` dots wide each side of the
+/// The place at `angle` on the orbit `across` pixels wide each side of the
 /// centre. The angle grows the way the planets go, against the clock seen
 /// from above, so a planet crosses the near side, the bottom of the pane,
 /// from left to right.
@@ -138,15 +138,15 @@ fn place(centre: (f32, f32), across: f32, angle: f32) -> (f32, f32) {
     )
 }
 
-/// The dots of a body of `radius` round `middle`: a core of two by two dots
-/// round the middle, so the smallest body still shows, and every dot within
+/// The pixels of a body of `radius` round `middle`: a core of two by two pixels
+/// round the middle, so the smallest body still shows, and every pixel within
 /// the radius.
 fn disc(middle: (f32, f32), radius: f32) -> Vec<(i32, i32)> {
     let (left, top) = (
         (middle.0 - 0.5).floor() as i32,
         (middle.1 - 0.5).floor() as i32,
     );
-    let mut dots = vec![
+    let mut pixels = vec![
         (left, top),
         (left + 1, top),
         (left, top + 1),
@@ -154,15 +154,15 @@ fn disc(middle: (f32, f32), radius: f32) -> Vec<(i32, i32)> {
     ];
     let reach = radius.ceil() as i32;
     let (x, y) = (middle.0.round() as i32, middle.1.round() as i32);
-    for dot_y in y - reach..=y + reach {
-        for dot_x in x - reach..=x + reach {
-            let (dx, dy) = (dot_x as f32 - middle.0, dot_y as f32 - middle.1);
+    for pixel_y in y - reach..=y + reach {
+        for pixel_x in x - reach..=x + reach {
+            let (dx, dy) = (pixel_x as f32 - middle.0, pixel_y as f32 - middle.1);
             if dx * dx + dy * dy <= radius * radius {
-                dots.push((dot_x, dot_y));
+                pixels.push((pixel_x, pixel_y));
             }
         }
     }
-    dots
+    pixels
 }
 
 /// A pixel of an orbit or a trail beside a body drops out of its cell, and
@@ -235,7 +235,7 @@ impl Scene for Solar {
             let newest = (angle / gap).floor() as i32;
             for step in (newest - (TRAIL_TURN * steps as f32) as i32..=newest).rev() {
                 // Each place keeps its threshold as the planet moves on, so a
-                // lit dot stays lit until the fade passes its threshold.
+                // lit pixel stays lit until the fade passes its threshold.
                 let fade = (angle - step as f32 * gap) / (TAU * TRAIL_TURN);
                 let threshold = (step.rem_euclid(steps) as f32 * GOLDEN).fract();
                 if fade > 1.0 || threshold < fade {

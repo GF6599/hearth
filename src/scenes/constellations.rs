@@ -47,7 +47,7 @@ const FIRST_WAIT: RangeInclusive<u32> = 40..=100;
 const WAIT: RangeInclusive<u32> = 250..=500;
 const FIGURE_STARS: RangeInclusive<usize> = 4..=6;
 /// The shortest and the longest line from one star of a figure to the
-/// next, in dots. A dot is about as wide as it is high. Without the
+/// next, in pixels. A pixel is about as wide as it is high. Without the
 /// shortest, the walk to the nearest star coils through a cluster and draws
 /// a scribble, and without the longest a figure crosses the sky.
 const HOP: RangeInclusive<f32> = 12.0..=32.0;
@@ -61,16 +61,16 @@ const HOLD_TICKS: u32 = 133;
 const FADE_TICKS: u32 = 40;
 const FIGURE_TICKS: u32 = DRAW_TICKS + HOLD_TICKS + FADE_TICKS;
 
-/// The longest trail of a shooting star behind its head, in dots.
+/// The longest trail of a shooting star behind its head, in pixels.
 pub const TRAIL: usize = 10;
 /// Ticks from one shooting star to the next, about 18 to 45 seconds. A
 /// shooting star waits while a figure shows, and a figure waits while a
 /// shooting star flies. A cell holds two colours and the sky takes one, so
 /// where the two lines crossed one would draw in the colour of the other.
 const METEOR_WAIT: RangeInclusive<u32> = 300..=750;
-/// How far a shooting star flies before it burns out, in dots.
+/// How far a shooting star flies before it burns out, in pixels.
 const METEOR_RUN: RangeInclusive<f32> = 40.0..=80.0;
-/// Dots a tick, so a shooting star crosses in about a second.
+/// Pixels a tick, so a shooting star crosses in about a second.
 const METEOR_SPEED: f32 = 4.0;
 /// Its angle below level, in radians, about 20 to 57 degrees.
 const METEOR_SLANT: RangeInclusive<f32> = 0.35..=1.0;
@@ -104,7 +104,7 @@ struct Figure {
 
 #[derive(Debug)]
 struct Meteor {
-    /// Where it starts, in dots, and the dot it moves each unit of its run.
+    /// Where it starts, in pixels, and the pixel it moves each unit of its run.
     from: (f32, f32),
     direction: (f32, f32),
     run: f32,
@@ -112,9 +112,9 @@ struct Meteor {
 }
 
 impl Meteor {
-    /// The dots from the end of its trail to its head, on one line. Both
+    /// The pixels from the end of its trail to its head, on one line. Both
     /// ends lie on its run, which starts and ends inside the pane.
-    fn dots(&self) -> Vec<(i32, i32)> {
+    fn pixels(&self) -> Vec<(i32, i32)> {
         let at = |along: f32| {
             (
                 (self.from.0 + self.direction.0 * along).round() as i32,
@@ -311,7 +311,7 @@ impl Constellations {
         }
     }
 
-    /// A shooting star from a random dot in the upper two thirds, falling
+    /// A shooting star from a random pixel in the upper two thirds, falling
     /// to the left or the right, whose whole run lies inside the pane.
     fn launch(&mut self) -> Option<Meteor> {
         let width = f32::from(self.width) * CELL_WIDTH as f32;
@@ -363,14 +363,14 @@ impl Constellations {
     }
 }
 
-/// The length of a line between two stars, in dots.
+/// The length of a line between two stars, in pixels.
 fn hop(from: &Star, to: &Star) -> f32 {
     let across = (f32::from(to.x) - f32::from(from.x)) * CELL_WIDTH as f32;
     let down = (f32::from(to.y) - f32::from(from.y)) * CELL_HEIGHT as f32;
     across.hypot(down)
 }
 
-/// The dot in the middle of a star's cell.
+/// The pixel in the middle of a star's cell.
 fn centre(star: Position) -> (i32, i32) {
     (
         i32::from(star.x) * CELL_WIDTH as i32 + 1,
@@ -378,12 +378,12 @@ fn centre(star: Position) -> (i32, i32) {
     )
 }
 
-/// The dots of a line from one dot to another, in order, by Bresenham.
+/// The pixels of a line from one pixel to another, in order, by Bresenham.
 fn line(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
     let (across, down) = ((to.0 - from.0).abs(), -(to.1 - from.1).abs());
     let (step_x, step_y) = ((to.0 - from.0).signum(), (to.1 - from.1).signum());
     let (mut x, mut y, mut error) = (from.0, from.1, across + down);
-    let mut dots = vec![(x, y)];
+    let mut pixels = vec![(x, y)];
     while (x, y) != to {
         let twice = 2 * error;
         if twice >= down {
@@ -394,16 +394,16 @@ fn line(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
             error += across;
             y += step_y;
         }
-        dots.push((x, y));
+        pixels.push((x, y));
     }
-    dots
+    pixels
 }
 
 impl Figure {
-    /// The dots the line shows at its age: a growing share of the path while
+    /// The pixels the line shows at its age: a growing share of the path while
     /// it draws, all of it while it holds, and a thinning dither while it
     /// fades.
-    fn dots(&self) -> Vec<(i32, i32)> {
+    fn pixels(&self) -> Vec<(i32, i32)> {
         let segments: Vec<Vec<(i32, i32)>> = self
             .stars
             .windows(2)
@@ -441,7 +441,7 @@ impl Figure {
 }
 
 impl Constellations {
-    /// Draws the dots of the lines on a canvas over the cells they cross
+    /// Draws the pixels of the lines on a canvas over the cells they cross
     /// alone. The lines are a few short strokes, so a canvas over the whole
     /// pane would spend most of each frame on empty sky.
     fn draw_lines(&self, lines: &[((i32, i32), Color)], area: Rect, buf: &mut Buffer) {
@@ -523,14 +523,19 @@ impl Scene for Constellations {
 
         let mut lines: Vec<((i32, i32), Color)> = Vec::new();
         if let Some(figure) = &self.figure {
-            lines.extend(figure.dots().into_iter().map(|dot| (dot, figure.colour)));
+            lines.extend(
+                figure
+                    .pixels()
+                    .into_iter()
+                    .map(|pixel| (pixel, figure.colour)),
+            );
         }
         if let Some(meteor) = &self.meteor {
             lines.extend(
                 meteor
-                    .dots()
+                    .pixels()
                     .into_iter()
-                    .map(|dot| (dot, self.palette.gold)),
+                    .map(|pixel| (pixel, self.palette.gold)),
             );
         }
         self.draw_lines(&lines, area, buf);

@@ -98,7 +98,7 @@ struct Glass {
     neck: i32,
     bulb: i32,
     /// The half width of a bulb at its widest row. As many cells as the
-    /// bulb has rows makes it round, because a cell holds two dots across
+    /// bulb has rows makes it round, because a cell holds two pixels across
     /// and four down.
     reach: i32,
 }
@@ -129,10 +129,10 @@ impl Glass {
         )
     }
 
-    /// The dots of the inside on each side of the middle at a row of dots
+    /// The pixels of the inside on each side of the middle at a row of pixels
     /// between the caps: one in the neck, then out along the profile of a
     /// bulb. Each row takes its own width, so the outline curves at the
-    /// size of a dot and not of a cell.
+    /// size of a pixel and not of a cell.
     fn half_width(&self, y: i32) -> Option<i32> {
         let (top, bottom) = self.caps();
         if y <= top || y >= bottom {
@@ -156,7 +156,7 @@ impl Glass {
         self.half_width(y).map(|half| self.centre * WIDTH - half)
     }
 
-    /// The columns and rows of dots that the inside can span.
+    /// The columns and rows of pixels that the inside can span.
     fn span(&self) -> (Range<i32>, Range<i32>) {
         let widest = self.reach * WIDTH + 1;
         let (top, bottom) = self.caps();
@@ -166,40 +166,40 @@ impl Glass {
         )
     }
 
-    /// The dots of the left wall and the caps, as far as the middle. Where
-    /// the wall moves more than a dot from one row to the next, a run on
+    /// The pixels of the left wall and the caps, as far as the middle. Where
+    /// the wall moves more than a pixel from one row to the next, a run on
     /// the narrower row joins the two, outside its inside, so the outline
     /// has no break.
     fn walls(&self) -> Vec<(i32, i32)> {
         let (top, bottom) = self.caps();
-        let mut dots = Vec::new();
+        let mut pixels = Vec::new();
         for y in top + 1..bottom {
             let Some(x) = self.wall(y) else {
                 continue;
             };
-            dots.push((x, y));
+            pixels.push((x, y));
             if let Some(next) = self.wall(y + 1) {
                 let (row, run) = if next > x {
                     (y + 1, x + 1..next)
                 } else {
                     (y, next + 1..x)
                 };
-                dots.extend(run.map(|x| (x, row)));
+                pixels.extend(run.map(|x| (x, row)));
             }
         }
         for (cap, beside) in [(top, top + 1), (bottom, bottom - 1)] {
             let from = self.wall(beside).unwrap_or(self.centre * WIDTH - 1);
-            dots.extend((from..=self.centre * WIDTH).map(|x| (x, cap)));
+            pixels.extend((from..=self.centre * WIDTH).map(|x| (x, cap)));
         }
-        dots
+        pixels
     }
 
-    /// The dot at the same height on the other side of the middle.
+    /// The pixel at the same height on the other side of the middle.
     fn mirror(&self, x: i32) -> i32 {
         2 * self.centre * WIDTH + 1 - x
     }
 
-    /// The first row of dots in the neck. A grain above it is in the top.
+    /// The first row of pixels in the neck. A grain above it is in the top.
     fn gate(&self) -> i32 {
         self.neck * HEIGHT
     }
@@ -326,16 +326,16 @@ pub struct Hourglass {
     /// The phase the sand shows. The glass turns when the clock moves on
     /// to the next.
     phase: Phase,
-    /// Whether each dot of the pane holds a grain, row by row.
+    /// Whether each pixel of the pane holds a grain, row by row.
     sand: Vec<bool>,
-    /// Whether each dot of the pane is inside the glass, row by row: inside
-    /// the outline, in a cell that holds no dot of a wall.
+    /// Whether each pixel of the pane is inside the glass, row by row: inside
+    /// the outline, in a cell that holds no pixel of a wall.
     inside: Vec<bool>,
     total: usize,
     /// The grains above the neck.
     top: usize,
     /// The grains that may move on the next tick, by row and column. A
-    /// grain at rest stays at rest until a dot below it empties, so the
+    /// grain at rest stays at rest until a pixel below it empties, so the
     /// rest of the pile needs no look.
     moving: BTreeSet<(i32, i32)>,
 }
@@ -369,7 +369,7 @@ impl Hourglass {
         self.place(x, y).is_some_and(|index| self.inside[index])
     }
 
-    /// The dots of the inside between two rows of cells, from `first` on
+    /// The pixels of the inside between two rows of cells, from `first` on
     /// toward `last`, and in each row from the middle out, the order in
     /// which sand poured in settles.
     fn room(&self, glass: Glass, first: i32, last: i32) -> Vec<(i32, i32)> {
@@ -440,8 +440,8 @@ impl Hourglass {
     /// Lays the glass out for the pane and pours the sand in again, with
     /// the share in the top that the time left gives.
     fn lay_out(&mut self) {
-        let dots = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
-        self.sand = vec![false; dots];
+        let pixels = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
+        self.sand = vec![false; pixels];
         self.moving.clear();
         self.phase = Phase::at(self.clock.elapsed(), self.lengths);
         self.glass = Glass::fit(self.width, self.height);
@@ -498,7 +498,7 @@ impl Hourglass {
     }
 
     /// Lets grains into the neck until the top holds what is due, at most
-    /// one for each dot across the neck in a tick. The grain that goes is
+    /// one for each pixel across the neck in a tick. The grain that goes is
     /// the lowest in the top, nearest the middle.
     fn release(&mut self, glass: Glass) {
         let gate = glass.gate();
@@ -521,7 +521,7 @@ impl Hourglass {
         }
     }
 
-    /// Marks the grains over a dot that just emptied as free to move.
+    /// Marks the grains over a pixel that just emptied as free to move.
     fn wake_above(&mut self, x: i32, y: i32) {
         for over in x - 1..=x + 1 {
             if self.grain(over, y - 1) {
@@ -542,7 +542,7 @@ impl Hourglass {
         })
     }
 
-    /// Moves each grain one dot down, or down to one side when the dot
+    /// Moves each grain one pixel down, or down to one side when the pixel
     /// below is full, so the sand settles at its natural slope. A grain in
     /// the top cannot pass the gate by itself.
     fn fall(&mut self, glass: Glass) {

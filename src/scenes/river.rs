@@ -17,17 +17,17 @@ use crate::theme::Palette;
 pub const NOTICE: &str = "no git history to draw here";
 pub const READING: &str = "reading the history";
 
-/// The dot rows from one commit to the next. Three cells, so a lane that
+/// The pixel rows from one commit to the next. Three cells, so a lane that
 /// moves across has room to curve.
 const ROW_GAP: i64 = 12;
-/// The most dots from one lane to the next. A history with many lanes at
+/// The most pixels from one lane to the next. A history with many lanes at
 /// once packs them closer, down to one cell.
 const LANE_GAP: i64 = 12;
-/// The widest a lane of water grows, in dots, and the dots it leaves
+/// The widest a lane of water grows, in pixels, and the pixels it leaves
 /// clear of the next lane, so lanes packed close still read as two.
 const WATER: i64 = 8;
 const LANE_CLEAR: i64 = 4;
-/// The share of the pane's dots across that the lanes may take, and the
+/// The share of the pane's pixels across that the lanes may take, and the
 /// share of its cells the water takes at the least.
 const LANE_ROOM: (i64, i64) = (3, 5);
 const RIVER: (i64, i64) = (3, 5);
@@ -36,28 +36,28 @@ const RIVER: (i64, i64) = (3, 5);
 const SHORE: i64 = 3;
 /// The cells from the rightmost lane at the subject's row to the subject.
 const SUBJECT_GAP: i64 = 2;
-/// The dot rows the river moves down in a tick: a commit about every one
+/// The pixel rows the river moves down in a tick: a commit about every one
 /// and a half seconds, slow enough to read its subject.
 const SCROLL: f64 = 0.5;
-/// The dot rows the river runs on past the newest commit before it starts
+/// The pixel rows the river runs on past the newest commit before it starts
 /// again from the oldest, so the newest is not cut off the moment it is
 /// read.
 const PAUSE: i64 = 2 * ROW_GAP;
-/// The dot rows the foam moves down its lane in a tick, on top of the
+/// The pixel rows the foam moves down its lane in a tick, on top of the
 /// river's own move, so the water flows past the stones.
 const FLOW: f64 = 1.0;
-/// The dot rows from one band of foam to the next in a lane, and the dot
+/// The pixel rows from one band of foam to the next in a lane, and the pixel
 /// rows one band covers.
 const FOAM_PERIOD: i64 = 20;
 const FOAM: i64 = 2;
 /// How many lanes have their own phase of foam before the phases repeat.
 const PHASES: usize = 16;
-/// The dot rows from one row of ripples to the next, and the share of the
+/// The pixel rows from one row of ripples to the next, and the share of the
 /// places on such a row that hold a ripple, one in this many. A ripple is
-/// two to four dots long, so it stays thinner than a lane's full cells.
+/// two to four pixels long, so it stays thinner than a lane's full cells.
 const RIPPLE_ROWS: i64 = 4;
 const RIPPLE_ODDS: u64 = 3;
-/// How fast each bank wanders, in radians a dot row, and how far, in
+/// How fast each bank wanders, in radians a pixel row, and how far, in
 /// cells. Each bank has its own phase, so the river widens and narrows.
 const MEANDER: f64 = 0.045;
 const MEANDER_REACH: f64 = 1.4;
@@ -160,7 +160,7 @@ impl River {
         self.reading = None;
     }
 
-    /// The world dot row at the middle of the pane. It starts at the oldest
+    /// The world pixel row at the middle of the pane. It starts at the oldest
     /// commit, with the newer commits above it, and moves up the history,
     /// so the river flows down the pane. Past the newest commit it starts
     /// again.
