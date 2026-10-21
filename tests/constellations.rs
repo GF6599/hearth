@@ -2,16 +2,16 @@
 
 mod pixels;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::constellations::{Constellations, NAMES, TRAIL};
 use hearth::scenes::typing::Speed;
-use hearth::theme::{self, Palette};
+use hearth::theme::{self, Palette, luma};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -22,9 +22,13 @@ const PALETTE: &Palette = &theme::ROSE_PINE;
 /// Ticks enough for several figures, about a minute and a half.
 const RUN: u32 = 1500;
 /// The furthest a lit pixel lies from the line between the centres of two
-/// stars, in pixels: half a pixel of rounding at each end, and half a pixel of
-/// stepping along the line.
-const LINE_TOLERANCE: f32 = 1.5;
+/// stars, in pixels: the line runs through the pixel nearest each centre,
+/// under three quarters of a pixel from it, and its soft edge reaches under
+/// a pixel to each side.
+const LINE_TOLERANCE: f32 = 1.75;
+/// The steps of a share at which a test reads a mix, fine enough that a
+/// share between two steps rounds to a colour one level from either.
+const SHARE_STEPS: u16 = 4096;
 
 fn ticked(seed: u64, area: Rect, ticks: u32) -> Constellations {
     let mut scene = Constellations::new(Rng::seed_from_u64(seed), PALETTE);
@@ -40,6 +44,50 @@ fn render(scene: &Constellations, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
+/// Whether `colour` is a mix from `from` toward `to`, either end included.
+fn on_mix(colour: Color, from: Color, to: Color) -> bool {
+    static MIXES: OnceLock<Mutex<HashMap<(Color, Color), HashSet<Color>>>> = OnceLock::new();
+    let mut mixes = MIXES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    let mixes = mixes.entry((from, to)).or_insert_with(|| {
+        (0..=SHARE_STEPS)
+            .map(|step| octant::mix(from, to, f32::from(step) / f32::from(SHARE_STEPS)))
+            .collect()
+    });
+    let Color::Rgb(r, g, b) = colour else {
+        return false;
+    };
+    let near = |channel: u8| channel.saturating_sub(1)..=channel.saturating_add(1);
+    near(r).any(|r| near(g).any(|g| near(b).any(|b| mixes.contains(&Color::Rgb(r, g, b)))))
+}
+
+/// Whether `colour` is a mix from the sky toward the colour of a figure.
+fn in_a_figure(colour: Color) -> bool {
+    on_mix(colour, PALETTE.base, PALETTE.iris) || on_mix(colour, PALETTE.base, PALETTE.foam)
+}
+
+/// Whether `colour` is a mix from the sky toward the gold of a shooting
+/// star.
+fn in_a_shooting_star(colour: Color) -> bool {
+    on_mix(colour, PALETTE.base, PALETTE.gold)
+}
+
+/// The pixels of the cell that holds `pixel`.
+fn cell_of(pixel: (f32, f32)) -> impl Iterator<Item = (f32, f32)> {
+    let (left, top) = (
+        pixel.0 - pixel.0 % CELL_WIDTH as f32,
+        pixel.1 - pixel.1 % CELL_HEIGHT as f32,
+    );
+    (0..CELL_WIDTH * CELL_HEIGHT).map(move |index| {
+        (
+            left + (index % CELL_WIDTH) as f32,
+            top + (index / CELL_WIDTH) as f32,
+        )
+    })
+}
+
 /// Every glyph of a render, by its place.
 fn glyphs(buffer: &Buffer, area: Rect) -> BTreeMap<Position, String> {
     area.positions()
@@ -48,13 +96,27 @@ fn glyphs(buffer: &Buffer, area: Rect) -> BTreeMap<Position, String> {
         .collect()
 }
 
-/// The stars of a render, by their place, without the lines and the name
-/// of a figure.
-fn stars(buffer: &Buffer, area: Rect) -> BTreeMap<Position, String> {
+/// The stars of a render, by their place, each with its glyph and colour,
+/// without the lines and the name of a figure.
+fn stars(buffer: &Buffer, area: Rect) -> BTreeMap<Position, (String, Color)> {
     glyphs(buffer, area)
         .into_iter()
         .filter(|(_, glyph)| role(glyph).is_some())
+        .map(|(position, glyph)| (position, (glyph, buffer[position].fg)))
         .collect()
+}
+
+/// Whether a star of `glyph` may show `colour`: its own role, or a mix
+/// from it toward the role of a brightness next to it, which it turns
+/// toward while it twinkles.
+fn may_show(glyph: &str, colour: Color) -> bool {
+    let (muted, subtle, text) = (PALETTE.muted, PALETTE.subtle, PALETTE.text);
+    match glyph {
+        "." => on_mix(colour, muted, subtle),
+        "+" => on_mix(colour, subtle, muted) || on_mix(colour, subtle, text),
+        "*" => on_mix(colour, text, subtle),
+        _ => false,
+    }
 }
 
 /// The role each brightness of star draws in, from the dimmest.
@@ -121,8 +183,9 @@ fn names_shown(buffer: &Buffer, area: Rect) -> Vec<(u16, u16, &'static str)> {
 /// Every star is a dot, a cross or an asterisk in its own brightness.
 /// Given: the scene at a hundred by thirty, after a few ticks.
 /// When: it renders.
-/// Then: every glyph it draws is `.` in muted, `+` in subtle or `*` in text,
-/// and the sky holds stars of all three.
+/// Then: every glyph it draws is `.` in muted, `+` in subtle or `*` in
+/// text, or in a mix from that role toward the role of a brightness next
+/// to it, and the sky holds stars of all three.
 ///
 /// Why it matters: a star in another glyph can be two cells wide on some
 /// terminals and tear the pane, and a star in another role breaks the
@@ -139,11 +202,11 @@ fn every_star_draws_in_its_own_brightness() {
         // Then:
         let mut seen = BTreeSet::new();
         for (position, glyph) in glyphs(&buffer, AREA) {
-            let colour =
-                role(&glyph).unwrap_or_else(|| panic!("seed {seed}: {glyph:?} at {position:?}"));
-            assert_eq!(
-                buffer[position].fg, colour,
-                "seed {seed}: {glyph:?} at {position:?}"
+            role(&glyph).unwrap_or_else(|| panic!("seed {seed}: {glyph:?} at {position:?}"));
+            assert!(
+                may_show(&glyph, buffer[position].fg),
+                "seed {seed}: {glyph:?} in {:?} at {position:?}",
+                buffer[position].fg
             );
             seen.insert(glyph);
         }
@@ -159,7 +222,8 @@ fn every_star_draws_in_its_own_brightness() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders for half a minute.
 /// Then: the stars stay in the same places, some of them change their
-/// brightness, and on every frame most of them show their usual one.
+/// brightness, and on every frame most of them show their usual one. A
+/// star's brightness is its glyph and its colour.
 ///
 /// Why it matters: a star that moves reads as a fault, a sky that never
 /// changes reads as a still image, and a sky that changes all at once reads
@@ -183,10 +247,10 @@ fn stars_twinkle_but_stay_in_place() {
             let now: BTreeSet<Position> = frame.keys().copied().collect();
             assert_eq!(now, places, "seed {seed}: a star moved");
         }
-        let usual: BTreeMap<Position, &String> = places
+        let usual: BTreeMap<Position, &(String, Color)> = places
             .iter()
             .map(|place| {
-                let mut counts = BTreeMap::new();
+                let mut counts = HashMap::new();
                 for frame in &frames {
                     *counts.entry(&frame[place]).or_insert(0) += 1;
                 }
@@ -213,12 +277,49 @@ fn stars_twinkle_but_stay_in_place() {
     }
 }
 
+/// A star twinkles by its colour and keeps its glyph.
+/// Given: the scene at a hundred by thirty.
+/// When: it ticks and renders for half a minute.
+/// Then: each star shows one glyph on every frame, and some frame shows a
+/// star in a colour between two roles, neither of them.
+///
+/// Why it matters: a glyph that swaps on a twinkle jumps from one shape to
+/// another, where a star in the sky brightens and dims.
+#[test]
+fn a_star_twinkles_by_its_colour_and_keeps_its_glyph() {
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+        let first = stars(&render(&scene, AREA, AREA), AREA);
+        let mut between = 0;
+
+        for tick in 0..500 {
+            // When:
+            scene.tick(AREA);
+            let now = stars(&render(&scene, AREA, AREA), AREA);
+
+            // Then:
+            for (place, (glyph, colour)) in &now {
+                assert_eq!(
+                    glyph, &first[place].0,
+                    "seed {seed}: the star at {place:?} at tick {tick}"
+                );
+                let roles = [PALETTE.muted, PALETTE.subtle, PALETTE.text];
+                between += usize::from(!roles.contains(colour));
+            }
+        }
+        assert!(between > 0, "seed {seed}: no star shows a mix");
+    }
+}
+
 /// A figure's line runs only between its own stars.
 /// Given: the scene at a hundred by thirty, for a minute and a half.
 /// When: it renders on every tick.
-/// Then: each figure joins four to six stars of the sky, every lit pixel lies
-/// on a segment between two of them, in iris or foam, and no pixel shows
-/// without a figure.
+/// Then: each figure joins four to six stars of the sky, and every lit pixel
+/// shows a mix from the sky toward iris or foam in a cell that a segment
+/// between two of them crosses. A cell shows two colours, so the line's
+/// colour can fall on any pixel of a cell it crosses. With no figure every
+/// lit pixel is a shooting star's.
 ///
 /// Why it matters: a pixel off the figure reads as a stray mark, and a line
 /// that ends where no star is reads as a fault.
@@ -238,7 +339,7 @@ fn every_line_pixel_lies_between_two_stars_of_the_figure() {
             let line = line_pixels(&buffer, AREA);
             let Some((_, figure)) = scene.figure() else {
                 assert!(
-                    line.iter().all(|(_, colour)| *colour == PALETTE.gold),
+                    line.iter().all(|(_, colour)| in_a_shooting_star(*colour)),
                     "seed {seed}: line pixels with no figure at tick {tick}"
                 );
                 continue;
@@ -254,12 +355,14 @@ fn every_line_pixel_lies_between_two_stars_of_the_figure() {
             }
             for (pixel, colour) in &line {
                 assert!(
-                    *colour == PALETTE.iris || *colour == PALETTE.foam,
+                    in_a_figure(*colour),
                     "seed {seed}: a pixel in {colour:?} at tick {tick}"
                 );
-                let on_a_segment = figure.iter().enumerate().any(|(index, from)| {
-                    figure[index + 1..].iter().any(|to| {
-                        distance_to_segment(*pixel, centre(*from), centre(*to)) <= LINE_TOLERANCE
+                let on_a_segment = cell_of(*pixel).any(|place| {
+                    figure.iter().enumerate().any(|(index, from)| {
+                        figure[index + 1..].iter().any(|to| {
+                            distance_to_segment(place, centre(*from), centre(*to)) <= LINE_TOLERANCE
+                        })
                     })
                 });
                 assert!(
@@ -270,6 +373,71 @@ fn every_line_pixel_lies_between_two_stars_of_the_figure() {
             lit += line.len();
         }
         assert!(lit > 0, "seed {seed}: no figure drew a line");
+    }
+}
+
+/// A figure's line has soft edges and fades by its colour.
+/// Given: the scene at a hundred by thirty, for a minute and a half.
+/// When: it renders on every tick.
+/// Then: each figure shows a frame whose line takes at least three mixes
+/// from the sky toward its colour, and over its last twenty frames the
+/// lightest pixel of its line never gets lighter and ends less than half
+/// way from the sky to the figure's colour.
+///
+/// Why it matters: a line of whole pixels in one colour reads as a row of
+/// blocks, and a line that fades by dropping pixels breaks into dots.
+#[test]
+fn a_figure_line_is_soft_and_fades_by_its_colour() {
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+        let mut figures = 0;
+        let (mut softest, mut lightest) = (0, Vec::new());
+
+        for tick in 0..RUN {
+            // When:
+            scene.tick(AREA);
+            let buffer = render(&scene, AREA, AREA);
+
+            // Then:
+            if scene.figure().is_none() {
+                if !lightest.is_empty() {
+                    assert!(softest >= 3, "seed {seed}: {softest} mixes, to tick {tick}");
+                    let fade = &lightest[lightest.len().saturating_sub(20)..];
+                    for pair in fade.windows(2) {
+                        assert!(
+                            pair[0] >= pair[1],
+                            "seed {seed}: the fade {fade:?}, to tick {tick}"
+                        );
+                    }
+                    let figure = lightest.iter().max().copied().unwrap_or(0);
+                    let last = fade[fade.len() - 1];
+                    assert!(
+                        (last - luma(PALETTE.base)) * 2 < figure - luma(PALETTE.base),
+                        "seed {seed}: the fade ends at {last} from {figure}, to tick {tick}"
+                    );
+                    figures += 1;
+                }
+                (softest, lightest) = (0, Vec::new());
+                continue;
+            }
+            let line: BTreeSet<(u8, u8, u8)> = line_pixels(&buffer, AREA)
+                .into_iter()
+                .filter(|(_, colour)| in_a_figure(*colour))
+                .filter_map(|(_, colour)| match colour {
+                    Color::Rgb(r, g, b) => Some((r, g, b)),
+                    _ => None,
+                })
+                .collect();
+            softest = softest.max(line.len());
+            lightest.push(
+                line.iter()
+                    .map(|&(r, g, b)| luma(Color::Rgb(r, g, b)))
+                    .max()
+                    .unwrap_or(luma(PALETTE.base)),
+            );
+        }
+        assert!(figures > 0, "seed {seed}: no figure ended");
     }
 }
 
@@ -474,6 +642,12 @@ const SKY_RUN: u32 = 3000;
 /// The most ticks one shooting star shows, about three seconds.
 const STREAK_TICKS: u32 = 50;
 
+/// The furthest a lit pixel lies from the line of a shooting star, in
+/// pixels: its soft edge reaches under a pixel from its line, and a line
+/// read from the pixels of cells lies off the true one by up to half a
+/// pixel.
+const STREAK_TOLERANCE: f32 = 1.5;
+
 /// One shooting star so far: the middle of its pixels on its first frame
 /// and on its last, and its frames.
 struct Streak {
@@ -482,10 +656,49 @@ struct Streak {
     ticks: u32,
 }
 
+/// The pixels of a shooting star, none while a figure shows. A shooting
+/// star never flies while a figure shows, and a pixel of a figure faded
+/// near the sky lies near a mix toward gold too.
+fn shooting_star(scene: &Constellations, buffer: &Buffer) -> Vec<(f32, f32)> {
+    if scene.figure().is_some() {
+        return Vec::new();
+    }
+    gold_pixels(buffer)
+}
+
+/// The line of a shooting star: the middle of its light and the way along
+/// it, the axis its pixels spread along most, each weighed by how much
+/// lighter than the sky it is.
+fn streak_line(buffer: &Buffer) -> ((f32, f32), (f32, f32)) {
+    let lit: Vec<((f32, f32), f32)> = line_pixels(buffer, AREA)
+        .into_iter()
+        .filter(|(_, colour)| in_a_shooting_star(*colour))
+        .map(|(pixel, colour)| (pixel, (luma(colour) - luma(PALETTE.base)) as f32))
+        .collect();
+    let weight: f32 = lit.iter().map(|(_, light)| light).sum::<f32>().max(1.0);
+    let middle = lit.iter().fold((0.0, 0.0), |sum, (pixel, light)| {
+        (
+            sum.0 + pixel.0 * light / weight,
+            sum.1 + pixel.1 * light / weight,
+        )
+    });
+    let (across, down, both) = lit.iter().fold((0.0, 0.0, 0.0), |sums, (pixel, light)| {
+        let (x, y) = (pixel.0 - middle.0, pixel.1 - middle.1);
+        (
+            sums.0 + light * x * x,
+            sums.1 + light * y * y,
+            sums.2 + light * x * y,
+        )
+    });
+    let angle = 0.5 * (2.0 * both).atan2(across - down);
+    (middle, (angle.cos(), angle.sin()))
+}
+
+/// The pixels in a mix from the sky toward gold.
 fn gold_pixels(buffer: &Buffer) -> Vec<(f32, f32)> {
     line_pixels(buffer, AREA)
         .into_iter()
-        .filter(|(_, colour)| *colour == PALETTE.gold)
+        .filter(|(_, colour)| in_a_shooting_star(*colour))
         .map(|(pixel, _)| pixel)
         .collect()
 }
@@ -506,9 +719,14 @@ fn centroid(pixels: &[(f32, f32)]) -> (f32, f32) {
 /// short trail.
 /// Given: the scene at a hundred by thirty, for three minutes.
 /// When: it renders on every tick.
-/// Then: the gold pixels of each frame lie on one line at a slant, no longer
-/// than the trail. Each shooting star moves along its line further than its
-/// trail and is gone within three seconds, and more than one shows.
+/// Then: the pixels of gold mixes of each frame lie in cells that the line
+/// of the streak crosses, within its soft edge, and that line slants. The
+/// line runs through the middle of the streak's light along the axis its
+/// light spreads along most. The streak is no longer along it than the
+/// trail and its soft edge. A cell shows two colours, so a faint colour
+/// can fall on any pixel of a cell the streak crosses. Each shooting star
+/// moves along its line further than its trail and is gone within three
+/// seconds, and more than one shows.
 ///
 /// Why it matters: a streak that lies flat or falls straight reads as a
 /// fault, a long trail reads as a line of a figure, and a streak that stays
@@ -524,7 +742,8 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
         for tick in 0..SKY_RUN {
             // When:
             scene.tick(AREA);
-            let gold = gold_pixels(&render(&scene, AREA, AREA));
+            let buffer = render(&scene, AREA, AREA);
+            let gold = shooting_star(&scene, &buffer);
 
             // Then:
             if gold.is_empty() {
@@ -542,24 +761,31 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
                 }
                 continue;
             }
-            let ends = gold
+            let (middle, heading) = streak_line(&buffer);
+            let along = |place: (f32, f32)| {
+                (place.0 - middle.0) * heading.0 + (place.1 - middle.1) * heading.1
+            };
+            let off = |place: (f32, f32)| {
+                ((place.0 - middle.0) * heading.1 - (place.1 - middle.1) * heading.0).abs()
+            };
+            let (least, most) = gold
                 .iter()
-                .flat_map(|from| gold.iter().map(move |to| (*from, *to)))
-                .max_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
-                .unwrap();
-            let span = distance(ends.0, ends.1);
+                .fold((f32::MAX, f32::MIN), |(least, most), pixel| {
+                    (least.min(along(*pixel)), most.max(along(*pixel)))
+                });
+            let span = most - least;
             assert!(
-                span <= TRAIL as f32 + 1.0,
+                span <= TRAIL as f32 + STREAK_TOLERANCE,
                 "seed {seed}: a trail of {span} pixels at tick {tick}"
             );
             for pixel in &gold {
                 assert!(
-                    distance_to_segment(*pixel, ends.0, ends.1) <= 1.0,
+                    cell_of(*pixel).any(|place| off(place) <= STREAK_TOLERANCE),
                     "seed {seed}: {pixel:?} off the streak at tick {tick}"
                 );
             }
             if span >= 4.0 {
-                let (across, down) = ((ends.1.0 - ends.0.0).abs(), (ends.1.1 - ends.0.1).abs());
+                let (across, down) = (heading.0.abs(), heading.1.abs());
                 assert!(
                     down >= across * 0.2 && down <= across * 5.0,
                     "seed {seed}: a streak {across} across and {down} down at tick {tick}"
@@ -581,6 +807,70 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
         }
         assert!(streaks > 1, "seed {seed}: {streaks} shooting stars");
     }
+}
+
+/// A shooting star's trail fades from its head back.
+/// Given: the scene at a hundred by thirty, for three minutes.
+/// When: it renders on every tick.
+/// Then: on three frames of four or more where a shooting star shows six
+/// pixels or more and showed on the frame before, the half of its pixels
+/// nearer its head, the way it moved, is lighter on average than the half
+/// nearer its tail. A cell shows two colours, so a faint streak that ends
+/// in a cell with its brighter middle can read lighter at its tail.
+///
+/// Why it matters: a trail in one colour reads as a dash that slides, and
+/// not as a streak that burns behind its head.
+#[test]
+fn a_shooting_star_fades_from_its_head_back() {
+    let (mut checked, mut fading) = (0, 0);
+    for seed in 0..5 {
+        // Given:
+        let mut scene = ticked(seed, AREA, 1);
+        let mut before: Vec<(f32, f32)> = Vec::new();
+
+        for _ in 0..SKY_RUN {
+            // When:
+            scene.tick(AREA);
+            let buffer = render(&scene, AREA, AREA);
+            let lit: Vec<((f32, f32), Color)> = line_pixels(&buffer, AREA)
+                .into_iter()
+                .filter(|(_, colour)| scene.figure().is_none() && in_a_shooting_star(*colour))
+                .collect();
+
+            // Then:
+            let now: Vec<(f32, f32)> = lit.iter().map(|(pixel, _)| *pixel).collect();
+            if before.is_empty() || now.len() < 6 {
+                before = now;
+                continue;
+            }
+            let (from, to) = (centroid(&before), centroid(&now));
+            let along = |pixel: &(f32, f32)| {
+                (pixel.0 - from.0) * (to.0 - from.0) + (pixel.1 - from.1) * (to.1 - from.1)
+            };
+            let mut ordered = lit.clone();
+            ordered.sort_by(|one, other| along(&one.0).total_cmp(&along(&other.0)));
+            let half = ordered.len() / 2;
+            let mean = |pixels: &[((f32, f32), Color)]| {
+                pixels
+                    .iter()
+                    .map(|(_, colour)| f64::from(luma(*colour)))
+                    .sum::<f64>()
+                    / pixels.len() as f64
+            };
+            let (tail, head) = (
+                mean(&ordered[..half]),
+                mean(&ordered[ordered.len() - half..]),
+            );
+            fading += usize::from(head > tail);
+            checked += 1;
+            before = now;
+        }
+    }
+    assert!(checked > 20, "{checked} frames checked");
+    assert!(
+        fading * 4 >= checked * 3,
+        "{fading} of {checked} frames lighter at the head"
+    );
 }
 
 /// The shares of a tick that the frames between two ticks show.
@@ -618,12 +908,17 @@ fn ends_along(pixels: &[(f32, f32)], heading: (f32, f32)) -> (f32, f32) {
 /// Given: the scene at a hundred by thirty, for three minutes.
 /// When: on each tick with a shooting star, it renders at a quarter, a half
 /// and three quarters of the way to its next tick, then ticks.
-/// Then: where the shooting star still shows on the next tick and crosses
-/// no star, its head and the end of its trail never go back along its
-/// line. Where its head moves two pixels or more from one tick to the
-/// next, the head at half a tick lies strictly between the two. A star's
-/// glyph hides the pixels of its cell, so a shooting star that crosses a
-/// star can seem to step back.
+/// Then: where the shooting star still shows on the next tick, crosses no
+/// star, and the middle of its light, its pixels weighed by how much
+/// lighter than the sky each is, moves two pixels or more from one tick to
+/// the next, its head and that middle never go back along its line, and
+/// the middle at half a tick lies strictly between the two. The head stops
+/// at the end of the run, part way through a tick, and the trail then
+/// moves its light about a pixel a tick, finer than a cell of two colours
+/// shows. The end of the trail fades into the sky, and a cell of two
+/// colours shows its faintest pixel on one frame and not on the next. A
+/// star's glyph hides the pixels of its cell, so a shooting star that
+/// crosses a star can seem to step back.
 ///
 /// Why it matters: at a quarter speed a shooting star that moves only on a
 /// tick jumps four pixels once every sixteen frames, and reads as a dotted
@@ -636,13 +931,23 @@ fn a_shooting_star_glides_between_ticks() {
         let mut scene = ticked(seed, AREA, 1);
 
         for tick in 0..SKY_RUN {
-            if gold_pixels(&render(&scene, AREA, AREA)).is_empty() {
+            if shooting_star(&scene, &render(&scene, AREA, AREA)).is_empty() {
                 scene.tick(AREA);
                 continue;
             }
 
             // When:
-            let frames = glide(&mut scene, gold_pixels);
+            let lights = glide(&mut scene, |buffer| {
+                line_pixels(buffer, AREA)
+                    .into_iter()
+                    .filter(|(_, colour)| in_a_shooting_star(*colour))
+                    .map(|(pixel, colour)| (pixel, (luma(colour) - luma(PALETTE.base)) as f32))
+                    .collect::<Vec<_>>()
+            });
+            let frames: Vec<Vec<(f32, f32)>> = lights
+                .iter()
+                .map(|frame| frame.iter().map(|(pixel, _)| *pixel).collect())
+                .collect();
 
             // Then:
             let (first, last) = (&frames[0], &frames[frames.len() - 1]);
@@ -674,35 +979,49 @@ fn a_shooting_star_glides_between_ticks() {
             {
                 continue;
             }
-            for pair in ends.windows(2) {
+            let middles: Vec<f32> = lights
+                .iter()
+                .map(|frame| {
+                    let weight: f32 = frame.iter().map(|(_, light)| light).sum();
+                    frame
+                        .iter()
+                        .map(|(pixel, light)| along(pixel) * light)
+                        .sum::<f32>()
+                        / weight.max(1.0)
+                })
+                .collect();
+            let (start, half, end) = (middles[0], middles[2], middles[4]);
+            if end - start < 2.0 {
+                continue;
+            }
+            for (pair, middle) in ends.windows(2).zip(middles.windows(2)) {
                 assert!(
-                    pair[0].0 <= pair[1].0 && pair[0].1 <= pair[1].1,
-                    "seed {seed}: the shooting star goes back at tick {tick}: {ends:?}"
+                    pair[0].1 <= pair[1].1 && middle[0] <= middle[1],
+                    "seed {seed}: the shooting star goes back at tick {tick}: {ends:?} {middles:?}"
                 );
             }
-            let (start, half, end) = (ends[0].1, ends[2].1, ends[4].1);
-            if end - start >= 2.0 {
-                assert!(
-                    start < half && half < end,
-                    "seed {seed}: the head not between its ticks at tick {tick}: {ends:?}"
-                );
-                moving += 1;
-            }
+            assert!(
+                start < half && half < end,
+                "seed {seed}: the streak not between its ticks at tick {tick}: {middles:?}"
+            );
+            moving += 1;
         }
     }
-    assert!(moving > 20, "{moving} shooting star heads moved two pixels");
+    assert!(moving > 20, "{moving} shooting stars moved two pixels");
 }
 
 /// A figure's line draws itself between two ticks.
 /// Given: the scene at a hundred by thirty, for a minute and a half.
 /// When: on each tick, it renders at a quarter, a half and three quarters
 /// of the way to its next tick, then ticks.
-/// Then: where the line grows from one tick to the next, each frame holds
-/// every pixel of the frame before it. Where it grows by two pixels or
-/// more, the line at half a tick holds more pixels than the first and
-/// fewer than the last in three frames of four or more. A star's glyph
-/// hides the pixels of its cell, so a line that reaches a star can seem to
-/// pause.
+/// Then: where the line reaches more cells from one tick to the next, each
+/// frame lights every cell the frame before it lit. A cell shows two
+/// colours, so a pixel of the line can take another of the line's colours
+/// as its cell gains pixels, but a cell the line crosses always shows the
+/// line. Where it grows by two pixels or more, the line at half a tick
+/// holds more pixels than the first and fewer than the last in three
+/// frames of four or more. A star's glyph hides the pixels of its cell, so
+/// a line that reaches a star can seem to pause.
 ///
 /// Why it matters: at a quarter speed a line that grows only on a tick
 /// jumps once every sixteen frames, and the pen reads as a stutter.
@@ -723,23 +1042,32 @@ fn a_figure_line_draws_itself_between_ticks() {
             let frames = glide(&mut scene, |buffer| {
                 line_pixels(buffer, AREA)
                     .into_iter()
-                    .filter(|(_, colour)| *colour == PALETTE.iris || *colour == PALETTE.foam)
+                    .filter(|(_, colour)| in_a_figure(*colour))
                     .map(|((x, y), _)| (x as i32, y as i32))
                     .collect::<BTreeSet<(i32, i32)>>()
             });
+            let cells: Vec<BTreeSet<(i32, i32)>> = frames
+                .iter()
+                .map(|frame| {
+                    frame
+                        .iter()
+                        .map(|(x, y)| (x / CELL_WIDTH as i32, y / CELL_HEIGHT as i32))
+                        .collect()
+                })
+                .collect();
 
             // Then:
             let (first, last) = (&frames[0], &frames[frames.len() - 1]);
-            if first.is_empty() || last.len() <= first.len() {
+            if first.is_empty() || cells[cells.len() - 1].len() <= cells[0].len() {
                 continue;
             }
-            for pair in frames.windows(2) {
+            for pair in cells.windows(2) {
                 assert!(
                     pair[0].is_subset(&pair[1]),
-                    "seed {seed}: the line loses a pixel at tick {tick}"
+                    "seed {seed}: the line loses a cell at tick {tick}"
                 );
             }
-            if last.len() - first.len() >= 2 {
+            if last.len() >= first.len() + 2 {
                 let half = frames[2].len();
                 between += usize::from(first.len() < half && half < last.len());
                 growing += 1;
