@@ -1,11 +1,15 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+use std::collections::BTreeSet;
+
+use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::pipes::{Direction, FILL_PERCENT, Pipes};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 fn render(scene: &Pipes, area: Rect) -> Buffer {
     let mut buffer = Buffer::empty(area);
@@ -21,40 +25,77 @@ fn drawn(buffer: &Buffer) -> usize {
         .count()
 }
 
-/// Given: a pipe at (2, 2) that arrived moving right.
+/// The pixels of an octant glyph, as its bits, or none for another glyph.
+fn bits(symbol: &str) -> Option<u8> {
+    (0..=u8::MAX).find(|&bits| octant::glyph(bits).to_string() == symbol)
+}
+
+/// Each pixel that shows a colour other than `base`, with that colour:
+/// the foreground where the glyph sets the pixel, else the background.
+fn lit(buffer: &Buffer, base: Color) -> Vec<((usize, usize), Color)> {
+    let mut lit = Vec::new();
+    for position in buffer.area.positions() {
+        let cell = &buffer[position];
+        let bits = bits(cell.symbol())
+            .unwrap_or_else(|| panic!("{:?} is not an octant glyph", cell.symbol()));
+        for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
+            let colour = if bits & 1 << pixel == 0 {
+                cell.bg
+            } else {
+                cell.fg
+            };
+            if colour != base {
+                let x = usize::from(position.x) * CELL_WIDTH + pixel % CELL_WIDTH;
+                let y = usize::from(position.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
+                lit.push(((x, y), colour));
+            }
+        }
+    }
+    lit
+}
+
+fn places(lit: &[((usize, usize), Color)]) -> BTreeSet<(usize, usize)> {
+    lit.iter().map(|(place, _)| *place).collect()
+}
+
+/// Given: a pipe at pixel (4, 9) that arrived moving right.
 /// When: it moves right, then down, then down.
-/// Then: (2, 2) is the horizontal rune, (3, 2) the corner that joins left
-/// and down, (3, 3) the vertical rune, all in one colour.
+/// Then: one line of pixels in one colour runs two pixels right from
+/// (4, 9), then turns at (6, 9) and runs down to (6, 16), and no other
+/// pixel is lit.
 ///
-/// Why it matters: a wrong corner shows as a pipe that breaks at every
-/// turn, and the runes have to come from the same set as the frame.
+/// Why it matters: a step spans one cell, two pixels across or four down,
+/// so the pipe grows as fast on screen in cells as it did in runes. A gap
+/// or a stray pixel at the turn shows as a pipe that breaks at every
+/// corner.
 #[test]
-fn a_turn_from_right_to_down_draws_the_joining_corner() {
+fn a_turn_from_right_to_down_draws_a_joined_line_of_pixels() {
     // Given, when:
     let area = Rect::new(0, 0, 10, 6);
     let scene = Pipes::trace(
         Rng::seed_from_u64(7),
         &theme::ROSE_PINE,
         area,
-        (2, 2),
+        (4, 9),
         Direction::Right,
         &[Direction::Right, Direction::Down, Direction::Down],
     );
 
     // Then:
-    let buffer = render(&scene, area);
-    let set = theme::BORDER.to_border_set();
-    assert_eq!(buffer[(2, 2)].symbol(), set.horizontal_top);
-    assert_eq!(buffer[(3, 2)].symbol(), set.top_right);
-    assert_eq!(buffer[(3, 3)].symbol(), set.vertical_left);
-    assert_eq!(buffer[(2, 2)].fg, buffer[(3, 2)].fg);
-    assert_eq!(buffer[(3, 2)].fg, buffer[(3, 3)].fg);
-    assert_ne!(buffer[(2, 2)].fg, theme::ROSE_PINE.base);
+    let lit = lit(&render(&scene, area), theme::ROSE_PINE.base);
+    let line: BTreeSet<(usize, usize)> = [(4, 9), (5, 9)]
+        .into_iter()
+        .chain((9..=16).map(|y| (6, y)))
+        .collect();
+    assert_eq!(places(&lit), line);
+    let colours: BTreeSet<String> = lit.iter().map(|(_, c)| format!("{c:?}")).collect();
+    assert_eq!(colours.len(), 1, "the line shows {colours:?}");
 }
 
-/// Given: a pipe in the last column, moving right.
+/// Given: a pipe at pixel (18, 9), in the last column, moving right.
 /// When: it moves right twice.
-/// Then: the second rune lands in the first column of the same row.
+/// Then: the second step lights the first two pixels of the same pixel
+/// row, and only the two cells at either edge show the pipe.
 #[test]
 fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
     // Given, when:
@@ -63,16 +104,16 @@ fn a_pipe_that_leaves_the_right_edge_enters_at_the_left() {
         Rng::seed_from_u64(7),
         &theme::ROSE_PINE,
         area,
-        (9, 2),
+        (18, 9),
         Direction::Right,
         &[Direction::Right, Direction::Right],
     );
 
     // Then:
     let buffer = render(&scene, area);
-    let set = theme::BORDER.to_border_set();
-    assert_eq!(buffer[(9, 2)].symbol(), set.horizontal_top);
-    assert_eq!(buffer[(0, 2)].symbol(), set.horizontal_top);
+    let lit = lit(&buffer, theme::ROSE_PINE.base);
+    let line = BTreeSet::from([(18, 9), (19, 9), (0, 9), (1, 9)]);
+    assert_eq!(places(&lit), line);
     assert_eq!(drawn(&buffer), 2);
 }
 
@@ -108,7 +149,7 @@ fn the_screen_clears_at_the_fill_share() {
 /// Given: pipes from many seeds, in every theme, on a screen wide enough
 /// for the most pipes at once.
 /// When: each runs for a while.
-/// Then: no cell is in the marker colour.
+/// Then: no pixel is in the marker colour.
 ///
 /// Why it matters: the focused pane shows corner marks in the palette's
 /// marker colour. A pipe in that colour that turns at a pane corner draws
@@ -129,10 +170,9 @@ fn no_pipe_is_in_the_marker_colour() {
 
             // Then:
             let buffer = render(&scene, area);
-            let marked = buffer
-                .area
-                .positions()
-                .find(|&p| buffer[p].fg == palette.marker());
+            let marked = lit(&buffer, palette.base)
+                .into_iter()
+                .find(|(_, colour)| *colour == palette.marker());
             assert_eq!(
                 marked, None,
                 "{name} seed {seed} drew a pipe in the marker colour"
@@ -227,9 +267,9 @@ fn each_live_pipe_shows_its_own_colour() {
     }
 }
 
-/// Given: a pipe in the last column, moving right.
+/// Given: a pipe at pixel (18, 9), in the last column, moving right.
 /// When: it moves right twice, so it loops to the first column.
-/// Then: the rune after the loop is in another colour than the one before.
+/// Then: the cell after the loop is in another colour than the one before.
 ///
 /// Why it matters: a pipe that keeps one colour for the whole screen
 /// leaves one colour on a narrow pane, which holds a single pipe. In
@@ -242,7 +282,7 @@ fn a_pipe_takes_a_new_colour_when_it_loops_at_an_edge() {
         Rng::seed_from_u64(7),
         &theme::ROSE_PINE,
         area,
-        (9, 2),
+        (18, 9),
         Direction::Right,
         &[Direction::Right, Direction::Right],
     );
@@ -272,4 +312,27 @@ fn a_pipe_lays_three_cells_every_two_ticks() {
     // Then:
     let count = drawn(&render(&scene, area));
     assert!(count >= 28, "{count} cells drawn in twenty ticks");
+}
+
+/// Given: two scenes from the same seed.
+/// When: each ticks sixty times on an eighty by twenty-four area.
+/// Then: the frames are equal.
+///
+/// Why it matters: a seed replays a run, so every spawn, turn and colour
+/// must come from the seeded source.
+#[test]
+fn the_same_seed_lays_the_same_pipes() {
+    // Given:
+    let area = Rect::new(0, 0, 80, 24);
+    let mut first = Pipes::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+    let mut second = Pipes::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
+
+    // When:
+    for _ in 0..60 {
+        first.tick(area);
+        second.tick(area);
+    }
+
+    // Then:
+    assert_eq!(render(&first, area), render(&second, area));
 }
