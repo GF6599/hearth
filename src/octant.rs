@@ -328,6 +328,22 @@ pub fn mix(from: Color, to: Color, share: f32) -> Color {
     }
 }
 
+/// The colour `over` gives a pixel of `under` at `share`, as a canvas of
+/// `palette` blends it. Where the palette's base is see-through and either
+/// colour is the base, the colour is the nearer end and never a mix, so a
+/// shade worked out ahead of time keeps the canvas's hard edge.
+pub fn blend(palette: &Palette, under: Color, over: Color, share: f32) -> Color {
+    blend_on(palette.base, palette.see_through, under, over, share)
+}
+
+fn blend_on(base: Color, see_through: bool, under: Color, over: Color, share: f32) -> Color {
+    if see_through && (under == base || over == base) {
+        if share >= 0.5 { over } else { under }
+    } else {
+        mix(under, over, share)
+    }
+}
+
 /// The colour at `at` along `stops`, with the first stop at 0, the last at
 /// 1, and the rest evenly between. Between two stops the colour is their
 /// mix. A place past either end takes that end's stop, and no stops give
@@ -487,17 +503,13 @@ impl Canvas {
     /// below, so the edge stays hard. A pixel past an edge is dropped.
     pub fn blend(&mut self, x: usize, y: usize, colour: Color, coverage: f32) {
         if let Some(index) = self.index(x, y) {
-            self.pixels[index] = self.mix(self.pixels[index], colour, coverage);
-        }
-    }
-
-    /// The mix of `from` and `to` at `share`, or the nearer end where
-    /// either is a see-through base.
-    fn mix(&self, from: Color, to: Color, share: f32) -> Color {
-        if self.see_through && (from == self.base || to == self.base) {
-            if share >= 0.5 { to } else { from }
-        } else {
-            mix(from, to, share)
+            self.pixels[index] = blend_on(
+                self.base,
+                self.see_through,
+                self.pixels[index],
+                colour,
+                coverage,
+            );
         }
     }
 
@@ -563,7 +575,13 @@ impl Canvas {
         let steps = rows.len().saturating_sub(1).max(1) as f32;
         let width = self.width();
         for y in rows.start..rows.end.min(self.height()) {
-            let colour = self.mix(top, bottom, (y - rows.start) as f32 / steps);
+            let colour = blend_on(
+                self.base,
+                self.see_through,
+                top,
+                bottom,
+                (y - rows.start) as f32 / steps,
+            );
             self.pixels[y * width..(y + 1) * width].fill(colour);
         }
     }
