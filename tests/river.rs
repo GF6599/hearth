@@ -2,7 +2,8 @@
 
 mod pixels;
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -158,32 +159,97 @@ enum Part {
     /// The stone of a merge: a stone with clearly more red than green, as
     /// iris is.
     Merge,
+    /// A colour of no part of the river.
+    Other,
 }
 
+/// The distance between two colours as points of red, green and blue.
+fn distance(one: Color, other: Color) -> u32 {
+    let channels = |colour: Color| match colour {
+        Color::Rgb(r, g, b) => [r, g, b],
+        other => panic!("{other:?} is not a colour of the theme"),
+    };
+    let squares: u32 = channels(one)
+        .iter()
+        .zip(channels(other))
+        .map(|(a, b)| u32::from(a.abs_diff(b)).pow(2))
+        .sum();
+    f64::from(squares).sqrt() as u32
+}
+
+/// The farthest each part lies from its role. The greys of Rose Pine share
+/// one hue, so the bed and the stones are read by their distance to their
+/// own roles and not by hue alone.
+const SAND_REACH: u32 = 64;
+const BED_REACH: u32 = 40;
+const STONE_REACH: u32 = 48;
+
+/// The part each colour shows, read once for each colour, as a test reads
+/// millions of pixels.
 fn part(colour: Color) -> Part {
+    thread_local! {
+        static READ: RefCell<HashMap<Color, Part>> = RefCell::new(HashMap::new());
+    }
+    READ.with(|read| {
+        *read
+            .borrow_mut()
+            .entry(colour)
+            .or_insert_with(|| read_part(colour))
+    })
+}
+
+fn read_part(colour: Color) -> Part {
     let Color::Rgb(r, g, b) = colour else {
         panic!("{colour:?} is not a colour of the theme");
     };
-    let luma = theme::luma(colour);
+    let nearest = |roles: &[Color]| {
+        roles
+            .iter()
+            .copied()
+            .min_by_key(|role| distance(colour, *role))
+            .unwrap()
+    };
+    let greys = [
+        PALETTE.base,
+        PALETTE.surface,
+        PALETTE.overlay,
+        PALETTE.muted,
+        PALETTE.subtle,
+    ];
+    let stone = nearest(&[PALETTE.subtle, PALETTE.iris]);
     if colour == PALETTE.base {
         Part::Ground
     } else if g > r {
         let half = theme::luma(octant::mix(PALETTE.pine, PALETTE.foam, 0.5));
-        if luma > half { Part::Foam } else { Part::Water }
+        if theme::luma(colour) > half {
+            Part::Foam
+        } else {
+            Part::Water
+        }
     } else if r > g && g >= b {
-        Part::Sand
-    } else if luma <= theme::luma(PALETTE.muted) {
+        if distance(colour, PALETTE.gold) <= SAND_REACH {
+            Part::Sand
+        } else {
+            Part::Other
+        }
+    } else if nearest(&greys) == PALETTE.overlay && distance(colour, PALETTE.overlay) <= BED_REACH {
         Part::Bed
-    } else if r >= g + 16 {
-        Part::Merge
+    } else if distance(colour, stone) <= STONE_REACH {
+        if r >= g + 16 {
+            Part::Merge
+        } else {
+            Part::Stone
+        }
     } else {
-        Part::Stone
+        Part::Other
     }
 }
 
-/// Given: the Rose Pine roles of each part of the river.
+/// Given: the Rose Pine roles of each part of the river, and the roles the
+/// river does not draw as a part.
 /// When: each is read as a part.
-/// Then: each role reads as its own part.
+/// Then: each role of a part reads as its own part, and each other role
+/// reads as no part.
 ///
 /// Why it matters: the other tests read the river by its parts, and a part
 /// read wrong would pass a broken picture.
@@ -198,6 +264,11 @@ fn each_role_reads_as_its_part_of_the_river() {
         (PALETTE.foam, Part::Foam),
         (PALETTE.subtle, Part::Stone),
         (PALETTE.iris, Part::Merge),
+        (PALETTE.surface, Part::Other),
+        (PALETTE.muted, Part::Other),
+        (PALETTE.text, Part::Other),
+        (PALETTE.love, Part::Other),
+        (PALETTE.rose, Part::Other),
     ] {
         // When, then:
         assert_eq!(part(role), expected, "{role:?}");
