@@ -98,7 +98,7 @@ struct Grain {
     period: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Log {
     start: usize,
     end: usize,
@@ -175,7 +175,7 @@ fn char_if(pixel: Pixel, burnt: f32) -> Pixel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Coal {
     x: usize,
     y: usize,
@@ -183,6 +183,62 @@ struct Coal {
     left: u32,
     phase: u8,
     period: u8,
+}
+
+/// What holds a log up besides the other logs: the ground and the coals.
+struct Bed<'a> {
+    ground: &'a [Pixel],
+    coals: &'a [Coal],
+    width: usize,
+    rows: usize,
+}
+
+impl Bed<'_> {
+    /// Moves each log with nothing under it one pixel down, and gives the
+    /// middle of a log that lands.
+    fn drop_a_pixel(&self, logs: &mut [Log]) -> Option<(usize, usize)> {
+        let mut landed = None;
+        for index in 0..logs.len() {
+            let log = &logs[index];
+            let (start, end) = log.span();
+            let below = |x: usize| log.bottom(x) + 1;
+            let held = (start..=end).any(|x| {
+                let y = below(x);
+                y >= self.rows || self.holds(logs, x, y, index)
+            });
+            let log = &mut logs[index];
+            if !held {
+                log.from += 1;
+                log.to += 1;
+                log.falling = true;
+            } else if log.falling {
+                log.falling = false;
+                let middle = (start + end) / 2;
+                landed = Some((middle, log.bottom(middle)));
+            }
+        }
+        landed
+    }
+
+    /// Whether the pixel at `(x, y)` holds something other than log
+    /// `index`: the ground, a coal, or another log.
+    fn holds(&self, logs: &[Log], x: usize, y: usize, index: usize) -> bool {
+        if self.ground[y * self.width + x] != Pixel::Empty {
+            return true;
+        }
+        if self.coals.iter().any(|coal| (coal.x, coal.y) == (x, y)) {
+            return true;
+        }
+        logs.iter().enumerate().any(|(other, log)| {
+            other != index && {
+                let (start, end) = log.span();
+                (start..=end).contains(&x) && {
+                    let bottom = log.bottom(x);
+                    y <= bottom && bottom - y < log.depth()
+                }
+            }
+        })
+    }
 }
 
 /// A spark in pixel space. Its glyph and colour cool with its age.
@@ -221,6 +277,11 @@ pub struct Embers {
     /// The pixel a settle flared, and the tick its flare ends.
     flare: Option<(usize, usize, u32)>,
     ticks: u32,
+    /// The pixels each log falls on the next tick.
+    falls: Vec<usize>,
+    /// The share of the way from the last tick to the next. A falling log
+    /// and a spark draw on from their tick by it.
+    progress: f64,
 }
 
 impl Embers {
@@ -244,6 +305,8 @@ impl Embers {
             settle_in,
             flare: None,
             ticks: 0,
+            falls: Vec::new(),
+            progress: 0.0,
         }
     }
 
@@ -475,79 +538,56 @@ impl Embers {
     /// time, and one that lands settles with a burst.
     fn fall(&mut self) {
         for _ in 0..FALL {
-            self.fall_a_pixel();
+            let bed = Bed {
+                ground: &self.ground,
+                coals: &self.coals,
+                width: self.width,
+                rows: self.rows,
+            };
+            if let Some((x, y)) = bed.drop_a_pixel(&mut self.logs) {
+                self.settle(x, y);
+            }
         }
     }
 
-    fn fall_a_pixel(&mut self) {
-        let mut landed = None;
-        for index in 0..self.logs.len() {
-            let log = &self.logs[index];
-            let (start, end) = log.span();
-            let below = |x: usize| log.bottom(x) + 1;
-            let held = (start..=end).any(|x| {
-                let y = below(x);
-                y >= self.rows || self.held_by_other(x, y, index)
-            });
-            let log = &mut self.logs[index];
-            if !held {
-                log.from += 1;
-                log.to += 1;
-                log.falling = true;
-            } else if log.falling {
-                log.falling = false;
-                let middle = (start + end) / 2;
-                landed = Some((middle, log.bottom(middle)));
-            }
+    /// The pixels each log falls on the next tick. That tick burns and cools
+    /// before the logs fall, so the logs and the coals here burn and cool
+    /// first. A tick that burns a log out lays a new one from the random
+    /// source, which only the tick can draw, so its logs do not glide.
+    fn next_falls(&self) -> Vec<usize> {
+        if self.glows.is_empty() || self.logs.iter().any(|log| log.left <= 1) {
+            return Vec::new();
         }
-        if let Some((x, y)) = landed {
-            self.settle(x, y);
+        let mut logs = self.logs.clone();
+        for log in &mut logs {
+            log.left -= 1;
         }
-    }
-
-    /// Whether the pixel at `(x, y)` holds something other than log
-    /// `index`: the ground, a coal, or another log.
-    fn held_by_other(&self, x: usize, y: usize, index: usize) -> bool {
-        if self.ground[y * self.width + x] != Pixel::Empty {
-            return true;
+        let coals: Vec<Coal> = self
+            .coals
+            .iter()
+            .filter(|coal| coal.left > 1)
+            .cloned()
+            .collect();
+        let bed = Bed {
+            ground: &self.ground,
+            coals: &coals,
+            width: self.width,
+            rows: self.rows,
+        };
+        for _ in 0..FALL {
+            bed.drop_a_pixel(&mut logs);
         }
-        if self.coals.iter().any(|coal| (coal.x, coal.y) == (x, y)) {
-            return true;
-        }
-        self.logs.iter().enumerate().any(|(other, log)| {
-            other != index && {
-                let (start, end) = log.span();
-                (start..=end).contains(&x) && {
-                    let bottom = log.bottom(x);
-                    y <= bottom && bottom - y < log.depth()
-                }
-            }
-        })
+        logs.iter()
+            .zip(&self.logs)
+            .map(|(fallen, log)| fallen.from - log.from)
+            .collect()
     }
 
     /// The ground, then the coals, then the logs, and the glow and the top
     /// of each column read back from that.
     fn draw(&mut self) {
         let (width, rows) = (self.width, self.rows);
-        self.pixels.clone_from(&self.ground);
-        for coal in &self.coals {
-            let pixel = if coal.left > coal.life / 4 {
-                Pixel::Glow {
-                    phase: coal.phase,
-                    period: coal.period,
-                }
-            } else {
-                Pixel::Ash
-            };
-            self.pixels[coal.y * width + coal.x] = pixel;
-        }
-        for log in &self.logs {
-            for (x, y, pixel) in log.pixels() {
-                if x < width && y < rows {
-                    self.pixels[y * width + x] = pixel;
-                }
-            }
-        }
+        self.pixels = self.compose(&[]);
         self.glows = (0..rows)
             .flat_map(|y| (0..width).map(move |x| (x, y)))
             .filter(|&(x, y)| matches!(self.pixel(x, y), Pixel::Glow { .. }))
@@ -569,12 +609,40 @@ impl Embers {
             .collect();
     }
 
-    fn colour(&self, x: usize, y: usize) -> Color {
+    /// The ground, then the coals, then the logs, each log `shifts` pixels
+    /// lower than it lies.
+    fn compose(&self, shifts: &[usize]) -> Vec<Pixel> {
+        let (width, rows) = (self.width, self.rows);
+        let mut pixels = self.ground.clone();
+        for coal in &self.coals {
+            let pixel = if coal.left > coal.life / 4 {
+                Pixel::Glow {
+                    phase: coal.phase,
+                    period: coal.period,
+                }
+            } else {
+                Pixel::Ash
+            };
+            pixels[coal.y * width + coal.x] = pixel;
+        }
+        for (index, log) in self.logs.iter().enumerate() {
+            let shift = shifts.get(index).copied().unwrap_or(0);
+            for (x, y, pixel) in log.pixels() {
+                let y = y + shift;
+                if x < width && y < rows {
+                    pixels[y * width + x] = pixel;
+                }
+            }
+        }
+        pixels
+    }
+
+    fn colour(&self, pixel: Pixel, x: usize, y: usize) -> Color {
         let palette = self.palette;
         let flared = self.flare.is_some_and(|(fx, fy, until)| {
             self.ticks < until && x.abs_diff(fx) <= FLARE_REACH && y.abs_diff(fy) <= FLARE_REACH
         });
-        match self.pixel(x, y) {
+        match pixel {
             Pixel::Glow { .. } if flared => palette.gold,
             Pixel::Empty => palette.base,
             Pixel::Stone | Pixel::Heart | Pixel::Ash => palette.muted,
@@ -595,11 +663,15 @@ impl Embers {
 impl Embers {
     /// A spark shows only in a cell with nothing else in it, so it never
     /// cuts a hole in a log.
-    fn render_spark(&self, spark: &Spark, area: Rect, buf: &mut Buffer) {
-        let (column, row) = (
-            spark.x as usize / CELL_WIDTH,
-            spark.y as usize / CELL_HEIGHT,
-        );
+    ///
+    /// A spark keeps its column between two ticks, because its next drift
+    /// is a random step that only the tick can draw.
+    fn render_spark(&self, spark: &Spark, pixels: &[Pixel], area: Rect, buf: &mut Buffer) {
+        let y = spark.y - spark.rise * self.progress as f32;
+        if y < 0.0 {
+            return;
+        }
+        let (column, row) = (spark.x as usize / CELL_WIDTH, y as usize / CELL_HEIGHT);
         let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(row)) else {
             return;
         };
@@ -612,7 +684,7 @@ impl Embers {
             return;
         }
         let empty = (top..top + CELL_HEIGHT)
-            .all(|y| (left..left + CELL_WIDTH).all(|x| self.pixel(x, y) == Pixel::Empty));
+            .all(|y| (left..left + CELL_WIDTH).all(|x| pixels[y * self.width + x] == Pixel::Empty));
         if !empty {
             return;
         }
@@ -629,10 +701,8 @@ impl Embers {
             .set_fg(colour)
             .set_bg(self.palette.base);
     }
-}
 
-impl Scene for Embers {
-    fn tick(&mut self, area: Rect) {
+    fn step(&mut self, area: Rect) {
         let width = usize::from(area.width) * CELL_WIDTH;
         let rows = usize::from(area.height) * CELL_HEIGHT;
         if (width, rows) != (self.width, self.rows) {
@@ -663,17 +733,40 @@ impl Scene for Embers {
             self.settle(x, y);
         }
     }
+}
+
+impl Scene for Embers {
+    fn tick(&mut self, area: Rect) {
+        self.step(area);
+        self.falls = self.next_falls();
+    }
+
+    fn set_progress(&mut self, progress: f64) {
+        self.progress = progress;
+    }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        let shifts: Vec<usize> = self
+            .falls
+            .iter()
+            .map(|&fall| (fall as f64 * self.progress) as usize)
+            .collect();
+        let glided;
+        let pixels = if shifts.iter().all(|&shift| shift == 0) {
+            &self.pixels
+        } else {
+            glided = self.compose(&shifts);
+            &glided
+        };
         let mut canvas = Canvas::new(area.width, area.height, self.palette.base);
         for y in 0..self.rows.min(canvas.height()) {
             for x in 0..self.width.min(canvas.width()) {
-                canvas.set(x, y, self.colour(x, y));
+                canvas.set(x, y, self.colour(pixels[y * self.width + x], x, y));
             }
         }
         canvas.render(area, buf);
         for spark in &self.sparks {
-            self.render_spark(spark, area, buf);
+            self.render_spark(spark, pixels, area, buf);
         }
     }
 }
