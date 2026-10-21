@@ -281,14 +281,24 @@ fn murmuration_is_a_scene_by_name() {
     assert!(!lit_dots(&buffer, AREA).is_empty());
 }
 
-/// The rows of a render that hold the trees, top first: from the first row
-/// with a pixel of tree to the bottom. The sky between the trees draws as
-/// the sky does, so a row is known by its trees.
+/// The rows of a render that hold the trees, top first: from the row of the
+/// highest pixel of tree that stands on the ground to the bottom. The sky
+/// between the trees draws as the sky does, so a row is known by its
+/// trees, and a bird in the colour of a tree does not stand on the ground.
 fn tree_rows(buffer: &Buffer, palette: &Palette) -> Vec<u16> {
     let area = buffer.area;
     let trees = dots_in(buffer, area, &[palette.muted]);
-    let first = trees.iter().map(|(_, y)| *y).min().expect("no trees") / CELL_DOTS.1;
-    (u16::try_from(first).unwrap()..area.bottom()).collect()
+    let bottom = usize::from(area.height) * CELL_DOTS.1;
+    let highest = (0..usize::from(area.width) * CELL_DOTS.0)
+        .filter_map(|x| {
+            (0..bottom)
+                .rev()
+                .take_while(|y| trees.contains(&(x, *y)))
+                .last()
+        })
+        .min()
+        .expect("no trees");
+    (u16::try_from(highest / CELL_DOTS.1).unwrap()..area.bottom()).collect()
 }
 
 /// Given: the scene on a hundred by thirty area.
