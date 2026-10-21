@@ -1,11 +1,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+mod pixels;
+
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::city::City;
 use hearth::scenes::typing::Speed;
@@ -35,42 +36,13 @@ fn render(scene: &City, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The bits of each octant glyph.
-fn octants() -> &'static HashMap<char, u8> {
-    static OCTANTS: OnceLock<HashMap<char, u8>> = OnceLock::new();
-    OCTANTS.get_or_init(|| {
-        (0..=u8::MAX)
-            .map(|bits| (octant::glyph(bits), bits))
-            .collect()
-    })
-}
-
 /// The colour of each pixel of the area, two across and four down to a
 /// cell, row by row.
+/// A cell with another glyph shows its background.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    let mut rows = vec![
-        vec![Color::Reset; usize::from(area.width) * CELL_WIDTH];
-        usize::from(area.height) * CELL_HEIGHT
-    ];
-    for position in area.positions() {
-        let cell = &buffer[position];
-        let bits = cell
-            .symbol()
-            .chars()
-            .next()
-            .and_then(|glyph| octants().get(&glyph).copied())
-            .unwrap_or(0);
-        for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
-            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
-            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
-            rows[y][x] = if bits & 1 << pixel != 0 {
-                cell.fg
-            } else {
-                cell.bg
-            };
-        }
-    }
-    rows
+    pixels::grid(buffer, area, |_, cell| {
+        pixels::shown(cell).unwrap_or([cell.bg; pixels::PIXELS])
+    })
 }
 
 fn frame(scene: &City, area: Rect) -> Vec<Vec<Color>> {
@@ -249,7 +221,7 @@ fn the_stars_and_moon_stay_in_the_sky() {
 /// mirror falls in the pane show in the water, and the water changes in
 /// most frames.
 ///
-/// Why it matters: lit dots on a dark band do not read as a reflection,
+/// Why it matters: lit pixels on a dark band do not read as a reflection,
 /// a reflection of something that is not there reads as a fault, and water
 /// that never moves reads as a second city upside down.
 #[test]
@@ -296,7 +268,7 @@ fn the_water_mirrors_the_city_in_streaks_that_ripple() {
                 } else {
                     assert!(
                         run != 1 || x == 1,
-                        "tick {tick}: a lit dot alone at {:?}",
+                        "tick {tick}: a lit pixel alone at {:?}",
                         (x - 1, y)
                     );
                     run = 0;

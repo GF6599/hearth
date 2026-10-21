@@ -1,8 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::BTreeSet;
 
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::pipes::{Direction, FILL_PERCENT, Pipes};
 use hearth::theme;
@@ -25,33 +26,21 @@ fn drawn(buffer: &Buffer) -> usize {
         .count()
 }
 
-/// The pixels of an octant glyph, as its bits, or none for another glyph.
-fn bits(symbol: &str) -> Option<u8> {
-    (0..=u8::MAX).find(|&bits| octant::glyph(bits).to_string() == symbol)
-}
-
-/// Each pixel that shows a colour other than `base`, with that colour:
-/// the foreground where the glyph sets the pixel, else the background.
+/// Each pixel that shows a colour other than `base`, with that colour, in
+/// a render whose area starts at the top left of its buffer.
 fn lit(buffer: &Buffer, base: Color) -> Vec<((usize, usize), Color)> {
-    let mut lit = Vec::new();
-    for position in buffer.area.positions() {
-        let cell = &buffer[position];
-        let bits = bits(cell.symbol())
-            .unwrap_or_else(|| panic!("{:?} is not an octant glyph", cell.symbol()));
-        for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
-            let colour = if bits & 1 << pixel == 0 {
-                cell.bg
-            } else {
-                cell.fg
-            };
-            if colour != base {
-                let x = usize::from(position.x) * CELL_WIDTH + pixel % CELL_WIDTH;
-                let y = usize::from(position.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
-                lit.push(((x, y), colour));
-            }
-        }
-    }
-    lit
+    let rows = pixels::grid(buffer, buffer.area, |_, cell| {
+        pixels::shown(cell).unwrap_or_else(|| panic!("{:?} is not an octant glyph", cell.symbol()))
+    });
+    rows.into_iter()
+        .enumerate()
+        .flat_map(|(y, row)| {
+            row.into_iter()
+                .enumerate()
+                .map(move |(x, colour)| ((x, y), colour))
+        })
+        .filter(|(_, colour)| *colour != base)
+        .collect()
 }
 
 fn places(lit: &[((usize, usize), Color)]) -> BTreeSet<(usize, usize)> {

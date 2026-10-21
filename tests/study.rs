@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::sync::Arc;
 
 use hearth::config::Background;
@@ -33,26 +35,11 @@ const LETTER: usize = 2;
 
 /// The colour of each pixel of the area, two across and four down to a
 /// cell, row by row, as the glyph and its two colours draw them.
+/// A cell with another glyph shows its background.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    let width = usize::from(area.width) * ACROSS;
-    let mut rows = vec![vec![Color::Reset; width]; usize::from(area.height) * DOWN];
-    for position in area.positions() {
-        let cell = &buffer[position];
-        let bits = (0..=u8::MAX)
-            .find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
-            .unwrap_or(0);
-        let left = usize::from(position.x - area.x) * ACROSS;
-        let top = usize::from(position.y - area.y) * DOWN;
-        for pixel in 0..ACROSS * DOWN {
-            let colour = if bits >> pixel & 1 == 1 {
-                cell.fg
-            } else {
-                cell.bg
-            };
-            rows[top + pixel / ACROSS][left + pixel % ACROSS] = colour;
-        }
-    }
-    rows
+    pixels::grid(buffer, area, |_, cell| {
+        pixels::shown(cell).unwrap_or([cell.bg; pixels::PIXELS])
+    })
 }
 
 /// The pixels of a pane as drawn. A cell holds two colours, so where the

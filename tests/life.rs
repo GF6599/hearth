@@ -4,7 +4,6 @@ mod pixels;
 
 use std::collections::BTreeSet;
 
-use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::life::{HOLD_GENERATIONS, Life};
 use hearth::theme;
@@ -22,23 +21,10 @@ fn render(scene: &Life, area: Rect) -> Buffer {
 /// where a terminal cell holds an octant glyph of two board columns and
 /// four board rows, and a live cell shows in front of the base.
 fn alive(buffer: &Buffer, area: Rect) -> BTreeSet<(u16, u16)> {
-    let mut cells = BTreeSet::new();
-    for position in area.positions() {
-        let Some(shown) = pixels::shown(&buffer[position]) else {
-            continue;
-        };
-        let (x, y) = (
-            (position.x - area.x) * CELL_WIDTH as u16,
-            (position.y - area.y) * CELL_HEIGHT as u16,
-        );
-        for (pixel, colour) in shown.into_iter().enumerate() {
-            if colour != theme::ROSE_PINE.base {
-                let (column, row) = (pixel % CELL_WIDTH, pixel / CELL_WIDTH);
-                cells.insert((x + column as u16, y + row as u16));
-            }
-        }
-    }
-    cells
+    pixels::showing(buffer, area, |colour| colour != theme::ROSE_PINE.base)
+        .into_iter()
+        .map(|((x, y), _)| (x as u16, y as u16))
+        .collect()
 }
 
 fn ticked(mut scene: Life, area: Rect, generations: usize) -> Life {

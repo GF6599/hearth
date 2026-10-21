@@ -56,24 +56,10 @@ fn render(scene: &Hourglass, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The lit pixels of a render, those in any colour but the base, in dots
+/// The lit pixels of a render, those in any colour but the base, in pixels
 /// from the top left of the area, each with its colour.
-fn dots(buffer: &Buffer, area: Rect) -> Vec<((usize, usize), Color)> {
-    let mut dots = Vec::new();
-    for position in area.positions() {
-        let Some(shown) = pixels::shown(&buffer[position]) else {
-            continue;
-        };
-        for (pixel, colour) in shown.into_iter().enumerate() {
-            if colour == PALETTE.base {
-                continue;
-            }
-            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
-            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
-            dots.push(((x, y), colour));
-        }
-    }
-    dots
+fn lit_pixels(buffer: &Buffer, area: Rect) -> Vec<((usize, usize), Color)> {
+    pixels::showing(buffer, area, |colour| colour != PALETTE.base)
 }
 
 /// Whether a cell draws a pixel in `colour`.
@@ -123,7 +109,7 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
         let buffer = render(&scene, AREA, AREA);
         let (top, bottom) = sand(&buffer, AREA);
         assert_eq!(top + bottom, total, "grains at {step:?}");
-        for ((x, y), colour) in dots(&buffer, AREA) {
+        for ((x, y), colour) in lit_pixels(&buffer, AREA) {
             if colour != WORK_SAND {
                 continue;
             }
@@ -155,14 +141,14 @@ fn the_sand_leaves_the_top_as_the_work_phase_runs() {
     let buffer = render(&scene, AREA, AREA);
     assert_eq!(sand(&buffer, AREA), (1, total - 1), "before the end");
     let neck = usize::from(AREA.height / 2) * CELL_HEIGHT;
-    let lit = dots(&buffer, AREA);
+    let lit = lit_pixels(&buffer, AREA);
     let held = |x: usize, y: usize| {
         let row = u16::try_from(y / CELL_HEIGHT).unwrap();
         let column = u16::try_from(x / CELL_WIDTH).unwrap();
         shows(&buffer, (column, row), GLASS)
             || lit
                 .iter()
-                .any(|(dot, colour)| *dot == (x, y) && *colour == WORK_SAND)
+                .any(|(pixel, colour)| *pixel == (x, y) && *colour == WORK_SAND)
     };
     for ((x, y), colour) in &lit {
         if *colour == WORK_SAND && *y >= neck {
@@ -266,7 +252,7 @@ fn hourglass_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    let lit = dots(&buffer, AREA);
+    let lit = lit_pixels(&buffer, AREA);
     assert!(lit.iter().any(|(_, colour)| *colour == WORK_SAND));
     assert!(lit.iter().any(|(_, colour)| *colour == GLASS));
 }
@@ -358,7 +344,7 @@ fn the_glass_has_round_bulbs_in_a_frame() {
 /// middle row of the pane.
 fn sand_in(buffer: &Buffer, area: Rect, colour: Color) -> (usize, usize) {
     let neck = usize::from(area.height / 2) * CELL_HEIGHT;
-    dots(buffer, area)
+    lit_pixels(buffer, area)
         .into_iter()
         .filter(|(_, lit)| *lit == colour)
         .fold((0, 0), |(top, bottom), ((_, y), _)| {
@@ -639,7 +625,7 @@ fn glass_and_sand(buffer: &Buffer, area: Rect) -> (Color, Color) {
 /// break sand take four colours that differ from each other.
 ///
 /// Why it matters: dim grey walls fade into the background, so the glass reads
-/// as a few loose dots, and two parts in one colour run together.
+/// as a few loose pixels, and two parts in one colour run together.
 #[test]
 fn each_part_reads_in_its_own_colour_and_the_glass_is_not_dim() {
     // Given:
@@ -739,10 +725,10 @@ fn a_hint_under_the_glass_names_the_keys() {
 }
 
 fn outline(buffer: &Buffer, area: Rect) -> Vec<(usize, usize)> {
-    dots(buffer, area)
+    lit_pixels(buffer, area)
         .into_iter()
         .filter(|(_, colour)| *colour == GLASS)
-        .map(|(dot, _)| dot)
+        .map(|(pixel, _)| pixel)
         .collect()
 }
 
@@ -759,15 +745,15 @@ fn rises_then_falls(values: &[usize]) -> bool {
 /// The glass is one smooth outline with a clear neck.
 /// Given: a glass at a hundred by thirty.
 /// When: it renders.
-/// Then: every row of dots from the top cap to the bottom cap holds a wall
-/// on both sides of the middle, and the dots of the outline touch each
+/// Then: every row of pixels from the top cap to the bottom cap holds a wall
+/// on both sides of the middle, and the pixels of the outline touch each
 /// other, diagonals included, as one line. From the neck out to each cap
 /// the outline only widens and then only narrows. The neck is at most a
-/// fifth as wide as the widest row, and no wall comes within a dot of the
+/// fifth as wide as the widest row, and no wall comes within a pixel of the
 /// middle between the caps, so the neck stays open.
 ///
 /// Why it matters: an outline drawn on every other row, or one that steps
-/// at each cell, reads as loose dots and not as glass, and a neck with no
+/// at each cell, reads as loose pixels and not as glass, and a neck with no
 /// clear channel reads as a gap in the glass.
 #[test]
 fn the_glass_is_one_smooth_outline_with_a_clear_neck() {
@@ -836,7 +822,7 @@ fn the_glass_is_one_smooth_outline_with_a_clear_neck() {
     let widest = *widths.iter().max().unwrap();
     assert!(
         widths[neck] * 5 <= widest,
-        "the neck is {} dots wide and the widest row {widest}",
+        "the neck is {} pixels wide and the widest row {widest}",
         widths[neck]
     );
     for &(x, y) in &glass {

@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+mod pixels;
+
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::noise::Noise;
 use hearth::theme;
@@ -17,28 +18,15 @@ fn render(scene: &Noise) -> Buffer {
     buffer
 }
 
-/// The pixels of an octant glyph, as its bits, or none for another glyph.
-fn bits(symbol: &str) -> Option<u8> {
-    (0..=u8::MAX).find(|&bits| octant::glyph(bits).to_string() == symbol)
-}
-
-/// The colour each pixel shows, cell by cell: the foreground where the
-/// glyph sets the pixel, else the background.
+/// The colour each pixel shows, cell by cell.
 fn pixels(buffer: &Buffer) -> Vec<Color> {
     buffer
         .area
         .positions()
         .flat_map(|position| {
             let cell = &buffer[position];
-            let bits = bits(cell.symbol())
-                .unwrap_or_else(|| panic!("{:?} is not an octant glyph", cell.symbol()));
-            (0..CELL_WIDTH * CELL_HEIGHT).map(move |pixel| {
-                if bits & 1 << pixel == 0 {
-                    cell.bg
-                } else {
-                    cell.fg
-                }
-            })
+            pixels::shown(cell)
+                .unwrap_or_else(|| panic!("{:?} is not an octant glyph", cell.symbol()))
         })
         .collect()
 }
@@ -91,7 +79,7 @@ fn noise_varies_within_a_cell() {
         .positions()
         .filter(|&position| {
             let cell = &buffer[position];
-            let bits = bits(cell.symbol());
+            let bits = pixels::bits(cell);
             cell.fg != cell.bg && bits.is_some_and(|bits| bits != 0 && bits != u8::MAX)
         })
         .count();

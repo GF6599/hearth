@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::embers::{BURN_TICKS, Embers, SETTLE_TICKS};
@@ -35,28 +37,9 @@ const BELOW_LOGS: usize = 2 * DOWN;
 /// The pixels of each cell, as its octant glyph and two colours draw them,
 /// by pixel row. A cell that holds a spark instead gives `None` for each.
 fn pixels(buffer: &Buffer) -> Vec<Vec<Option<Color>>> {
-    let area = buffer.area;
-    let width = usize::from(area.width) * ACROSS;
-    let mut rows = vec![vec![None; width]; usize::from(area.height) * DOWN];
-    for position in area.positions() {
-        let cell = &buffer[position];
-        let Some(bits) =
-            (0..=u8::MAX).find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
-        else {
-            continue;
-        };
-        let left = usize::from(position.x - area.x) * ACROSS;
-        let top = usize::from(position.y - area.y) * DOWN;
-        for pixel in 0..ACROSS * DOWN {
-            let colour = if bits >> pixel & 1 == 1 {
-                cell.fg
-            } else {
-                cell.bg
-            };
-            rows[top + pixel / ACROSS][left + pixel % ACROSS] = Some(colour);
-        }
-    }
-    rows
+    pixels::grid(buffer, buffer.area, |_, cell| {
+        pixels::shown(cell).map_or([None; pixels::PIXELS], |shown| shown.map(Some))
+    })
 }
 
 const DARK: Color = Color::Rgb(0, 0, 0);
@@ -564,9 +547,9 @@ fn the_fire_draws_in_octant_glyphs() {
     let split = AREA
         .positions()
         .filter(|position| {
-            let symbol = buffer[*position].symbol();
-            (0..=u8::MAX).any(|bits| symbol.chars().eq([octant::glyph(bits)]))
-                && !symbol.chars().all(|glyph| halves.contains(&glyph))
+            let cell = &buffer[*position];
+            pixels::bits(cell).is_some()
+                && !cell.symbol().chars().all(|glyph| halves.contains(&glyph))
         })
         .count();
     assert!(split > 0, "every block is a half block or a space");

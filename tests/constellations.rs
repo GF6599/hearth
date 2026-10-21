@@ -21,8 +21,8 @@ const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
 /// Ticks enough for several figures, about a minute and a half.
 const RUN: u32 = 1500;
-/// The furthest a lit dot lies from the line between the centres of two
-/// stars, in dots: half a dot of rounding at each end, and half a dot of
+/// The furthest a lit pixel lies from the line between the centres of two
+/// stars, in pixels: half a pixel of rounding at each end, and half a pixel of
 /// stepping along the line.
 const LINE_TOLERANCE: f32 = 1.5;
 
@@ -67,28 +67,19 @@ fn role(glyph: &str) -> Option<Color> {
     }
 }
 
-/// The lit pixels of a render, in dots from the top left of the area, each
+/// The lit pixels of a render, in pixels from the top left of the area, each
 /// with its colour. The sky shows the base, or the terminal's own colour
 /// where nothing drew.
-fn line_dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
-    let mut dots = Vec::new();
-    for position in area.positions() {
-        let Some(shown) = pixels::shown(&buffer[position]) else {
-            continue;
-        };
-        for (pixel, colour) in shown.into_iter().enumerate() {
-            if colour == PALETTE.base || colour == Color::Reset {
-                continue;
-            }
-            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
-            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
-            dots.push(((x as f32, y as f32), colour));
-        }
-    }
-    dots
+fn line_pixels(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
+    pixels::showing(buffer, area, |colour| {
+        colour != PALETTE.base && colour != Color::Reset
+    })
+    .into_iter()
+    .map(|((x, y), colour)| ((x as f32, y as f32), colour))
+    .collect()
 }
 
-/// The centre of a star's cell, in dots.
+/// The centre of a star's cell, in pixels.
 fn centre(star: Position) -> (f32, f32) {
     (
         f32::from(star.x) * CELL_WIDTH as f32 + 0.5,
@@ -225,14 +216,14 @@ fn stars_twinkle_but_stay_in_place() {
 /// A figure's line runs only between its own stars.
 /// Given: the scene at a hundred by thirty, for a minute and a half.
 /// When: it renders on every tick.
-/// Then: each figure joins four to six stars of the sky, every lit dot lies
-/// on a segment between two of them, in iris or foam, and no dot shows
+/// Then: each figure joins four to six stars of the sky, every lit pixel lies
+/// on a segment between two of them, in iris or foam, and no pixel shows
 /// without a figure.
 ///
-/// Why it matters: a dot off the figure reads as a stray mark, and a line
+/// Why it matters: a pixel off the figure reads as a stray mark, and a line
 /// that ends where no star is reads as a fault.
 #[test]
-fn every_line_dot_lies_between_two_stars_of_the_figure() {
+fn every_line_pixel_lies_between_two_stars_of_the_figure() {
     for seed in 0..5 {
         // Given:
         let mut scene = ticked(seed, AREA, 1);
@@ -244,11 +235,11 @@ fn every_line_dot_lies_between_two_stars_of_the_figure() {
             let buffer = render(&scene, AREA, AREA);
 
             // Then:
-            let dots = line_dots(&buffer, AREA);
+            let line = line_pixels(&buffer, AREA);
             let Some((_, figure)) = scene.figure() else {
                 assert!(
-                    dots.iter().all(|(_, colour)| *colour == PALETTE.gold),
-                    "seed {seed}: line dots with no figure at tick {tick}"
+                    line.iter().all(|(_, colour)| *colour == PALETTE.gold),
+                    "seed {seed}: line pixels with no figure at tick {tick}"
                 );
                 continue;
             };
@@ -261,22 +252,22 @@ fn every_line_dot_lies_between_two_stars_of_the_figure() {
             for star in &figure {
                 assert!(sky.contains_key(star), "seed {seed}: no star at {star:?}");
             }
-            for (dot, colour) in &dots {
+            for (pixel, colour) in &line {
                 assert!(
                     *colour == PALETTE.iris || *colour == PALETTE.foam,
-                    "seed {seed}: a dot in {colour:?} at tick {tick}"
+                    "seed {seed}: a pixel in {colour:?} at tick {tick}"
                 );
                 let on_a_segment = figure.iter().enumerate().any(|(index, from)| {
                     figure[index + 1..].iter().any(|to| {
-                        distance_to_segment(*dot, centre(*from), centre(*to)) <= LINE_TOLERANCE
+                        distance_to_segment(*pixel, centre(*from), centre(*to)) <= LINE_TOLERANCE
                     })
                 });
                 assert!(
                     on_a_segment,
-                    "seed {seed}: a stray dot at {dot:?} at tick {tick}"
+                    "seed {seed}: a stray pixel at {pixel:?} at tick {tick}"
                 );
             }
-            lit += dots.len();
+            lit += line.len();
         }
         assert!(lit > 0, "seed {seed}: no figure drew a line");
     }
@@ -343,7 +334,7 @@ fn the_name_shows_beside_the_figure_only_while_it_shows() {
 /// Then: the frame after the fade holds only stars, in the places they held
 /// before the figure, and a new figure shows within the minute.
 ///
-/// Why it matters: a dot or a letter left behind builds up into clutter, and
+/// Why it matters: a pixel or a letter left behind builds up into clutter, and
 /// a sky that shows one figure and no more stays still after it.
 #[test]
 fn a_faded_figure_leaves_only_stars() {
@@ -483,7 +474,7 @@ const SKY_RUN: u32 = 3000;
 /// The most ticks one shooting star shows, about three seconds.
 const STREAK_TICKS: u32 = 50;
 
-/// One shooting star so far: the middle of its dots on its first frame
+/// One shooting star so far: the middle of its pixels on its first frame
 /// and on its last, and its frames.
 struct Streak {
     first: (f32, f32),
@@ -491,11 +482,11 @@ struct Streak {
     ticks: u32,
 }
 
-fn gold_dots(buffer: &Buffer) -> Vec<(f32, f32)> {
-    line_dots(buffer, AREA)
+fn gold_pixels(buffer: &Buffer) -> Vec<(f32, f32)> {
+    line_pixels(buffer, AREA)
         .into_iter()
         .filter(|(_, colour)| *colour == PALETTE.gold)
-        .map(|(dot, _)| dot)
+        .map(|(pixel, _)| pixel)
         .collect()
 }
 
@@ -503,11 +494,11 @@ fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
     (to.0 - from.0).hypot(to.1 - from.1)
 }
 
-fn centroid(dots: &[(f32, f32)]) -> (f32, f32) {
-    let count = dots.len() as f32;
-    let (x, y) = dots
+fn centroid(pixels: &[(f32, f32)]) -> (f32, f32) {
+    let count = pixels.len() as f32;
+    let (x, y) = pixels
         .iter()
-        .fold((0.0, 0.0), |sum, dot| (sum.0 + dot.0, sum.1 + dot.1));
+        .fold((0.0, 0.0), |sum, pixel| (sum.0 + pixel.0, sum.1 + pixel.1));
     (x / count, y / count)
 }
 
@@ -515,7 +506,7 @@ fn centroid(dots: &[(f32, f32)]) -> (f32, f32) {
 /// short trail.
 /// Given: the scene at a hundred by thirty, for three minutes.
 /// When: it renders on every tick.
-/// Then: the gold dots of each frame lie on one line at a slant, no longer
+/// Then: the gold pixels of each frame lie on one line at a slant, no longer
 /// than the trail. Each shooting star moves along its line further than its
 /// trail and is gone within three seconds, and more than one shows.
 ///
@@ -533,10 +524,10 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
         for tick in 0..SKY_RUN {
             // When:
             scene.tick(AREA);
-            let dots = gold_dots(&render(&scene, AREA, AREA));
+            let gold = gold_pixels(&render(&scene, AREA, AREA));
 
             // Then:
-            if dots.is_empty() {
+            if gold.is_empty() {
                 if let Some(Streak { first, last, ticks }) = streak.take() {
                     assert!(
                         ticks <= STREAK_TICKS,
@@ -544,27 +535,27 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
                     );
                     assert!(
                         distance(first, last) > TRAIL as f32,
-                        "seed {seed}: a streak moves {} dots, to tick {tick}",
+                        "seed {seed}: a streak moves {} pixels, to tick {tick}",
                         distance(first, last)
                     );
                     streaks += 1;
                 }
                 continue;
             }
-            let ends = dots
+            let ends = gold
                 .iter()
-                .flat_map(|from| dots.iter().map(move |to| (*from, *to)))
+                .flat_map(|from| gold.iter().map(move |to| (*from, *to)))
                 .max_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
                 .unwrap();
             let span = distance(ends.0, ends.1);
             assert!(
                 span <= TRAIL as f32 + 1.0,
-                "seed {seed}: a trail of {span} dots at tick {tick}"
+                "seed {seed}: a trail of {span} pixels at tick {tick}"
             );
-            for dot in &dots {
+            for pixel in &gold {
                 assert!(
-                    distance_to_segment(*dot, ends.0, ends.1) <= 1.0,
-                    "seed {seed}: {dot:?} off the streak at tick {tick}"
+                    distance_to_segment(*pixel, ends.0, ends.1) <= 1.0,
+                    "seed {seed}: {pixel:?} off the streak at tick {tick}"
                 );
             }
             if span >= 4.0 {
@@ -574,7 +565,7 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
                     "seed {seed}: a streak {across} across and {down} down at tick {tick}"
                 );
             }
-            let here = centroid(&dots);
+            let here = centroid(&gold);
             streak = Some(match streak {
                 Some(Streak { first, ticks, .. }) => Streak {
                     first,

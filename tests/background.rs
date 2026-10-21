@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,7 +13,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::octant;
+use hearth::octant::{self, CELL_WIDTH};
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::FINDING;
 use hearth::theme::{self, Palette};
@@ -28,6 +30,10 @@ const THEMES: [&str; 2] = ["rose-pine", "rose-pine-dawn"];
 const QUADRANTS: [&str; 16] = [
     " ", "▘", "▝", "▀", "▖", "▌", "▞", "▛", "▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
 ];
+
+/// The top left pixel of each quarter of a cell, in the order of the
+/// quadrant bits. A quadrant glyph shows one colour in each quarter.
+const QUARTERS: [usize; 4] = [0, 1, 2 * CELL_WIDTH, 2 * CELL_WIDTH + 1];
 
 fn config(name: &str, text: &str) -> Config {
     let dir = std::env::temp_dir().join(format!("hearth-bg-{}-{name}", std::process::id()));
@@ -96,15 +102,9 @@ fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; 4]>, String, Color, Col
             colour
         }
     };
-    match QUADRANTS.iter().position(|glyph| *glyph == cell.symbol()) {
-        Some(bits) => {
-            let quarters = std::array::from_fn(|quarter| {
-                shown(if bits & (1 << quarter) != 0 {
-                    cell.fg
-                } else {
-                    cell.bg
-                })
-            });
+    match pixels::shown(cell).filter(|_| QUADRANTS.contains(&cell.symbol())) {
+        Some(colours) => {
+            let quarters = QUARTERS.map(|pixel| shown(colours[pixel]));
             (Some(quarters), String::new(), Color::Reset, Color::Reset)
         }
         None => (

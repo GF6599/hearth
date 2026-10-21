@@ -1,11 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, OnceLock};
+mod pixels;
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::ink::{self, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME};
 use hearth::scenes::typing::Speed;
@@ -33,51 +35,13 @@ fn render(scene: &Ink, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The bits of each octant glyph.
-fn octants() -> &'static HashMap<char, u8> {
-    static OCTANTS: OnceLock<HashMap<char, u8>> = OnceLock::new();
-    OCTANTS.get_or_init(|| {
-        (0..=u8::MAX)
-            .map(|bits| (octant::glyph(bits), bits))
-            .collect()
-    })
-}
-
-/// The colours of a cell's eight pixels, row by row from the top left, or
-/// nothing for a glyph that is not an octant cell.
-fn pixels(buffer: &Buffer, position: ratatui::layout::Position) -> Option<[Color; 8]> {
-    let cell = &buffer[position];
-    let mut glyphs = cell.symbol().chars();
-    let bits = *octants().get(&glyphs.next()?)?;
-    if glyphs.next().is_some() {
-        return None;
-    }
-    Some(std::array::from_fn(|pixel| {
-        if bits & (1 << pixel) != 0 {
-            cell.fg
-        } else {
-            cell.bg
-        }
-    }))
-}
-
 /// Every inked pixel of a render, as (pixel column, pixel row) from the
 /// top left of the area.
 fn inked_pixels(buffer: &Buffer, area: Rect, base: Color) -> Vec<(usize, usize)> {
-    let mut inked = Vec::new();
-    for position in area.positions() {
-        let Some(colours) = pixels(buffer, position) else {
-            continue;
-        };
-        let column = usize::from(position.x - area.x) * CELL_WIDTH;
-        let row = usize::from(position.y - area.y) * CELL_HEIGHT;
-        for (pixel, colour) in colours.into_iter().enumerate() {
-            if colour != base {
-                inked.push((column + pixel % CELL_WIDTH, row + pixel / CELL_WIDTH));
-            }
-        }
-    }
-    inked
+    pixels::showing(buffer, area, |colour| colour != base)
+        .into_iter()
+        .map(|(place, _)| place)
+        .collect()
 }
 
 fn tile() -> impl Iterator<Item = (usize, usize)> {
@@ -105,7 +69,7 @@ fn every_cell_is_the_water_or_an_accent() {
 
             // Then:
             for position in area.positions() {
-                let colours = pixels(&buffer, position).unwrap_or_else(|| {
+                let colours = pixels::shown(&buffer[position]).unwrap_or_else(|| {
                     panic!(
                         "tick {tick}: {:?} at {position:?}",
                         buffer[position].symbol()
@@ -139,7 +103,7 @@ fn a_cell_draws_ink_at_half_its_width() {
         // Then:
         let split = AREA
             .positions()
-            .filter_map(|position| pixels(&buffer, position))
+            .filter_map(|position| pixels::shown(&buffer[position]))
             .filter(|colours| {
                 colours
                     .chunks(CELL_WIDTH)
@@ -167,7 +131,7 @@ fn a_cell_draws_ink_at_a_quarter_of_its_height() {
         // Then:
         let split = AREA
             .positions()
-            .filter_map(|position| pixels(&buffer, position))
+            .filter_map(|position| pixels::shown(&buffer[position]))
             .filter(|colours| {
                 let rows: Vec<&[Color]> = colours.chunks(CELL_WIDTH).collect();
                 rows[0] != rows[1] || rows[2] != rows[3]

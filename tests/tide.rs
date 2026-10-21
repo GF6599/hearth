@@ -1,11 +1,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+mod pixels;
+
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::tide::{DRY_TICKS, GRAINS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
 use hearth::scenes::typing::Speed;
@@ -32,43 +33,12 @@ fn render(scene: &Tide, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The bits of each octant glyph.
-fn octants() -> &'static HashMap<char, u8> {
-    static OCTANTS: OnceLock<HashMap<char, u8>> = OnceLock::new();
-    OCTANTS.get_or_init(|| {
-        (0..=u8::MAX)
-            .map(|bits| (octant::glyph(bits), bits))
-            .collect()
-    })
-}
-
 /// The pixels of a render, by pixel row from the top and then by pixel
 /// column from the left.
 fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    let (width, rows) = (
-        usize::from(area.width) * CELL_WIDTH,
-        usize::from(area.height) * CELL_HEIGHT,
-    );
-    let mut grid = vec![vec![Color::Reset; width]; rows];
-    for position in area.positions() {
-        let cell = &buffer[position];
-        let bits = Some(cell.symbol())
-            .filter(|symbol| symbol.chars().count() == 1)
-            .and_then(|symbol| symbol.chars().next())
-            .and_then(|glyph| octants().get(&glyph).copied())
-            .unwrap_or_else(|| panic!("{:?} at {position:?}", cell.symbol()));
-        for pixel in 0..CELL_WIDTH * CELL_HEIGHT {
-            let colour = if bits & (1 << pixel) != 0 {
-                cell.fg
-            } else {
-                cell.bg
-            };
-            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
-            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
-            grid[y][x] = colour;
-        }
-    }
-    grid
+    pixels::grid(buffer, area, |position, cell| {
+        pixels::shown(cell).unwrap_or_else(|| panic!("{:?} at {position:?}", cell.symbol()))
+    })
 }
 
 /// The pixels of each cell of a render, row by row, with the top left pixel

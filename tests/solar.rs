@@ -25,16 +25,16 @@ const RUN: u32 = 3000;
 const SATURN: usize = 5;
 const EARTH: usize = 2;
 const MOON: usize = 8;
-/// The furthest Saturn's ring reaches from its middle, in dots, with room
+/// The furthest Saturn's ring reaches from its middle, in pixels, with room
 /// to spare.
 const SATURN_REACH: f32 = 10.0;
-/// How far a body reaches from its middle, across and down, in dots, with
+/// How far a body reaches from its middle, across and down, in pixels, with
 /// room to spare. A cell shows two colours, so a body can change a cell it
 /// shares with another, and the reach keeps a cell past its disc.
 const PLANET_SPAN: (f32, f32) = (6.0, 8.0);
 const EARTH_SPAN: (f32, f32) = (4.0, 6.0);
 const MOON_SPAN: (f32, f32) = (1.5, 1.5);
-/// The furthest a pixel of a planet's disc lies from its middle, in dots,
+/// The furthest a pixel of a planet's disc lies from its middle, in pixels,
 /// with room to spare. The largest planet's radius is 4.4.
 const BODY_REACH: f32 = 5.0;
 /// The planets that share their colour with no other body. Mercury shares
@@ -68,27 +68,16 @@ fn render(scene: &Solar, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The lit pixels of a render, those in any colour but the base, in dots
+/// The lit pixels of a render, those in any colour but the base, in pixels
 /// from the top left of the area, each with its colour.
-fn dots(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
-    let mut dots = Vec::new();
-    for position in area.positions() {
-        let Some(shown) = pixels::shown(&buffer[position]) else {
-            continue;
-        };
-        for (pixel, colour) in shown.into_iter().enumerate() {
-            if colour == PALETTE.base {
-                continue;
-            }
-            let x = usize::from(position.x - area.x) * CELL_WIDTH + pixel % CELL_WIDTH;
-            let y = usize::from(position.y - area.y) * CELL_HEIGHT + pixel / CELL_WIDTH;
-            dots.push(((x as f32, y as f32), colour));
-        }
-    }
-    dots
+fn lit_pixels(buffer: &Buffer, area: Rect) -> Vec<((f32, f32), Color)> {
+    pixels::showing(buffer, area, |colour| colour != PALETTE.base)
+        .into_iter()
+        .map(|((x, y), colour)| ((x as f32, y as f32), colour))
+        .collect()
 }
 
-/// The colour the pixel at a place in dots shows, in a render whose area
+/// The colour the pixel at a place in pixels shows, in a render whose area
 /// starts at the top left of its buffer.
 fn colour_at(buffer: &Buffer, place: (f32, f32)) -> Option<Color> {
     let (x, y) = (place.0 as usize, place.1 as usize);
@@ -100,13 +89,13 @@ fn colour_at(buffer: &Buffer, place: (f32, f32)) -> Option<Color> {
     Some(shown[y % CELL_HEIGHT * CELL_WIDTH + x % CELL_WIDTH])
 }
 
-/// The sun's dots: the largest group of touching gold dots. Saturn, its
+/// The sun's pixels: the largest group of touching gold pixels. Saturn, its
 /// ring and its trail are gold too, and lie well apart from the sun.
-fn sun_dots(buffer: &Buffer, area: Rect) -> Vec<(f32, f32)> {
-    let gold: HashSet<(i32, i32)> = dots(buffer, area)
+fn sun_pixels(buffer: &Buffer, area: Rect) -> Vec<(f32, f32)> {
+    let gold: HashSet<(i32, i32)> = lit_pixels(buffer, area)
         .into_iter()
         .filter(|(_, colour)| *colour == PALETTE.gold)
-        .map(|(dot, _)| (dot.0 as i32, dot.1 as i32))
+        .map(|(pixel, _)| (pixel.0 as i32, pixel.1 as i32))
         .collect();
     let mut seen = HashSet::new();
     let mut largest = Vec::new();
@@ -137,20 +126,20 @@ fn sun_dots(buffer: &Buffer, area: Rect) -> Vec<(f32, f32)> {
         .collect()
 }
 
-/// The middle of the sun's dots.
+/// The middle of the sun's pixels.
 fn sun(buffer: &Buffer, area: Rect) -> (f32, f32) {
-    let gold = sun_dots(buffer, area);
+    let gold = sun_pixels(buffer, area);
     assert!(!gold.is_empty(), "no sun in {area:?}");
     let count = gold.len() as f32;
     let (x, y) = gold
         .iter()
-        .fold((0.0, 0.0), |sum, dot| (sum.0 + dot.0, sum.1 + dot.1));
+        .fold((0.0, 0.0), |sum, pixel| (sum.0 + pixel.0, sum.1 + pixel.1));
     (x / count, y / count)
 }
 
 /// Whether a body, a planet by its index or the Moon, stands far enough
 /// from the sun and from every other body that no other can share a cell
-/// with its middle. A cell reaches a cell's height past the two dots round
+/// with its middle. A cell reaches a cell's height past the two pixels round
 /// the middle that a check reads.
 fn stands_clear(bodies: &[(f32, f32)], index: usize, centre: (f32, f32), reach: f32) -> bool {
     let span = |body: usize| match body {
@@ -171,7 +160,7 @@ fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
     (to.0 - from.0).hypot(to.1 - from.1)
 }
 
-/// The middle of the pane, in dots.
+/// The middle of the pane, in pixels.
 fn middle(area: Rect) -> (f32, f32) {
     (
         (f32::from(area.width) * CELL_WIDTH as f32 - 1.0) / 2.0,
@@ -186,7 +175,7 @@ fn middle(area: Rect) -> (f32, f32) {
 /// Then: each planet's place stays on one ellipse centred on the middle of
 /// the pane, where the sun stands, each
 /// ellipse lies inside the next, every frame draws each planet where it is,
-/// and every dotted orbit dot lies on one of the ellipses.
+/// and every pixel of a dotted orbit lies on one of the ellipses.
 ///
 /// Why it matters: a planet that drifts off its ellipse reads as a fault,
 /// and an orbit drawn where no planet goes reads as a stray line.
@@ -197,7 +186,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
         let mut scene = ticked(seed, AREA, 1);
         let centre = middle(AREA);
         let mut paths: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 8];
-        let mut orbit_dots = Vec::new();
+        let mut orbit_pixels = Vec::new();
 
         for tick in 0..RUN {
             // When:
@@ -217,11 +206,11 @@ fn each_planet_keeps_to_its_own_ellipse() {
                         "seed {seed}: planet {index} not drawn at tick {tick}"
                     );
                 }
-                orbit_dots.extend(
-                    dots(&buffer, AREA)
+                orbit_pixels.extend(
+                    lit_pixels(&buffer, AREA)
                         .into_iter()
                         .filter(|(_, colour)| *colour == PALETTE.muted)
-                        .map(|(dot, _)| dot),
+                        .map(|(pixel, _)| pixel),
                 );
             }
             for (path, planet) in paths.iter_mut().zip(planets) {
@@ -262,13 +251,13 @@ fn each_planet_keeps_to_its_own_ellipse() {
                 pair[1]
             );
         }
-        assert!(!orbit_dots.is_empty(), "seed {seed}: no orbit drawn");
-        for dot in &orbit_dots {
+        assert!(!orbit_pixels.is_empty(), "seed {seed}: no orbit drawn");
+        for pixel in &orbit_pixels {
             let on_one = ellipses.iter().any(|(across, down)| {
-                let (dx, dy) = ((dot.0 - centre.0) / across, (dot.1 - centre.1) / down);
+                let (dx, dy) = ((pixel.0 - centre.0) / across, (pixel.1 - centre.1) / down);
                 ((dx * dx + dy * dy).sqrt() - 1.0).abs() * down <= 1.5
             });
-            assert!(on_one, "seed {seed}: orbit dot {dot:?} on no ellipse");
+            assert!(on_one, "seed {seed}: orbit pixel {pixel:?} on no ellipse");
         }
     }
 }
@@ -397,7 +386,7 @@ fn solar_is_a_scene_by_name() {
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
     assert!(
-        dots(&buffer, AREA)
+        lit_pixels(&buffer, AREA)
             .iter()
             .any(|(_, colour)| *colour == PALETTE.gold)
     );
@@ -409,7 +398,7 @@ fn solar_is_a_scene_by_name() {
 /// When: it ticks and renders for a minute and a half.
 /// Then: where a planet stands clear of the sun and of every other body,
 /// the pixel at its middle shows its own colour. The Moon stays within a
-/// few dots of Earth, goes round it more than twice, and shows in its
+/// few pixels of Earth, goes round it more than twice, and shows in its
 /// colour where it stands clear. Where Saturn stands clear of every other body, its gold reaches
 /// past its body on both sides at its own height.
 ///
@@ -421,9 +410,9 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
     // Given:
     let mut scene = ticked(7, AREA, 1);
     let centre = sun(&render(&scene, AREA, AREA), AREA);
-    let reach = sun_dots(&render(&scene, AREA, AREA), AREA)
+    let reach = sun_pixels(&render(&scene, AREA, AREA), AREA)
         .iter()
-        .map(|dot| distance(*dot, centre))
+        .map(|pixel| distance(*pixel, centre))
         .fold(0.0, f32::max);
     let mut checked = [0; 8];
     let mut moon_checked = 0;
@@ -483,12 +472,12 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
             .enumerate()
             .all(|(other, place)| other == SATURN || distance(*place, saturn) > SATURN_REACH + 8.0);
         if saturn_clear {
-            let gold = dots(&buffer, AREA);
+            let gold = lit_pixels(&buffer, AREA);
             let reaches = |side: f32| {
-                gold.iter().any(|(dot, colour)| {
-                    let across = side * (dot.0 - saturn.0);
+                gold.iter().any(|(pixel, colour)| {
+                    let across = side * (pixel.0 - saturn.0);
                     *colour == PALETTE.gold
-                        && (dot.1 - saturn.1).abs() <= 1.0
+                        && (pixel.1 - saturn.1).abs() <= 1.0
                         && (6.5..=SATURN_REACH).contains(&across)
                 })
             };
@@ -528,9 +517,9 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
     let mut scene = ticked(7, AREA, 1);
     let first = render(&scene, AREA, AREA);
     let centre = sun(&first, AREA);
-    let reach = sun_dots(&first, AREA)
+    let reach = sun_pixels(&first, AREA)
         .iter()
-        .map(|dot| distance(*dot, centre))
+        .map(|pixel| distance(*pixel, centre))
         .fold(0.0, f32::max);
     let (mut in_front, mut behind, mut shared) = (0, 0, 0);
 
@@ -580,9 +569,9 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
 /// Given: the scene at a hundred by thirty, ticked until Neptune has gone
 /// round once, so each orbit's size is known.
 /// When: it ticks and renders for a while longer.
-/// Then: every dot in a planet's own colour outside its disc lies on its
+/// Then: every pixel in a planet's own colour outside its disc lies on its
 /// orbit, behind it, and within an eighth of a turn. The second quarter of
-/// the trail holds more than twice the dots of the last quarter, and the
+/// the trail holds more than twice the pixels of the last quarter, and the
 /// last quarter is not empty.
 ///
 /// Why it matters: a trail ahead of a planet or off its orbit reads as a
@@ -628,25 +617,25 @@ fn each_planet_leaves_a_trail_that_thins_behind_it() {
         let planets = scene.planets();
 
         // Then:
-        let lit = dots(&buffer, AREA);
+        let lit = lit_pixels(&buffer, AREA);
         for index in OWN_COLOUR {
             let planet = planets[index];
             let role = roles()[index];
             let (centre, across, down) = orbits[index];
-            for (dot, _) in lit
+            for (pixel, _) in lit
                 .iter()
-                .filter(|(dot, colour)| *colour == role && distance(*dot, planet) > BODY_REACH)
+                .filter(|(pixel, colour)| *colour == role && distance(*pixel, planet) > BODY_REACH)
             {
-                let at = angle(index, *dot);
+                let at = angle(index, *pixel);
                 let on_orbit = (centre.0 + across * at.cos(), centre.1 - down * at.sin());
                 assert!(
-                    distance(*dot, on_orbit) <= 1.5,
-                    "planet {index}: {dot:?} off its orbit at tick {tick}"
+                    distance(*pixel, on_orbit) <= 1.5,
+                    "planet {index}: {pixel:?} off its orbit at tick {tick}"
                 );
                 let lag = (angle(index, planet) - at).rem_euclid(TAU);
                 assert!(
                     lag <= eighth + 0.1,
-                    "planet {index}: {dot:?} is {lag} behind it at tick {tick}"
+                    "planet {index}: {pixel:?} is {lag} behind it at tick {tick}"
                 );
                 quarters[index][((lag / eighth * 4.0) as usize).min(3)] += 1;
             }
@@ -666,10 +655,10 @@ fn each_planet_leaves_a_trail_that_thins_behind_it() {
 /// Given: the scene at a hundred by thirty.
 /// When: it ticks and renders for a minute and a half.
 /// Then: where a planet stands clear of the sun and of every other body,
-/// every pixel within two dots of its middle shows its colour, so its disc
-/// is solid and at least four dots across and down.
+/// every pixel within two pixels of its middle shows its colour, so its disc
+/// is solid and at least four pixels across and down.
 ///
-/// Why it matters: a planet drawn as a few dots reads as one more dot of
+/// Why it matters: a planet drawn as a few pixels reads as one more pixel of
 /// its own trail.
 #[test]
 fn each_planet_is_a_solid_disc() {
@@ -677,9 +666,9 @@ fn each_planet_is_a_solid_disc() {
     let mut scene = ticked(7, AREA, 1);
     let first = render(&scene, AREA, AREA);
     let centre = sun(&first, AREA);
-    let reach = sun_dots(&first, AREA)
+    let reach = sun_pixels(&first, AREA)
         .iter()
-        .map(|dot| distance(*dot, centre))
+        .map(|pixel| distance(*pixel, centre))
         .fold(0.0, f32::max);
     let mut checked = [0; 8];
 

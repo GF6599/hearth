@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::fire::{self, Fire, MAX_HEAT};
@@ -60,27 +62,9 @@ const DOWN: usize = octant::CELL_HEIGHT;
 /// The pixels of each cell of a render, as the glyph and its two colours
 /// draw them. A cell that is not an octant glyph gives `None` for each.
 fn shown(buffer: &Buffer, area: Rect) -> Vec<Vec<Option<Color>>> {
-    let width = usize::from(area.width) * ACROSS;
-    let mut rows = vec![vec![None; width]; usize::from(area.height) * DOWN];
-    for position in area.positions() {
-        let cell = &buffer[position];
-        let Some(bits) =
-            (0..=u8::MAX).find(|bits| cell.symbol().chars().eq([octant::glyph(*bits)]))
-        else {
-            continue;
-        };
-        let left = usize::from(position.x - area.x) * ACROSS;
-        let top = usize::from(position.y - area.y) * DOWN;
-        for pixel in 0..ACROSS * DOWN {
-            let colour = if bits >> pixel & 1 == 1 {
-                cell.fg
-            } else {
-                cell.bg
-            };
-            rows[top + pixel / ACROSS][left + pixel % ACROSS] = Some(colour);
-        }
-    }
-    rows
+    pixels::grid(buffer, area, |_, cell| {
+        pixels::shown(cell).map_or([None; pixels::PIXELS], |shown| shown.map(Some))
+    })
 }
 
 const DARK: Color = Color::Rgb(0, 0, 0);

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::murmuration::{DOTS_PER_BIRD, FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration};
 use hearth::scenes::typing::Speed;
@@ -17,9 +18,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
-
-/// An octant cell is two dots wide and four tall.
-const CELL_DOTS: (usize, usize) = (2, 4);
 
 /// The colours a bird draws in, faint and bright, and the hawk's.
 const FLIGHT: [Color; 3] = [
@@ -42,51 +40,41 @@ fn render(scene: &Murmuration, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// Each pixel of a render in one of `colours`, in dots from the top left
+/// Each pixel of a render in one of `colours`, in pixels from the top left
 /// of the area.
-fn dots_in(buffer: &Buffer, area: Rect, colours: &[Color]) -> BTreeSet<(usize, usize)> {
-    let mut lit = BTreeSet::new();
-    for position in area.positions() {
-        let Some(shown) = pixels::shown(&buffer[position]) else {
-            continue;
-        };
-        let column = usize::from(position.x - area.x) * CELL_DOTS.0;
-        let row = usize::from(position.y - area.y) * CELL_DOTS.1;
-        lit.extend(
-            (0..8)
-                .filter(|pixel| colours.contains(&shown[*pixel]))
-                .map(|pixel| (column + pixel % CELL_DOTS.0, row + pixel / CELL_DOTS.0)),
-        );
-    }
-    lit
+fn pixels_in(buffer: &Buffer, area: Rect, colours: &[Color]) -> BTreeSet<(usize, usize)> {
+    pixels::showing(buffer, area, |colour| colours.contains(&colour))
+        .into_iter()
+        .map(|(place, _)| place)
+        .collect()
 }
 
-/// Every lit dot of a render, a bird or the hawk, in dots from the top left
+/// Every lit pixel of a render, a bird or the hawk, in pixels from the top left
 /// of the area.
-fn lit_dots(buffer: &Buffer, area: Rect) -> BTreeSet<(usize, usize)> {
-    dots_in(buffer, area, &FLIGHT)
+fn lit_pixels(buffer: &Buffer, area: Rect) -> BTreeSet<(usize, usize)> {
+    pixels_in(buffer, area, &FLIGHT)
 }
 
-fn dots_of(area: Rect) -> (f32, f32) {
+fn pixels_of(area: Rect) -> (f32, f32) {
     (
-        f32::from(area.width) * CELL_DOTS.0 as f32,
-        f32::from(area.height) * CELL_DOTS.1 as f32,
+        f32::from(area.width) * CELL_WIDTH as f32,
+        f32::from(area.height) * CELL_HEIGHT as f32,
     )
 }
 
 fn assert_inside(scene: &Murmuration, area: Rect, when: &str) {
-    let (width, height) = dots_of(area);
+    let (width, height) = pixels_of(area);
     for (x, y) in scene.birds() {
         assert!(
             (0.0..width).contains(&x) && (0.0..height).contains(&y),
-            "{when}: bird at ({x}, {y}) outside {width} by {height} dots"
+            "{when}: bird at ({x}, {y}) outside {width} by {height} pixels"
         );
     }
 }
 
 /// Given: a small, a mid-sized and a wide area.
 /// When: the scene ticks once on each.
-/// Then: the flock holds one bird for each `DOTS_PER_BIRD` dots, and no
+/// Then: the flock holds one bird for each `DOTS_PER_BIRD` pixels, and no
 /// fewer and no more than the bounds of `FLOCK`.
 ///
 /// Why it matters: a fixed count is a speck on a wide terminal and a
@@ -98,26 +86,26 @@ fn the_flock_grows_with_the_pane_within_its_bounds() {
         let scene = ticked(7, area, 1);
 
         // Then:
-        let dots = usize::from(area.width) * usize::from(area.height) * CELL_DOTS.0 * CELL_DOTS.1;
-        let expected = (dots / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
+        let count = usize::from(area.width) * usize::from(area.height) * CELL_WIDTH * CELL_HEIGHT;
+        let expected = (count / DOTS_PER_BIRD).clamp(*FLOCK.start(), *FLOCK.end());
         assert_eq!(scene.birds().count(), expected, "{area:?}");
     }
 }
 
 /// Given: the scene on a hundred by thirty area, fifty ticks in.
 /// When: it renders.
-/// Then: the pixels lit in a bird's colour are the dots the birds sit on,
+/// Then: the pixels lit in a bird's colour are the pixels the birds sit on,
 /// no more and no fewer.
 ///
-/// Why it matters: a wrong bit in the octant table draws a bird one dot
+/// Why it matters: a wrong bit in the octant table draws a bird one pixel
 /// off, and the folds of the flock smear.
 #[test]
-fn every_bird_shows_as_a_dot_and_every_dot_is_a_bird() {
+fn every_bird_shows_as_a_pixel_and_every_pixel_is_a_bird() {
     // Given:
     let scene = ticked(7, AREA, 50);
 
     // When:
-    let shown = lit_dots(&render(&scene, AREA, AREA), AREA);
+    let shown = lit_pixels(&render(&scene, AREA, AREA), AREA);
 
     // Then:
     let birds: BTreeSet<(usize, usize)> = scene
@@ -183,7 +171,7 @@ fn the_flock_stays_in_the_pane() {
 /// Given: the scene on a hundred by thirty area, three hundred ticks in.
 /// When: it ticks fifteen hundred more times, about ninety seconds.
 /// Then: at every hundredth tick nine birds in ten have another bird
-/// within four dots, and the middle of the flock moves across at least a
+/// within four pixels, and the middle of the flock moves across at least a
 /// third of the width.
 ///
 /// Why it matters: a flock that scatters is noise, and a flock that holds
@@ -192,7 +180,7 @@ fn the_flock_stays_in_the_pane() {
 fn the_flock_holds_together_and_wanders() {
     // Given:
     let mut scene = ticked(7, AREA, 300);
-    let (width, _) = dots_of(AREA);
+    let (width, _) = pixels_of(AREA);
 
     // When:
     let mut middles = Vec::new();
@@ -278,7 +266,7 @@ fn murmuration_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    assert!(!lit_dots(&buffer, AREA).is_empty());
+    assert!(!lit_pixels(&buffer, AREA).is_empty());
 }
 
 /// The rows of a render that hold the trees, top first: from the row of the
@@ -287,9 +275,9 @@ fn murmuration_is_a_scene_by_name() {
 /// trees, and a bird in the colour of a tree does not stand on the ground.
 fn tree_rows(buffer: &Buffer, palette: &Palette) -> Vec<u16> {
     let area = buffer.area;
-    let trees = dots_in(buffer, area, &[palette.muted]);
-    let bottom = usize::from(area.height) * CELL_DOTS.1;
-    let highest = (0..usize::from(area.width) * CELL_DOTS.0)
+    let trees = pixels_in(buffer, area, &[palette.muted]);
+    let bottom = usize::from(area.height) * CELL_HEIGHT;
+    let highest = (0..usize::from(area.width) * CELL_WIDTH)
         .filter_map(|x| {
             (0..bottom)
                 .rev()
@@ -298,7 +286,7 @@ fn tree_rows(buffer: &Buffer, palette: &Palette) -> Vec<u16> {
         })
         .min()
         .expect("no trees");
-    (u16::try_from(highest / CELL_DOTS.1).unwrap()..area.bottom()).collect()
+    (u16::try_from(highest / CELL_HEIGHT).unwrap()..area.bottom()).collect()
 }
 
 /// Given: the scene on a hundred by thirty area.
@@ -360,14 +348,14 @@ fn trees_rise_from_the_ground_in_muted() {
     let palette = &theme::ROSE_PINE;
     let trees = tree_rows(&buffer, palette);
     let mut heights = BTreeSet::new();
-    for x in 0..usize::from(AREA.width) * CELL_DOTS.0 {
+    for x in 0..usize::from(AREA.width) * CELL_WIDTH {
         let pixels: Vec<Color> = trees
             .iter()
             .flat_map(|&y| {
-                let position = ((x / CELL_DOTS.0) as u16, y);
+                let position = ((x / CELL_WIDTH) as u16, y);
                 let shown = pixels::shown(&buffer[position])
                     .unwrap_or_else(|| panic!("{:?} at {position:?}", buffer[position].symbol()));
-                (0..CELL_DOTS.1).map(move |row| shown[row * CELL_DOTS.0 + x % CELL_DOTS.0])
+                (0..CELL_HEIGHT).map(move |row| shown[row * CELL_WIDTH + x % CELL_WIDTH])
             })
             .collect();
         let sky = pixels.iter().take_while(|p| **p == palette.overlay).count();
@@ -380,7 +368,7 @@ fn trees_rise_from_the_ground_in_muted() {
     }
     assert!(heights.len() >= 3, "{heights:?}");
     assert!(
-        heights.iter().all(|h| *h < trees.len() * CELL_DOTS.1),
+        heights.iter().all(|h| *h < trees.len() * CELL_HEIGHT),
         "a tree fills every row: {heights:?}"
     );
 }
@@ -405,7 +393,7 @@ fn the_flock_stays_above_the_trees() {
         scene.tick(AREA);
         for (x, y) in scene.birds() {
             assert!(
-                (y as usize) / CELL_DOTS.1 < usize::from(first_tree),
+                (y as usize) / CELL_HEIGHT < usize::from(first_tree),
                 "tick {tick}: bird at ({x}, {y}) in the trees"
             );
         }
@@ -476,7 +464,7 @@ fn a_hawk_crosses_the_sky_now_and_then() {
     let (_, track) = hawk_track(7, ticks);
 
     // Then:
-    let (width, _) = dots_of(AREA);
+    let (width, _) = pixels_of(AREA);
     let mut passes = 0;
     let mut clear_since = 0;
     let mut entered = None;
@@ -508,7 +496,7 @@ fn a_hawk_crosses_the_sky_now_and_then() {
 /// Given: the scene on a hundred by thirty area.
 /// When: it ticks through two passes of the hawk.
 /// Then: on every tick with the hawk in the sky, no bird is within
-/// `HAWK_CLEARANCE` dots of it.
+/// `HAWK_CLEARANCE` pixels of it.
 ///
 /// Why it matters: the hawk is the one event of the scene, and what shows
 /// it is the flock opening around it.
@@ -542,14 +530,14 @@ fn the_flock_opens_around_the_hawk() {
 /// in the middle third of the pane.
 /// When: it renders.
 /// Then: some pixels are in love, and every one of them is within four
-/// dots across and two up or down of the hawk.
+/// pixels across and two up or down of the hawk.
 ///
 /// Why it matters: a pixel in love away from the hawk reads as a smear of
 /// it or as a second hawk.
 #[test]
 fn the_hawk_draws_in_love_over_the_flock() {
     // Given:
-    let (width, _) = dots_of(AREA);
+    let (width, _) = pixels_of(AREA);
     let mut scene = Murmuration::new(Rng::seed_from_u64(7), &theme::ROSE_PINE);
     let (hx, hy) = (0..HAWK_EVERY.end() + 600)
         .find_map(|_| {
@@ -564,12 +552,12 @@ fn the_hawk_draws_in_love_over_the_flock() {
     let buffer = render(&scene, AREA, AREA);
 
     // Then:
-    let love = dots_in(&buffer, AREA, &[theme::ROSE_PINE.love]);
+    let love = pixels_in(&buffer, AREA, &[theme::ROSE_PINE.love]);
     for (x, y) in &love {
         let (x, y) = (*x as f32, *y as f32);
         assert!(
             (x - hx).abs() <= 4.0 && (y - hy).abs() <= 2.0,
-            "dot ({x}, {y}) in love, the hawk at ({hx}, {hy})"
+            "pixel ({x}, {y}) in love, the hawk at ({hx}, {hy})"
         );
     }
     assert!(!love.is_empty(), "the hawk is not drawn");
