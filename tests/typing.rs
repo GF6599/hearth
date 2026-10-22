@@ -11,6 +11,7 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
+use hearth::minimap::Outline;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{FRAME_RATE, FRAMES_PER_TICK, Rng, Scene};
 use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
@@ -1186,6 +1187,52 @@ fn the_minimap_over_the_terminal_draws_one_row_of_pixels_a_line() {
             assert_eq!(line(2), expect(lower), "{at} third row");
             assert_eq!(line(3), [None; CELL_WIDTH], "{at} fourth row");
         }
+    }
+}
+
+fn halfway(colour: Color, toward: Color) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(tr, tg, tb)) = (colour, toward) else {
+        panic!("{colour:?} or {toward:?} is not RGB");
+    };
+    let mid = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+    Color::Rgb(mid(r, tr), mid(g, tg), mid(b, tb))
+}
+
+/// Over the terminal's own background, a snippet line dims toward the
+/// theme's mid grey, and over the theme's background toward its base.
+/// Given: three lines in rose, all in the snippet, with the cursor on the
+/// last, on Rose Pine and on its flat palette for the terminal.
+/// When: the minimap draws them.
+/// Then: on the flat palette the first two lines are half way from rose to
+/// muted, on Rose Pine half way from rose to the base, and the cursor line
+/// is rose on both.
+///
+/// Why it matters: the base does not show over the terminal, so a mix
+/// toward it is a dark shade that reads as mud on a light terminal.
+#[test]
+fn over_the_terminal_a_snippet_line_dims_toward_the_mid_grey() {
+    // Given:
+    let text = "aaa\nbbb\nccc\n";
+    let rose = theme::ROSE_PINE.rose;
+    let outline = Outline::new(text, &vec![rose; text.chars().count()]);
+    let flat = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
+
+    for (palette, toward) in [
+        (&theme::ROSE_PINE, theme::ROSE_PINE.base),
+        (flat, flat.muted),
+    ] {
+        // When:
+        let cells = outline.cells(4, 2, 0..3, 2, palette);
+
+        // Then:
+        let dimmed = Some(halfway(rose, toward));
+        let see_through = palette.see_through;
+        assert_eq!(cells[0][0], (dimmed, dimmed), "see through: {see_through}");
+        assert_eq!(
+            cells[1][0],
+            (Some(rose), None),
+            "see through: {see_through}"
+        );
     }
 }
 
