@@ -461,20 +461,9 @@ impl Murmuration {
     /// cell of two halves keeps both colours exactly.
     fn backdrop(&self, columns: u16, rows: u16) -> Canvas {
         let mut canvas = Canvas::new(columns, rows, self.palette);
-        let bands = self.sky_bands();
         let sky = usize::from(rows).saturating_sub(self.tree_rows) * CELL_HEIGHT;
         let bottom = usize::from(rows) * CELL_HEIGHT;
-        let half = CELL_HEIGHT / 2;
-        let halves = sky / half;
-        // A gradient one pixel a half cell, so the canvas mixes the bands.
-        let mut ruler = Canvas::new(1, rows, self.palette);
-        ruler.gradient(0..halves / 2, bands[0], bands[1]);
-        ruler.gradient(halves / 2..halves, bands[1], bands[2]);
-        for step in 0..halves {
-            let colour = ruler.get(0, step).unwrap_or(bands[2]);
-            canvas.gradient(step * half..(step + 1) * half, colour, colour);
-        }
-        canvas.gradient(sky..bottom, bands[2], bands[2]);
+        canvas.bands(sky, &self.sky_bands());
         if self.tree_rows == 0 {
             return canvas;
         }

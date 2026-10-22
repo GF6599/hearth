@@ -603,6 +603,30 @@ impl Canvas {
         }
     }
 
+    /// Fills the rows above `horizon` in bands half a cell tall, a gradient
+    /// along `stops` with the stops evenly spaced, from the first at the
+    /// top to the last at the horizon, and the rows below in the last stop.
+    /// A cell of two bands keeps both colours exactly, where a gradient a
+    /// pixel at a time gives a cell more colours than it draws.
+    pub fn bands(&mut self, horizon: usize, stops: &[Color]) {
+        let Some(&last) = stops.last() else {
+            return;
+        };
+        let half = CELL_HEIGHT / 2;
+        let halves = horizon.div_ceil(half);
+        let legs = stops.len() - 1;
+        for (leg, pair) in stops.windows(2).enumerate() {
+            let (start, end) = (halves * leg / legs, halves * (leg + 1) / legs);
+            let steps = (end - start).saturating_sub(1).max(1) as f32;
+            for step in start..end {
+                let share = (step - start) as f32 / steps;
+                let colour = blend_on(self.base, self.see_through, pair[0], pair[1], share);
+                self.gradient(step * half..(step + 1) * half, colour, colour);
+            }
+        }
+        self.gradient(halves * half..self.height(), last, last);
+    }
+
     /// Blends `colour` into each pixel by its coverage of the shape whose
     /// signed distance is `edge`: how far a point lies outside the shape,
     /// and below 0 inside. `bounds` holds the shape: left, top, right and

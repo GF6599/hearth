@@ -321,20 +321,7 @@ impl Drive {
         }
         let palette = self.palette;
         let dusk = octant::mix(palette.overlay, palette.love, DUSK);
-        let half = CELL_HEIGHT / 2;
-        let halves = horizon.div_ceil(half);
-        // A gradient one pixel a half cell, so the canvas mixes the base.
-        let mut ruler = Canvas::new(
-            1,
-            u16::try_from(halves.div_ceil(CELL_HEIGHT)).unwrap_or(u16::MAX),
-            palette,
-        );
-        ruler.gradient(0..halves, palette.base, dusk);
-        for step in 0..halves {
-            let colour = ruler.get(0, step).unwrap_or(dusk);
-            canvas.gradient(step * half..(step + 1) * half, colour, colour);
-        }
-        canvas.gradient(halves * half..canvas.height(), dusk, dusk);
+        canvas.bands(horizon, &[palette.base, dusk]);
     }
 
     /// The stars, then the moon and its halo, in the sky above `horizon`.
