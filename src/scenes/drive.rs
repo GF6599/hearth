@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 
 use ratatui::style::Color;
 
-use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas, stepped};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -102,11 +102,6 @@ const HALO: (f64, f64) = (0.6, 0.18);
 /// How far the sky's colour at the horizon lies from the overlay toward
 /// love, a glow of dusk low in the sky.
 const DUSK: f32 = 0.2;
-/// The steps a share of coverage rounds to. The canvas samples its own
-/// shapes in sixteenths of a pixel, and a cell shows two colours, so a
-/// finer share shows no more and only adds colours for each cell to choose
-/// between.
-const COVERAGE_STEPS: f64 = 16.0;
 /// The slanted parts of the car from behind, each a polygon of pixel
 /// corners from the top left of a box `CAR_SIZE` across and down, in the
 /// order they are drawn: the roof, its window, and the upper body.
@@ -158,10 +153,6 @@ enum Part {
     Tyre,
 }
 
-fn stepped(share: f64) -> f64 {
-    (share * COVERAGE_STEPS).round() / COVERAGE_STEPS
-}
-
 /// Mixes `colour` into each pixel the box from `left` to `right` across and
 /// `top` to `bottom` down covers, by the share it covers. The pixel at
 /// (x, y) spans x to x + 1 and y to y + 1.
@@ -173,9 +164,9 @@ fn fill_box(canvas: &mut Canvas, [left, top, right, bottom]: [f64; 4], colour: C
     for y in span(top, bottom) {
         let down = overlap(y, top, bottom);
         for x in span(left, right) {
-            let share = stepped(overlap(x, left, right) * down);
+            let share = stepped((overlap(x, left, right) * down) as f32, COVERAGE_STEPS);
             if share > 0.0 {
-                canvas.blend(x, y, colour, share as f32);
+                canvas.blend(x, y, colour, share);
             }
         }
     }
@@ -372,8 +363,8 @@ impl Drive {
             {
                 let out = ((column as f64 - x).hypot(row as f64 - y) - radius) / (reach - radius);
                 if (0.0..1.0).contains(&out) {
-                    let share = stepped(HALO.1 * (1.0 - out).powi(2));
-                    canvas.blend(column, row, self.palette.text, share as f32);
+                    let share = stepped((HALO.1 * (1.0 - out).powi(2)) as f32, COVERAGE_STEPS);
+                    canvas.blend(column, row, self.palette.text, share);
                 }
             }
         }
@@ -445,7 +436,10 @@ impl Drive {
                     let shares = layers.iter().map(|&(out, colour)| {
                         let covered =
                             (x as f64 + 1.0).min(centre + out) - (x as f64).max(centre - out);
-                        (stepped(covered.clamp(0.0, 1.0)) as f32, colour)
+                        (
+                            stepped(covered.clamp(0.0, 1.0) as f32, COVERAGE_STEPS),
+                            colour,
+                        )
                     });
                     let mut colour = None;
                     let mut partial = false;
@@ -657,8 +651,8 @@ impl Drive {
                 {
                     let out = ((column as f64 - x) / across).hypot((row as f64 - y) / down);
                     if out < 1.0 {
-                        let share = stepped(GLOW.1 * (1.0 - out).powi(2));
-                        canvas.blend(column, row, palette.love, share as f32);
+                        let share = stepped((GLOW.1 * (1.0 - out).powi(2)) as f32, COVERAGE_STEPS);
+                        canvas.blend(column, row, palette.love, share);
                     }
                 }
             }

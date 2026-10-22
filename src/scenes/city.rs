@@ -6,7 +6,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -71,10 +71,9 @@ const THIN: usize = CELL_HEIGHT / 2;
 /// night above it.
 const SKY_SHADES: usize = 12;
 const HORIZON: f32 = 0.2;
-/// The steps of the moon's glow, as of a coverage the canvas tells apart,
-/// the most the glow leans the sky to the moon, and how far it reaches as
-/// a share of the moon's radius.
-const GLOW_STEPS: f32 = 16.0;
+/// The most the moon's glow leans the sky to the moon, and how far it
+/// reaches as a share of the moon's radius. The glow steps as the rim's
+/// coverage does, so the two meet with no seam.
 const GLOW: f64 = 0.3;
 const GLOW_REACH: f64 = 2.4;
 /// The shades of a wall from its left to its right, the side of the moon,
@@ -405,9 +404,9 @@ impl City {
         // of the moon's rim, read back by the colour each coverage blends.
         let mut disc = Canvas::new(self.width, self.height, self.palette);
         disc.disc((x0 as f32, y0 as f32), radius as f32, self.palette.text);
-        let blends: Vec<Color> = (0..=GLOW_STEPS as usize)
+        let blends: Vec<Color> = (0..=COVERAGE_STEPS as usize)
             .map(|step| {
-                let share = step as f32 / GLOW_STEPS;
+                let share = step as f32 / COVERAGE_STEPS;
                 octant::blend(self.palette, self.palette.base, self.palette.text, share)
             })
             .collect();
@@ -426,14 +425,14 @@ impl City {
                     continue;
                 }
                 let fade = (1.0 - (distance - radius) / (reach - radius)).min(1.0);
-                let glow = (GLOW * fade * fade * GLOW_STEPS as f64).round() as usize;
+                let glow = (GLOW * fade * fade * COVERAGE_STEPS as f64).round() as usize;
                 for y in top..(top + CELL_HEIGHT).min(shore) {
                     for x in left..left + CELL_WIDTH {
                         let covered = disc
                             .get(x, y)
                             .and_then(|colour| blends.iter().rposition(|each| *each == colour))
                             .unwrap_or(0);
-                        let share = covered.max(glow) as f32 / GLOW_STEPS;
+                        let share = covered.max(glow) as f32 / COVERAGE_STEPS;
                         canvas.blend(x, y, self.palette.text, share);
                     }
                 }

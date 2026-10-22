@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas, stepped};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -162,16 +162,8 @@ fn lit(normal: (f32, f32), toward: (f32, f32)) -> f32 {
     (NIGHT_SHARE + (1.0 - NIGHT_SHARE) * LIGHT_GAIN * light).clamp(NIGHT_SHARE, 1.0)
 }
 
-/// The steps a share of coverage, or of a glow or a fade, rounds to. The
-/// canvas samples its own shapes in sixteenths of a pixel, and a cell shows
-/// two colours, so a finer share shows no more and only adds colours for
-/// each cell to choose between.
-const COVERAGE_STEPS: f32 = 16.0;
+/// The steps a share of a glow or a fade rounds to.
 const SHADE_STEPS: f32 = 64.0;
-
-fn stepped(share: f32, steps: f32) -> f32 {
-    (share * steps).round() / steps
-}
 
 /// The share of a pixel `distance` pixels from the middle of a line `width`
 /// pixels wide, of one pixel or more, that the line covers.

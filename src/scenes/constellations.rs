@@ -77,11 +77,6 @@ const METEOR_SPEED: f32 = 4.0;
 const METEOR_SLANT: RangeInclusive<f32> = 0.35..=1.0;
 /// The width of a figure's line and of a shooting star, in pixels.
 const LINE_WIDTH: f32 = 1.0;
-/// The steps a share of coverage rounds to. The canvas samples its own
-/// shapes in sixteenths of a pixel, and a cell shows two colours, so a
-/// finer share shows no more and only adds colours for each cell to choose
-/// between.
-const COVERAGE_STEPS: f32 = 16.0;
 
 #[derive(Debug)]
 struct Star {
@@ -472,7 +467,7 @@ impl Stroke {
             start += length;
         }
         let coverage = (LINE_WIDTH / 2.0 + 0.5 - nearest.0).clamp(0.0, 1.0);
-        let coverage = (coverage * COVERAGE_STEPS).round() / COVERAGE_STEPS;
+        let coverage = octant::stepped(coverage, octant::COVERAGE_STEPS);
         coverage * (self.strength)(nearest.1)
     }
 }

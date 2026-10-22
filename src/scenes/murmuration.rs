@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::config::Background;
-use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas};
 use crate::scene::{Rng, Scene};
 use crate::theme::{self, Palette};
 
@@ -24,10 +24,6 @@ const BIRD_STRENGTH: f32 = 1.6;
 /// brighter than its edge.
 const FAINT_COVER: f32 = 1.0;
 const BRIGHT_COVER: f32 = 1.5;
-/// The steps a cover rounds to. The canvas samples its own shapes in
-/// sixteenths of a pixel, and a cell shows two colours, so a finer cover
-/// shows no more and only adds colours for each cell to choose between.
-const COVER_STEPS: f32 = 16.0;
 
 /// Distances in pixels, speeds in pixels a tick.
 const VISION: f32 = 8.0;
@@ -584,14 +580,14 @@ impl Scene for Murmuration {
                 }
             }
         }
-        let mut shades = [None; (COVER_STEPS * (FAINT_COVER + BRIGHT_COVER)) as usize + 1];
+        let mut shades = [None; (COVERAGE_STEPS * (FAINT_COVER + BRIGHT_COVER)) as usize + 1];
         let mut flown = vec![false; columns * sky_rows];
         for (index, &birds) in cover.iter().enumerate() {
-            let step = (birds.min(FAINT_COVER + BRIGHT_COVER) * COVER_STEPS).round();
+            let step = (birds.min(FAINT_COVER + BRIGHT_COVER) * COVERAGE_STEPS).round();
             if step > 0.0 {
                 let (x, y) = (index % width, index / width);
                 flown[y / CELL_HEIGHT * columns + x / CELL_WIDTH] = true;
-                let birds = step / COVER_STEPS;
+                let birds = step / COVERAGE_STEPS;
                 let colour = *shades[step as usize].get_or_insert_with(|| {
                     octant::mix(
                         self.palette.subtle,

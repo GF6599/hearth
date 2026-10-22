@@ -413,6 +413,15 @@ pub fn settle<L: Layer>(pixels: [Option<(L, Color)>; 8], empty: Color) -> [Color
 /// in a mix of two theme colours.
 const SAMPLES: usize = 4;
 
+/// The steps of coverage a shape gives a pixel, one for each sample. A
+/// share drawn finer than this shows no more than a shape would, and only
+/// adds colours for each cell to choose between.
+pub const COVERAGE_STEPS: f32 = (SAMPLES * SAMPLES) as f32;
+
+pub fn stepped(share: f32, steps: f32) -> f32 {
+    (share * steps).round() / steps
+}
+
 /// Where each sample lies from the centre of its pixel, across or down.
 const OFFSETS: [f32; SAMPLES] = [-0.375, -0.125, 0.125, 0.375];
 
@@ -613,7 +622,7 @@ impl Canvas {
                         .flat_map(|dy| OFFSETS.iter().map(move |dx| (dx, dy)))
                         .filter(|(dx, dy)| edge(cx + *dx, cy + *dy) < 0.0)
                         .count();
-                    inside as f32 / (SAMPLES * SAMPLES) as f32
+                    inside as f32 / COVERAGE_STEPS
                 };
                 self.blend(x, y, colour, coverage);
             }
