@@ -1,19 +1,25 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::mark;
+use hearth::octant;
 use hearth::picker::{Entry, LEAST_SCENES_IN_VIEW, Picker, SCENE_KEYS};
-use hearth::scene::{ALL, Rate, SceneKind};
+use hearth::scene::{ALL, FRAMES_PER_TICK, Rate, SceneKind};
 use hearth::theme;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+
+use pixels::distance;
 
 const ENTRIES: &[Entry] = &[
     Entry {
@@ -532,7 +538,7 @@ const RIGHT_BRACE: [&str; 6] = ["███╗ ", "╚██╗ ", " ╚██╗
 /// When: each renders.
 /// Then: from the list frame's left column each art row reads as a block
 /// brace, a blank, the art row, a blank and the closing brace, the braces
-/// in gold, and every art row is above the list and the pane.
+/// near gold, and every art row is above the list and the pane.
 ///
 /// Why it matters: a mark that floats off the content column reads as a
 /// separate thing, one that overlaps the list hides a scene, and a thin
@@ -568,11 +574,7 @@ fn the_mark_sits_above_the_content_at_its_left_edge() {
                 .chain((right..).zip(RIGHT_BRACE[row].chars()))
             {
                 if glyph != ' ' {
-                    assert_eq!(
-                        buffer[(x, y)].fg,
-                        theme::ROSE_PINE.marker(),
-                        "{area}: brace at {x}, {y}"
-                    );
+                    assert!(near_gold(buffer[(x, y)].fg), "{area}: brace at {x}, {y}");
                 }
             }
         }
@@ -605,9 +607,31 @@ fn a_narrow_terminal_shows_the_braced_word() {
     assert_eq!(row_of(&buffer, mark::ART[0]), None);
 }
 
-/// The colour of each art column that has ink, read from the frame, with
-/// the colours of the brace cells beside them.
-fn mark_colours(buffer: &Buffer) -> (Vec<Vec<Color>>, Vec<Color>) {
+const GLOW_FRAMES: u32 = mark::GLOW_TICKS * FRAMES_PER_TICK;
+
+/// The colours the glow passes through, from rest to its hottest.
+const EMBER: [Color; 4] = [
+    theme::ROSE_PINE.marked(),
+    theme::ROSE_PINE.rose,
+    theme::ROSE_PINE.love,
+    theme::ROSE_PINE.gold,
+];
+
+/// The places along the ember ramp that `on_ramp` compares a colour with.
+/// Each lies under a step of rounding from the next.
+const RAMP_SAMPLES: u16 = 2000;
+
+/// The cells of the art in one frame, each place as (column, row) from
+/// the top left of the art: the face blocks, the shadow runes, and the
+/// brace cells that have ink.
+#[derive(PartialEq)]
+struct Lockup {
+    faces: Vec<((usize, usize), Color)>,
+    shadows: Vec<((usize, usize), Color)>,
+    braces: Vec<Color>,
+}
+
+fn lockup(buffer: &Buffer) -> Lockup {
     let (list_x, _) = list_corner(buffer);
     let first = row_of(buffer, mark::ART[0]).expect("no art");
     let art_x = list_x + u16::try_from(LEFT_BRACE[0].chars().count() + 1).unwrap();
@@ -616,80 +640,245 @@ fn mark_colours(buffer: &Buffer) -> (Vec<Vec<Color>>, Vec<Color>) {
         .map(|row| row.chars().count())
         .max()
         .unwrap();
-    let columns = (0..width)
-        .map(|column| {
-            let x = art_x + u16::try_from(column).unwrap();
-            (first..first + 6)
-                .filter(|&y| buffer[(x, y)].symbol() != " ")
-                .map(|y| buffer[(x, y)].fg)
-                .collect()
-        })
-        .collect();
     let right_x = art_x + u16::try_from(width + 1).unwrap();
-    let braces = (first..first + 6)
-        .flat_map(|y| {
-            (list_x..art_x - 1)
-                .chain(right_x..right_x + 5)
-                .map(move |x| (x, y))
-        })
-        .filter(|&position| buffer[position].symbol() != " ")
-        .map(|position| buffer[position].fg)
-        .collect();
-    (columns, braces)
+    let mut lockup = Lockup {
+        faces: Vec::new(),
+        shadows: Vec::new(),
+        braces: Vec::new(),
+    };
+    for row in 0..mark::ART.len() {
+        let y = first + u16::try_from(row).unwrap();
+        for column in 0..width {
+            let cell = &buffer[(art_x + u16::try_from(column).unwrap(), y)];
+            match cell.symbol() {
+                " " => {}
+                "█" => lockup.faces.push(((column, row), cell.fg)),
+                _ => lockup.shadows.push(((column, row), cell.fg)),
+            }
+        }
+        for x in (list_x..art_x - 1).chain(right_x..right_x + 5) {
+            if buffer[(x, y)].symbol() != " " {
+                lockup.braces.push(buffer[(x, y)].fg);
+            }
+        }
+    }
+    lockup
+}
+
+fn ramp() -> Vec<Color> {
+    (0..=RAMP_SAMPLES)
+        .map(|step| octant::ramp(&EMBER, f32::from(step) / f32::from(RAMP_SAMPLES)))
+        .collect()
+}
+
+/// Whether `colour` lies on the ember ramp, to a step of rounding. A test
+/// meets the same few hundred colours thousands of times, so it keeps
+/// each answer.
+fn on_ramp(colour: Color, ramp: &[Color], known: &mut HashMap<Color, bool>) -> bool {
+    *known
+        .entry(colour)
+        .or_insert_with(|| ramp.iter().any(|each| distance(colour, *each) <= 2.0))
+}
+
+/// Whether a brace colour reads as gold: it lies nearer gold than half
+/// the way to any other colour of the glow.
+fn near_gold(colour: Color) -> bool {
+    let gold = theme::ROSE_PINE.gold;
+    let reach = EMBER[..3]
+        .iter()
+        .map(|stop| distance(gold, *stop))
+        .fold(f32::MAX, f32::min);
+    distance(colour, gold) < reach / 2.0
 }
 
 /// Given: the picker at 120 by 30.
-/// When: it ticks through one `GLOW_TICKS` period, with a frame after each
-/// tick.
-/// Then: each art column is one colour from top to bottom, every colour is
-/// iris, rose or love and each of the three shows, on every frame at least
-/// one column glows and at least one rests in iris, and the braces stay
-/// gold.
+/// When: it runs through one ember pulse, with a frame drawn after each.
+/// Then: every face block shows a colour of the ramp from iris through
+/// rose and love to gold, on every frame at least one block rests in iris
+/// and one glows, the hottest blocks reach gold, and the pulse shows at
+/// least eight shades for each step of the ramp.
 ///
 /// Why it matters: the title is a hearth, so it glows like embers, and
 /// embers glow out of step. A title that pulses as one block reads as a
-/// warning light.
+/// warning light, and a glow in a few flat steps reads as blinking.
 #[test]
-fn the_title_glows_like_embers_out_of_step() {
+fn the_title_glows_through_ember_colours_out_of_step() {
     // Given:
     let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let (ramp, mut known) = (ramp(), HashMap::new());
     let rest = theme::ROSE_PINE.marked();
-    let glow = [rest, theme::ROSE_PINE.rose, theme::ROSE_PINE.love];
+    let mut seen = HashSet::new();
 
-    let mut seen = Vec::new();
-    for tick in 0..mark::GLOW_TICKS {
+    for frame in 0..GLOW_FRAMES {
         // When:
-        app.tick(WIDE);
-        let (columns, braces) = mark_colours(&app_frame(&app, WIDE));
+        app.frame(WIDE);
+        let lockup = lockup(&app_frame(&app, WIDE));
 
         // Then:
         let mut resting = false;
         let mut glowing = false;
-        for (column, colours) in columns.iter().enumerate() {
-            let Some(&colour) = colours.first() else {
-                continue;
-            };
+        for (place, colour) in &lockup.faces {
             assert!(
-                colours.iter().all(|c| *c == colour),
-                "tick {tick}: column {column} {colours:?}"
+                on_ramp(*colour, &ramp, &mut known),
+                "frame {frame}: {place:?} {colour:?}"
             );
-            assert!(
-                glow.contains(&colour),
-                "tick {tick}: column {column} {colour:?}"
-            );
-            resting |= colour == rest;
-            glowing |= colour != rest;
-            if !seen.contains(&colour) {
-                seen.push(colour);
+            resting |= *colour == rest;
+            glowing |= *colour != rest;
+            seen.insert(*colour);
+        }
+        assert!(resting && glowing, "frame {frame}: the blocks glow in step");
+    }
+    assert!(
+        seen.contains(&theme::ROSE_PINE.gold),
+        "no block reaches gold"
+    );
+    assert!(
+        seen.len() >= 8 * (EMBER.len() - 1),
+        "{} shades: the glow steps",
+        seen.len()
+    );
+}
+
+/// Given: the picker at 120 by 30.
+/// When: it runs eight ticks, with a frame drawn after each frame.
+/// Then: every frame shows the face blocks in other colours than the
+/// frame before.
+///
+/// Why it matters: a glow that changes once a tick moves in visible steps
+/// at 15 a second, where the frame clock gives it 60.
+#[test]
+fn the_glow_moves_on_every_frame() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let mut last = lockup(&app_frame(&app, WIDE)).faces;
+
+    for frame in 0..8 * FRAMES_PER_TICK {
+        // When:
+        app.frame(WIDE);
+        let faces = lockup(&app_frame(&app, WIDE)).faces;
+
+        // Then:
+        assert!(faces != last, "frame {frame}: the glow stands still");
+        last = faces;
+    }
+}
+
+/// Given: the picker at 120 by 30.
+/// When: it runs through two ember pulses, with a frame drawn after each.
+/// Then: every face block reaches gold in each pulse, and in the second
+/// pulse each time a block is gold, the block below it was gold less than
+/// a quarter of a pulse before.
+///
+/// Why it matters: heat rises. A glow that lights a whole column at once
+/// reads as a bar, and one that climbs reads as a flame.
+#[test]
+fn the_glow_climbs_from_the_lower_rows() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let gold = theme::ROSE_PINE.gold;
+    let mut hottest: HashMap<(usize, usize), Vec<u32>> = HashMap::new();
+
+    for frame in 0..2 * GLOW_FRAMES {
+        // When:
+        app.frame(WIDE);
+        for (place, colour) in lockup(&app_frame(&app, WIDE)).faces {
+            let frames = hottest.entry(place).or_default();
+            if colour == gold {
+                frames.push(frame);
             }
         }
-        assert!(resting && glowing, "tick {tick}: the columns glow in step");
-        assert!(
-            braces.iter().all(|c| *c == theme::ROSE_PINE.marker()),
-            "tick {tick}: {braces:?}"
-        );
     }
-    assert_eq!(seen.len(), glow.len(), "{seen:?}");
+
+    // Then:
+    let mut climbs = 0;
+    for (&(column, row), frames) in &hottest {
+        assert!(
+            frames.iter().any(|frame| *frame < GLOW_FRAMES),
+            "{column}, {row} never reaches gold"
+        );
+        let Some(below) = hottest.get(&(column, row + 1)) else {
+            continue;
+        };
+        for frame in frames.iter().filter(|frame| **frame >= GLOW_FRAMES) {
+            assert!(
+                below
+                    .iter()
+                    .any(|under| *under < *frame && frame - under < GLOW_FRAMES / 4),
+                "{column}, {row} at {frame} is gold before the block below"
+            );
+            climbs += 1;
+        }
+    }
+    assert!(climbs > 0, "no block has a block below it");
+}
+
+/// Given: the picker at 120 by 30, in Rose Pine.
+/// When: it runs through one ember pulse, with a frame drawn after each.
+/// Then: every shadow rune lies nearer the base than any colour of the
+/// glow, and further from it than a quarter of that, and the runes show
+/// more than one colour over the pulse.
+///
+/// Why it matters: ANSI Shadow draws a shadow under each letter. In the
+/// face's own colour it reads as part of the letter, and dimmer it reads
+/// as depth.
+#[test]
+fn the_shadow_runes_glow_dimmer_than_the_face() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let base = theme::ROSE_PINE.base;
+    let glow = ramp()
+        .into_iter()
+        .map(|colour| distance(colour, base))
+        .fold(f32::MAX, f32::min);
+    let mut seen = HashSet::new();
+
+    for frame in 0..GLOW_FRAMES {
+        // When:
+        app.frame(WIDE);
+        let lockup = lockup(&app_frame(&app, WIDE));
+
+        // Then:
+        assert!(!lockup.shadows.is_empty(), "frame {frame}: no shadow");
+        for (place, colour) in lockup.shadows {
+            let dim = distance(colour, base);
+            assert!(
+                dim < glow && dim > glow / 4.0,
+                "frame {frame}: {place:?} {colour:?} at {dim} from the base, the glow at {glow}"
+            );
+            seen.insert(colour);
+        }
+    }
+    assert!(seen.len() > 1, "the shadow does not follow the glow");
+}
+
+/// Given: the picker at 120 by 30.
+/// When: it runs through one ember pulse, with a frame drawn after each.
+/// Then: every brace cell reads as gold, on some frame a brace cell is
+/// exactly gold, and on some frame one takes a tint of the glow.
+///
+/// Why it matters: the braces are the marker, so they stay gold, and a
+/// faint warmth from the letters beside them makes the lockup one fire.
+#[test]
+fn the_braces_catch_the_glow_and_rest_in_gold() {
+    // Given:
+    let mut app = App::picker(7, Arc::new(Corpus::embedded()));
+    let gold = theme::ROSE_PINE.gold;
+    let (mut rested, mut caught) = (false, false);
+
+    for frame in 0..GLOW_FRAMES {
+        // When:
+        app.frame(WIDE);
+        let lockup = lockup(&app_frame(&app, WIDE));
+
+        // Then:
+        for colour in lockup.braces {
+            assert!(near_gold(colour), "frame {frame}: {colour:?}");
+            rested |= colour == gold;
+            caught |= colour != gold;
+        }
+    }
+    assert!(rested, "the braces never rest in gold");
+    assert!(caught, "the braces never catch the glow");
 }
 
 /// Given: the picker 60 columns wide, which shows the braced word.
