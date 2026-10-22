@@ -34,7 +34,15 @@ The app draws about 60 frames a second. Most scenes draw in octant pixels, eight
 
 ## Install
 
-With a Rust toolchain, 1.85 or later, because the crate uses the 2024 edition:
+On macOS, with Homebrew:
+
+```sh
+brew install gf6599/tap/hearth
+```
+
+Each [release](https://github.com/GF6599/hearth/releases) also carries archives for macOS and Linux, on Intel and ARM.
+
+From a clone, with a Rust toolchain, 1.85 or later, because the crate uses the 2024 edition:
 
 ```sh
 cargo install --path .
