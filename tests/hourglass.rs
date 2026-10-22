@@ -81,23 +81,6 @@ fn part(colour: Color) -> Color {
         .unwrap()
 }
 
-/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
-/// one to the other, to a step of rounding, and a twentieth of the way or
-/// more from each. A pixel a shape covers by a sixteenth or more mixes by
-/// at least that, and a shade a step from either is no mix.
-/// A colour with no RGB value, the terminal's own background, is no mix.
-fn between(colour: Color, one: Color, other: Color) -> bool {
-    let Color::Rgb(..) = colour else {
-        return false;
-    };
-    let (span, near, far) = (
-        pixels::distance(one, other),
-        pixels::distance(one, colour),
-        pixels::distance(colour, other),
-    );
-    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
-}
-
 fn render(scene: &Hourglass, area: Rect, canvas: Rect) -> Buffer {
     let mut buffer = Buffer::empty(canvas);
     scene.render(area, &mut buffer);
@@ -957,7 +940,7 @@ fn the_outline_has_mixes_of_the_glass_and_the_base_at_its_edge() {
         .map(|(pixel, _)| *pixel)
         .collect();
     let soft = lit.iter().any(|((x, y), colour)| {
-        between(*colour, PALETTE.base, GLASS)
+        pixels::between(*colour, PALETTE.base, GLASS)
             && glass
                 .iter()
                 .any(|(gx, gy)| gx.abs_diff(*x) <= 2 && gy.abs_diff(*y) <= 2)
@@ -1018,14 +1001,15 @@ fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
             [(palette.gold, palette.love), (palette.foam, palette.pine)]
                 .into_iter()
                 .any(|(sand, shadow)| {
-                    between(colour, sand, shadow) || between(colour, sand, palette.text)
+                    pixels::between(colour, sand, shadow)
+                        || pixels::between(colour, sand, palette.text)
                 })
         };
         let drawn_on_purpose = |colour: Color| roles.contains(&colour) || shade(colour);
         for ((x, y), colour) in pixels::showing(&buffer, AREA, |colour| !drawn_on_purpose(colour)) {
             for other in drawn {
                 assert!(
-                    !between(colour, palette.base, other),
+                    !pixels::between(colour, palette.base, other),
                     "{colour:?} at {:?} at {until:?} mixes the base and {other:?}",
                     (x, y)
                 );
@@ -1059,7 +1043,7 @@ fn a_falling_grain_is_a_soft_point() {
         // Then:
         soft |= lit
             .iter()
-            .any(|((_, y), colour)| *y > neck && between(*colour, PALETTE.base, WORK_SAND));
+            .any(|((_, y), colour)| *y > neck && pixels::between(*colour, PALETTE.base, WORK_SAND));
         if soft {
             break;
         }

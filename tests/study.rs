@@ -145,22 +145,6 @@ impl Toned {
     }
 }
 
-/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
-/// one to the other, to a step of rounding, and a twentieth of the way or
-/// more from each, so a colour a step from either is no mix.
-/// A colour with no RGB value, the terminal's own background, is no mix.
-fn between(colour: Color, one: Color, other: Color) -> bool {
-    let Color::Rgb(..) = colour else {
-        return false;
-    };
-    let (span, near, far) = (
-        pixels::distance(one, other),
-        pixels::distance(one, colour),
-        pixels::distance(colour, other),
-    );
-    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
-}
-
 /// Every role of Rose Pine.
 const ROLES: [Color; 12] = [
     PALETTE.base,
@@ -962,7 +946,7 @@ fn the_lamp_lights_the_desk_and_dims_as_it_flickers() {
                 let warm = light[1..].contains(&colour)
                     || light
                         .windows(2)
-                        .any(|pair| between(colour, pair[0], pair[1]));
+                        .any(|pair| pixels::between(colour, pair[0], pair[1]));
                 assert!(warm, "the light at {:?} is {:?}", (x, y), first[y][x]);
             }
         }
@@ -1080,9 +1064,11 @@ fn the_room_is_shaded_with_mixes_of_its_colours() {
     let shaded = still(&rows).iter().any(|&(x, y)| {
         let colour = rows[y][x];
         !ROLES.contains(&colour)
-            && ROLES
-                .iter()
-                .any(|one| ROLES.iter().any(|other| between(colour, *one, *other)))
+            && ROLES.iter().any(|one| {
+                ROLES
+                    .iter()
+                    .any(|other| pixels::between(colour, *one, *other))
+            })
     });
     assert!(shaded, "the room shows no mix of two of its colours");
 }
@@ -1128,8 +1114,8 @@ fn the_lamp_glows_on_the_wall_and_fades_from_the_bulb() {
         .filter(|&&(_, y)| y as f32 > by)
         .filter_map(|&(x, y)| {
             let colour = rows[y][x];
-            let mixed =
-                between(colour, wall, PALETTE.rose) || between(colour, PALETTE.rose, PALETTE.gold);
+            let mixed = pixels::between(colour, wall, PALETTE.rose)
+                || pixels::between(colour, PALETTE.rose, PALETTE.gold);
             mixed.then(|| {
                 let far = (x as f32 - bx).hypot(y as f32 - by);
                 (far, pixels::distance(wall, colour))
@@ -1190,8 +1176,8 @@ fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
 
         // Then:
         let glow = |colour: Color| {
-            between(colour, palette.overlay, palette.rose)
-                || between(colour, palette.rose, palette.gold)
+            pixels::between(colour, palette.overlay, palette.rose)
+                || pixels::between(colour, palette.rose, palette.gold)
         };
         for (y, row) in rows.iter().enumerate() {
             for (x, colour) in row.iter().enumerate() {
@@ -1200,7 +1186,7 @@ fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
                 }
                 for other in drawn {
                     assert!(
-                        !between(*colour, palette.base, other),
+                        !pixels::between(*colour, palette.base, other),
                         "tick {tick}: {colour:?} at ({x}, {y}) mixes the base and {other:?}"
                     );
                 }

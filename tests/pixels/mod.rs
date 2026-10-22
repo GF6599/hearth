@@ -107,6 +107,22 @@ pub fn distance(one: Color, other: Color) -> f32 {
     }
 }
 
+/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
+/// one to the other, to a step of rounding, and a twentieth of the way or
+/// more from each, so a colour a step from either is no mix. A colour with
+/// no RGB value, the terminal's own background, is no mix.
+pub fn between(colour: Color, one: Color, other: Color) -> bool {
+    let Color::Rgb(..) = colour else {
+        return false;
+    };
+    let (span, near, far) = (
+        distance(one, other),
+        distance(one, colour),
+        distance(colour, other),
+    );
+    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
+}
+
 /// The top left pixel of the cell at `position`, from the top left of
 /// `area`.
 fn corner(position: Position, area: Rect) -> (usize, usize) {

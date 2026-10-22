@@ -165,29 +165,13 @@ const fn colours() -> [Color; 7] {
     ]
 }
 
-/// Whether `colour` is a mix of `one` and `other`: it lies on the way from
-/// one to the other, to a step of rounding, and a twentieth of the way or
-/// more from each, so a colour a step from either is no mix.
-/// A colour with no RGB value, the terminal's own background, is no mix.
-fn between(colour: Color, one: Color, other: Color) -> bool {
-    let Color::Rgb(..) = colour else {
-        return false;
-    };
-    let (span, near, far) = (
-        pixels::distance(one, other),
-        pixels::distance(one, colour),
-        pixels::distance(colour, other),
-    );
-    near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
-}
-
 /// Whether `colour` lies on a ramp of `stops`: a stop, or a mix of two
 /// stops next to each other.
 fn on_ramp(colour: Color, stops: &[Color]) -> bool {
     stops.contains(&colour)
         || stops
             .windows(2)
-            .any(|pair| between(colour, pair[0], pair[1]))
+            .any(|pair| pixels::between(colour, pair[0], pair[1]))
 }
 
 /// The wood from its shadow to its lit top, and the glow from dull to
@@ -505,7 +489,7 @@ fn sparks_rise_above_the_grate_and_cool_as_they_shrink() {
             };
             assert_eq!(fg, colour, "{glyph} at ({x}, {y})");
             assert!(
-                bg == palette.base || between(bg, palette.base, palette.love),
+                bg == palette.base || pixels::between(bg, palette.base, palette.love),
                 "{glyph} at ({x}, {y}) on {bg:?}"
             );
             assert!(
@@ -851,7 +835,7 @@ fn the_glow_lights_the_air_around_the_fire() {
         .flat_map(|y| (0..shown[y].len()).map(move |x| (x, y)))
         .filter_map(|(x, y)| {
             let colour = shown[y][x]?;
-            between(colour, palette.base, palette.love).then_some((x, y, colour))
+            pixels::between(colour, palette.base, palette.love).then_some((x, y, colour))
         })
         .collect();
     assert!(!lit.is_empty(), "no air the glow lights");
@@ -900,11 +884,9 @@ fn the_glow_shades_between_love_rose_and_gold() {
         let shown = pixels(&render(&scene, AREA, AREA));
 
         // Then:
-        shaded |= shown
-            .iter()
-            .flatten()
-            .flatten()
-            .any(|colour| between(*colour, love, rose) || between(*colour, rose, gold));
+        shaded |= shown.iter().flatten().flatten().any(|colour| {
+            pixels::between(*colour, love, rose) || pixels::between(*colour, rose, gold)
+        });
     }
     assert!(shaded, "the glow showed only love, rose and gold");
 }
@@ -939,7 +921,7 @@ fn over_the_terminal_background_the_air_stays_clear() {
             for other in [palette.love, palette.rose, palette.gold] {
                 if let Some(colour) = colour {
                     assert!(
-                        !between(*colour, palette.base, other),
+                        !pixels::between(*colour, palette.base, other),
                         "{colour:?} at ({x}, {y}) mixes the base and {other:?}"
                     );
                 }
