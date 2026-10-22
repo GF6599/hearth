@@ -236,7 +236,7 @@ impl App {
                 .position(|slot| *slot == self.selected)
                 .unwrap_or(0),
             top: self.picker_top,
-            tick: self.frames / FRAMES_PER_TICK,
+            frame: self.frames,
             query: self.query.as_deref(),
         })
     }

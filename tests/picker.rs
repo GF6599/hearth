@@ -47,7 +47,7 @@ fn render(selected: usize, width: u16, height: u16) -> Buffer {
                     sized_by: ENTRIES,
                     selected,
                     top: 0,
-                    tick: 0,
+                    frame: 0,
                     query: None,
                 },
                 f.area(),

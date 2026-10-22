@@ -51,8 +51,8 @@ pub struct Picker<'a> {
     /// it only as far as the selection needs, so it holds still while the
     /// selection moves inside it.
     pub top: usize,
-    /// The app's tick count, which moves the glow of the title.
-    pub tick: u32,
+    /// The app's frame count, which moves the glow of the title.
+    pub frame: u32,
     /// The letters of a search, shown in the top rule. `None` when no
     /// search is on.
     pub query: Option<&'a str>,
@@ -271,7 +271,7 @@ impl Widget for Picker<'_> {
         } = self.layout(area);
         if let Some((mark, x, y)) = mark {
             let at = Rect::new(x, y, mark.width(), mark.height());
-            Paragraph::new(mark.lines(self.palette, self.tick)).render(at.intersection(area), buf);
+            Paragraph::new(mark.lines(self.palette, self.frame)).render(at.intersection(area), buf);
         }
         if let Some(inner) = preview {
             let area = Rect::new(inner.x - 1, inner.y - 1, inner.width + 2, inner.height + 2);
