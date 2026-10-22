@@ -123,6 +123,10 @@ pub fn between(colour: Color, one: Color, other: Color) -> bool {
     near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
 }
 
+pub fn place_distance(from: (f32, f32), to: (f32, f32)) -> f32 {
+    (to.0 - from.0).hypot(to.1 - from.1)
+}
+
 /// The mixes `share_on` has read, by their two ends and steps: each colour
 /// of a mix with the first step that rounds to it.
 type Mixes = HashMap<(Color, Color, u16), HashMap<Color, u16>>;

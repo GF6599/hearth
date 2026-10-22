@@ -690,10 +690,6 @@ fn gold_pixels(buffer: &Buffer) -> Vec<(f32, f32)> {
         .collect()
 }
 
-fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
-    (to.0 - from.0).hypot(to.1 - from.1)
-}
-
 fn centroid(pixels: &[(f32, f32)]) -> (f32, f32) {
     let count = pixels.len() as f32;
     let (x, y) = pixels
@@ -740,9 +736,9 @@ fn a_shooting_star_crosses_at_a_slant_with_a_short_trail() {
                         "seed {seed}: a streak shows {ticks} ticks, to tick {tick}"
                     );
                     assert!(
-                        distance(first, last) > TRAIL as f32,
+                        pixels::place_distance(first, last) > TRAIL as f32,
                         "seed {seed}: a streak moves {} pixels, to tick {tick}",
-                        distance(first, last)
+                        pixels::place_distance(first, last)
                     );
                     streaks += 1;
                 }
@@ -942,7 +938,7 @@ fn a_shooting_star_glides_between_ticks() {
                 continue;
             }
             let (from, to) = (centroid(first), centroid(last));
-            let moved = distance(from, to);
+            let moved = pixels::place_distance(from, to);
             let heading = ((to.0 - from.0) / moved, (to.1 - from.1) / moved);
             let ends: Vec<(f32, f32)> = frames
                 .iter()

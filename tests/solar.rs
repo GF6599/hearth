@@ -200,16 +200,12 @@ fn stands_clear(bodies: &[(f32, f32)], index: usize, centre: (f32, f32), reach: 
         _ => PLANET_SPAN,
     };
     let place = bodies[index];
-    distance(place, centre) > reach + 2.0 + CELL_HEIGHT as f32
+    pixels::place_distance(place, centre) > reach + 2.0 + CELL_HEIGHT as f32
         && bodies.iter().enumerate().all(|(other, near)| {
             other == index
                 || (near.0 - place.0).abs() > span(index).0 + span(other).0 + 1.0
                 || (near.1 - place.1).abs() > span(index).1 + span(other).1 + 1.0
         })
-}
-
-fn distance(from: (f32, f32), to: (f32, f32)) -> f32 {
-    (to.0 - from.0).hypot(to.1 - from.1)
 }
 
 /// Whether a place lies in a cell that a body, a planet by its index or the
@@ -258,7 +254,7 @@ fn each_planet_keeps_to_its_own_ellipse() {
         let glow = 2.0
             * sun_pixels(&render(&scene, AREA, AREA), AREA)
                 .iter()
-                .map(|pixel| distance(*pixel, centre))
+                .map(|pixel| pixels::place_distance(*pixel, centre))
                 .fold(0.0, f32::max);
         let mut paths: Vec<Vec<(f32, f32)>> = vec![Vec::new(); 8];
         let mut orbit_pixels: Vec<(Place, Color, Vec<Place>)> = Vec::new();
@@ -287,7 +283,8 @@ fn each_planet_keeps_to_its_own_ellipse() {
                     lit_pixels(&buffer, AREA)
                         .into_iter()
                         .filter(|(pixel, _)| {
-                            distance(*pixel, centre) > glow && !near_body(*pixel, &bodies)
+                            pixels::place_distance(*pixel, centre) > glow
+                                && !near_body(*pixel, &bodies)
                         })
                         .map(|(pixel, colour)| (pixel, colour, planets.clone())),
                 );
@@ -514,7 +511,8 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         (-2..=2).any(|dy| {
             (-2..=2).any(|dx| {
                 let place = (middle.0.round() + dx as f32, middle.1.round() + dy as f32);
-                distance(place, middle) <= reach && colour_at(buffer, place).is_some_and(keep)
+                pixels::place_distance(place, middle) <= reach
+                    && colour_at(buffer, place).is_some_and(keep)
             })
         })
     };
@@ -523,7 +521,7 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
     let centre = sun(&render(&scene, AREA, AREA), AREA);
     let reach = sun_pixels(&render(&scene, AREA, AREA), AREA)
         .iter()
-        .map(|pixel| distance(*pixel, centre))
+        .map(|pixel| pixels::place_distance(*pixel, centre))
         .fold(0.0, f32::max);
     let mut checked = [0; 8];
     let mut moon_checked = 0;
@@ -556,7 +554,7 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
             }
         }
         assert!(
-            distance(moon, planets[EARTH]) <= 7.5,
+            pixels::place_distance(moon, planets[EARTH]) <= 7.5,
             "the Moon {moon:?} far from Earth {:?} at tick {tick}",
             planets[EARTH]
         );
@@ -581,10 +579,9 @@ fn each_planet_has_its_colour_the_moon_and_the_ring() {
         moon_last = now;
 
         let saturn = planets[SATURN];
-        let saturn_clear = bodies
-            .iter()
-            .enumerate()
-            .all(|(other, place)| other == SATURN || distance(*place, saturn) > SATURN_REACH + 8.0);
+        let saturn_clear = bodies.iter().enumerate().all(|(other, place)| {
+            other == SATURN || pixels::place_distance(*place, saturn) > SATURN_REACH + 8.0
+        });
         if saturn_clear {
             let gold = lit_pixels(&buffer, AREA);
             let reaches = |side: f32| {
@@ -633,7 +630,7 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
     let centre = sun(&first, AREA);
     let reach = sun_pixels(&first, AREA)
         .iter()
-        .map(|pixel| distance(*pixel, centre))
+        .map(|pixel| pixels::place_distance(*pixel, centre))
         .fold(0.0, f32::max);
     let (mut in_front, mut behind, mut shared) = (0, 0, 0);
 
@@ -644,7 +641,7 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
         let mercury = scene.planets()[0];
 
         // Then:
-        if distance(mercury, centre) > reach - 3.0 {
+        if pixels::place_distance(mercury, centre) > reach - 3.0 {
             continue;
         }
         let shown = colour_at(&buffer, mercury);
@@ -660,7 +657,7 @@ fn mercury_passes_in_front_of_the_sun_and_behind_it() {
                     (f32::from(position.y) + 0.5) * CELL_HEIGHT as f32,
                 );
                 let cell = pixels::shown(&buffer[position]);
-                distance(near, mercury) <= 4.0
+                pixels::place_distance(near, mercury) <= 4.0
                     && cell.is_some_and(|cell| {
                         cell.iter().any(|colour| named(*colour) == PALETTE.subtle)
                             && cell.contains(&PALETTE.gold)
@@ -724,7 +721,7 @@ fn each_planet_leaves_a_trail_that_fades_behind_it() {
     let glow = 2.0
         * sun_pixels(&first, AREA)
             .iter()
-            .map(|pixel| distance(*pixel, middle(AREA)))
+            .map(|pixel| pixels::place_distance(*pixel, middle(AREA)))
             .fold(0.0, f32::max);
     let eighth = TAU / 8.0;
     let places = 32;
@@ -747,14 +744,15 @@ fn each_planet_leaves_a_trail_that_fades_behind_it() {
                 let lag = eighth * step as f32 / places as f32;
                 for (turn, behind_it) in [(now - lag, true), (now + lag, false)] {
                     let place = (centre.0 + across * turn.cos(), centre.1 - down * turn.sin());
-                    let away = distance(place, middle(AREA)) > glow && !near_body(place, &bodies);
+                    let away = pixels::place_distance(place, middle(AREA)) > glow
+                        && !near_body(place, &bodies);
                     if !away {
                         continue;
                     }
                     let nearest = (-1..=1)
                         .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
                         .map(|(dx, dy)| (place.0.round() + dx as f32, place.1.round() + dy as f32))
-                        .filter(|pixel| distance(*pixel, place) <= 1.0)
+                        .filter(|pixel| pixels::place_distance(*pixel, place) <= 1.0)
                         .filter_map(|pixel| colour_at(&buffer, pixel))
                         .filter(|colour| *colour != PALETTE.base)
                         .map(|colour| nearness(colour, role))
@@ -821,7 +819,7 @@ fn the_sun_glows_into_the_sky() {
         let centre = sun(&buffer, GLIDE_AREA);
         let radius = sun_pixels(&buffer, GLIDE_AREA)
             .iter()
-            .map(|pixel| distance(*pixel, centre))
+            .map(|pixel| pixels::place_distance(*pixel, centre))
             .fold(0.0, f32::max);
         let mut bodies = scene.planets();
         bodies.push(scene.moon());
@@ -831,7 +829,7 @@ fn the_sun_glows_into_the_sky() {
         let mut rings = vec![(0_u64, 0_u64); ((outer - inner) / 2.0) as usize + 1];
         for (pixel, colour) in pixels::showing(&buffer, GLIDE_AREA, |_| true) {
             let place = (pixel.0 as f32, pixel.1 as f32);
-            let out = distance(place, centre);
+            let out = pixels::place_distance(place, centre);
             if !(inner..outer).contains(&out) || near_body(place, &bodies) {
                 continue;
             }
@@ -878,7 +876,7 @@ fn each_planet_is_lit_on_the_side_that_faces_the_sun() {
     let centre = sun(&first, AREA);
     let reach = sun_pixels(&first, AREA)
         .iter()
-        .map(|pixel| distance(*pixel, centre))
+        .map(|pixel| pixels::place_distance(*pixel, centre))
         .fold(0.0, f32::max);
     let mut checked = [0; 8];
     let (mut near, mut far) = ([(0_u64, 0_u64); 8], [(0_u64, 0_u64); 8]);
@@ -896,7 +894,7 @@ fn each_planet_is_lit_on_the_side_that_faces_the_sun() {
                 continue;
             }
             let middle = planets[index];
-            let length = distance(middle, centre);
+            let length = pixels::place_distance(middle, centre);
             let toward = (
                 (centre.0 - middle.0) / length,
                 (centre.1 - middle.1) / length,
@@ -904,8 +902,8 @@ fn each_planet_is_lit_on_the_side_that_faces_the_sun() {
             for dy in -2..=2 {
                 for dx in -2..=2 {
                     let place = (middle.0.round() + dx as f32, middle.1.round() + dy as f32);
-                    let Some(colour) =
-                        colour_at(&buffer, place).filter(|_| distance(place, middle) <= 2.0)
+                    let Some(colour) = colour_at(&buffer, place)
+                        .filter(|_| pixels::place_distance(place, middle) <= 2.0)
                     else {
                         continue;
                     };
@@ -958,7 +956,7 @@ fn each_planet_is_a_solid_disc() {
     let centre = sun(&first, AREA);
     let reach = sun_pixels(&first, AREA)
         .iter()
-        .map(|pixel| distance(*pixel, centre))
+        .map(|pixel| pixels::place_distance(*pixel, centre))
         .fold(0.0, f32::max);
     let mut checked = [0; 8];
 
@@ -980,7 +978,7 @@ fn each_planet_is_a_solid_disc() {
             for dy in -2..=2 {
                 for dx in -2..=2 {
                     let place = (middle.0.floor() + dx as f32, middle.1.floor() + dy as f32);
-                    if distance(place, middle) > 2.0 {
+                    if pixels::place_distance(place, middle) > 2.0 {
                         continue;
                     }
                     let shown = colour_at(&buffer, place);
@@ -1097,9 +1095,9 @@ fn front((lit, moon): &Frame, from: (f32, f32), reach: f32, heading: (f32, f32))
         .copied()
         .filter(|(pixel, _)| {
             let (dx, dy) = (pixel.0 - from.0, pixel.1 - from.1);
-            distance(*pixel, from) <= reach
+            pixels::place_distance(*pixel, from) <= reach
                 && (dx * heading.1 - dy * heading.0).abs() > 1.5
-                && distance(*pixel, *moon) > MOON_SPAN.0 + CELL_HEIGHT as f32
+                && pixels::place_distance(*pixel, *moon) > MOON_SPAN.0 + CELL_HEIGHT as f32
         })
         .fold((0.0, 0.0), |(sum, weight), (pixel, colour)| {
             let lighter = (luma(colour) - luma(PALETTE.base)) as f32;
@@ -1134,7 +1132,7 @@ fn each_planet_glides_along_its_orbit_between_ticks() {
     let centre = sun(&first, GLIDE_AREA);
     let reach = sun_pixels(&first, GLIDE_AREA)
         .iter()
-        .map(|pixel| distance(*pixel, centre))
+        .map(|pixel| pixels::place_distance(*pixel, centre))
         .fold(0.0, f32::max);
     let mut checked = 0;
 
@@ -1174,12 +1172,12 @@ fn each_planet_glides_along_its_orbit_between_ticks() {
             if index == SATURN
                 || !stands_clear(&bodies, index, centre, reach)
                 || !stands_clear(&next, index, centre, reach)
-                || distance(bodies[index], centre) <= 2.0 * reach
+                || pixels::place_distance(bodies[index], centre) <= 2.0 * reach
             {
                 continue;
             }
             let (from, to) = (bodies[index], next[index]);
-            let moved = distance(from, to);
+            let moved = pixels::place_distance(from, to);
             let heading = ((to.0 - from.0) / moved, (to.1 - from.1) / moved);
             let near = BODY_REACH + moved;
             if moved < 2.0 {
