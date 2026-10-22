@@ -74,6 +74,14 @@ impl Outline {
                 Tier::Outside
             }
         };
+        // A see-through base does not show, so a mix toward it is a dark
+        // shade over whatever the terminal shows. The mid grey reads as
+        // fainter over a dark terminal and a light one.
+        let fade = if palette.see_through {
+            palette.muted
+        } else {
+            palette.base
+        };
         let half = |half: usize, cell: usize| -> Option<Color> {
             let start = cell * SOURCE_COLUMNS / width;
             let end = ((cell + 1) * SOURCE_COLUMNS / width).max(start + 1);
@@ -90,7 +98,7 @@ impl Outline {
             }
             best.map(|(tier, colour)| match tier {
                 Tier::Cursor => colour,
-                Tier::Snippet => dim(colour, palette.base),
+                Tier::Snippet => dim(colour, fade),
                 Tier::Outside => palette.overlay,
             })
         };
@@ -104,12 +112,12 @@ impl Outline {
     }
 }
 
-/// Halfway from `colour` to the background, so a snippet line reads
-/// fainter than the cursor line and brighter than the rest of the file.
-fn dim(colour: Color, background: Color) -> Color {
-    let (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) = (colour, background) else {
+/// Halfway from `colour` to `toward`, so a snippet line reads fainter than
+/// the cursor line and brighter than the rest of the file.
+fn dim(colour: Color, toward: Color) -> Color {
+    let (Color::Rgb(r, g, b), Color::Rgb(tr, tg, tb)) = (colour, toward) else {
         return colour;
     };
     let mid = |a: u8, b: u8| u8::try_from((u16::from(a) + u16::from(b)) / 2).unwrap_or(a);
-    Color::Rgb(mid(r, br), mid(g, bg), mid(b, bb))
+    Color::Rgb(mid(r, tr), mid(g, tg), mid(b, tb))
 }
