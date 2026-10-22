@@ -163,26 +163,12 @@ enum Part {
     Other,
 }
 
-/// The distance between two colours as points of red, green and blue.
-fn distance(one: Color, other: Color) -> u32 {
-    let channels = |colour: Color| match colour {
-        Color::Rgb(r, g, b) => [r, g, b],
-        other => panic!("{other:?} is not a colour of the theme"),
-    };
-    let squares: u32 = channels(one)
-        .iter()
-        .zip(channels(other))
-        .map(|(a, b)| u32::from(a.abs_diff(b)).pow(2))
-        .sum();
-    f64::from(squares).sqrt() as u32
-}
-
 /// The farthest each part lies from its role. The greys of Rose Pine share
 /// one hue, so the bed and the stones are read by their distance to their
 /// own roles and not by hue alone.
-const SAND_REACH: u32 = 64;
-const BED_REACH: u32 = 40;
-const STONE_REACH: u32 = 48;
+const SAND_REACH: f32 = 64.0;
+const BED_REACH: f32 = 40.0;
+const STONE_REACH: f32 = 48.0;
 
 /// The part each colour shows, read once for each colour, as a test reads
 /// millions of pixels.
@@ -206,7 +192,11 @@ fn read_part(colour: Color) -> Part {
         roles
             .iter()
             .copied()
-            .min_by_key(|role| distance(colour, *role))
+            .min_by(|one, other| {
+                pixels::distance(colour, *one)
+                    .floor()
+                    .total_cmp(&pixels::distance(colour, *other).floor())
+            })
             .unwrap()
     };
     let greys = [
@@ -227,14 +217,16 @@ fn read_part(colour: Color) -> Part {
             Part::Water
         }
     } else if r > g && g >= b {
-        if distance(colour, PALETTE.gold) <= SAND_REACH {
+        if pixels::distance(colour, PALETTE.gold).floor() <= SAND_REACH {
             Part::Sand
         } else {
             Part::Other
         }
-    } else if nearest(&greys) == PALETTE.overlay && distance(colour, PALETTE.overlay) <= BED_REACH {
+    } else if nearest(&greys) == PALETTE.overlay
+        && pixels::distance(colour, PALETTE.overlay).floor() <= BED_REACH
+    {
         Part::Bed
-    } else if distance(colour, stone) <= STONE_REACH {
+    } else if pixels::distance(colour, stone).floor() <= STONE_REACH {
         if r >= g + 16 {
             Part::Merge
         } else {

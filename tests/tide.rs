@@ -92,23 +92,13 @@ fn is_shell(colour: Color) -> bool {
 /// The farthest a pebble lies from subtle, as a distance between red,
 /// green and blue. The greys of Rose Pine share one hue, so a pebble is
 /// read by its distance to its own role and not by its hue alone.
-const PEBBLE_REACH: u32 = 45;
+const PEBBLE_REACH: f32 = 45.0;
 
 /// A pebble is grey: blue over red, and red over green, as subtle is, and
 /// within `PEBBLE_REACH` of subtle.
 fn is_pebble(colour: Color) -> bool {
     let (r, g, b) = channels(colour);
-    b > r && r >= g && distance(colour, PALETTE.subtle) <= PEBBLE_REACH
-}
-
-/// The distance between two colours as points of red, green and blue.
-fn distance(one: Color, other: Color) -> u32 {
-    let ((r, g, b), (r2, g2, b2)) = (channels(one), channels(other));
-    let squares: u32 = [(r, r2), (g, g2), (b, b2)]
-        .iter()
-        .map(|(a, b)| u32::from(a.abs_diff(*b)).pow(2))
-        .sum();
-    f64::from(squares).sqrt() as u32
+    b > r && r >= g && pixels::distance(colour, PALETTE.subtle).floor() <= PEBBLE_REACH
 }
 
 /// Given: the Rose Pine roles of each part of the beach, and the roles the

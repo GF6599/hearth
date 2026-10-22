@@ -94,6 +94,19 @@ pub fn grid<T: Clone + Default>(
     rows
 }
 
+/// The distance between two colours in RGB. A colour with no RGB value
+/// fails the test, as no distance to it is true.
+pub fn distance(one: Color, other: Color) -> f32 {
+    match (one, other) {
+        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
+            .into_iter()
+            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
+            .sum::<f32>()
+            .sqrt(),
+        _ => panic!("{one:?} or {other:?} has no RGB value"),
+    }
+}
+
 /// The top left pixel of the cell at `position`, from the top left of
 /// `area`.
 fn corner(position: Position, area: Rect) -> (usize, usize) {

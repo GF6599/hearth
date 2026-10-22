@@ -69,25 +69,15 @@ const PARTS: [Color; 7] = [
     TO_DO,
 ];
 
-/// The distance between two colours in RGB.
-fn distance(one: Color, other: Color) -> f32 {
-    match (one, other) {
-        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
-            .into_iter()
-            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
-            .sum::<f32>()
-            .sqrt(),
-        _ => f32::INFINITY,
-    }
-}
-
 /// The part a pixel shows: the part whose colour lies nearest its own. The
 /// sand is shaded, so its pixels are mixes near the sand's colour, and
 /// each must still read as that sand and as no other part.
 fn part(colour: Color) -> Color {
     PARTS
         .into_iter()
-        .min_by(|one, other| distance(colour, *one).total_cmp(&distance(colour, *other)))
+        .min_by(|one, other| {
+            pixels::distance(colour, *one).total_cmp(&pixels::distance(colour, *other))
+        })
         .unwrap()
 }
 
@@ -95,11 +85,15 @@ fn part(colour: Color) -> Color {
 /// one to the other, to a step of rounding, and a twentieth of the way or
 /// more from each. A pixel a shape covers by a sixteenth or more mixes by
 /// at least that, and a shade a step from either is no mix.
+/// A colour with no RGB value, the terminal's own background, is no mix.
 fn between(colour: Color, one: Color, other: Color) -> bool {
+    let Color::Rgb(..) = colour else {
+        return false;
+    };
     let (span, near, far) = (
-        distance(one, other),
-        distance(one, colour),
-        distance(colour, other),
+        pixels::distance(one, other),
+        pixels::distance(one, colour),
+        pixels::distance(colour, other),
     );
     near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
 }

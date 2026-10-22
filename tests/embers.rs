@@ -165,26 +165,18 @@ const fn colours() -> [Color; 7] {
     ]
 }
 
-/// The distance between two colours in RGB.
-fn distance(one: Color, other: Color) -> f32 {
-    match (one, other) {
-        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
-            .into_iter()
-            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
-            .sum::<f32>()
-            .sqrt(),
-        _ => f32::INFINITY,
-    }
-}
-
 /// Whether `colour` is a mix of `one` and `other`: it lies on the way from
 /// one to the other, to a step of rounding, and a twentieth of the way or
 /// more from each, so a colour a step from either is no mix.
+/// A colour with no RGB value, the terminal's own background, is no mix.
 fn between(colour: Color, one: Color, other: Color) -> bool {
+    let Color::Rgb(..) = colour else {
+        return false;
+    };
     let (span, near, far) = (
-        distance(one, other),
-        distance(one, colour),
-        distance(colour, other),
+        pixels::distance(one, other),
+        pixels::distance(one, colour),
+        pixels::distance(colour, other),
     );
     near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
 }
@@ -209,7 +201,7 @@ const fn wood_ramp() -> [Color; 3] {
 /// the base over love's.
 fn lit_share(colour: Color) -> f32 {
     let palette = &theme::ROSE_PINE;
-    distance(palette.base, colour) / distance(palette.base, palette.love)
+    pixels::distance(palette.base, colour) / pixels::distance(palette.base, palette.love)
 }
 
 /// Given: the scene on an eighty by twenty-four area.

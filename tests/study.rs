@@ -145,26 +145,18 @@ impl Toned {
     }
 }
 
-/// The distance between two colours in RGB.
-fn distance(one: Color, other: Color) -> f32 {
-    match (one, other) {
-        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
-            .into_iter()
-            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
-            .sum::<f32>()
-            .sqrt(),
-        _ => f32::INFINITY,
-    }
-}
-
 /// Whether `colour` is a mix of `one` and `other`: it lies on the way from
 /// one to the other, to a step of rounding, and a twentieth of the way or
 /// more from each, so a colour a step from either is no mix.
+/// A colour with no RGB value, the terminal's own background, is no mix.
 fn between(colour: Color, one: Color, other: Color) -> bool {
+    let Color::Rgb(..) = colour else {
+        return false;
+    };
     let (span, near, far) = (
-        distance(one, other),
-        distance(one, colour),
-        distance(colour, other),
+        pixels::distance(one, other),
+        pixels::distance(one, colour),
+        pixels::distance(colour, other),
     );
     near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
 }
@@ -1140,7 +1132,7 @@ fn the_lamp_glows_on_the_wall_and_fades_from_the_bulb() {
                 between(colour, wall, PALETTE.rose) || between(colour, PALETTE.rose, PALETTE.gold);
             mixed.then(|| {
                 let far = (x as f32 - bx).hypot(y as f32 - by);
-                (far, distance(wall, colour))
+                (far, pixels::distance(wall, colour))
             })
         })
         .collect();

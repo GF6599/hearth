@@ -147,18 +147,6 @@ fn step(one: Color, other: Color) -> u8 {
     }
 }
 
-/// The distance between two colours in RGB.
-fn distance(one: Color, other: Color) -> f32 {
-    match (one, other) {
-        (Color::Rgb(r, g, b), Color::Rgb(s, h, c)) => [(r, s), (g, h), (b, c)]
-            .into_iter()
-            .map(|(one, other)| (f32::from(one) - f32::from(other)).powi(2))
-            .sum::<f32>()
-            .sqrt(),
-        _ => panic!("{one:?} or {other:?} has no RGB value"),
-    }
-}
-
 /// The shades fewer than this between two stops show as bands.
 const LEAST_SHADES: usize = 5;
 
@@ -188,8 +176,8 @@ fn assert_shades(palette: &Palette, stops: &[Color]) {
         let largest = step(lower, upper) / 4 + 1;
         for (heat, pair) in heats.zip(colours.windows(2)) {
             assert!(
-                distance(lower, pair[1]) >= distance(lower, pair[0]) - 1.0
-                    && distance(upper, pair[1]) <= distance(upper, pair[0]) + 1.0,
+                pixels::distance(lower, pair[1]) >= pixels::distance(lower, pair[0]) - 1.0
+                    && pixels::distance(upper, pair[1]) <= pixels::distance(upper, pair[0]) + 1.0,
                 "heat {heat} to {}: {:?} to {:?} turns back",
                 heat + 1,
                 pair[0],
