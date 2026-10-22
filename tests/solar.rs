@@ -2,9 +2,9 @@
 
 mod pixels;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::f32::consts::TAU;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
@@ -1237,30 +1237,10 @@ fn a_frame_on_a_tick_is_the_frame_before_the_glide() {
     }
 }
 
-/// The colours of each mix a test has read, by its two ends.
-type Mixes = HashMap<(Color, Color), HashSet<Color>>;
-
 /// Whether `colour` lies part way along the mix from `from` toward `to`,
 /// neither end, within `levels` of a step of the mix in each channel.
 fn part_way(colour: Color, from: Color, to: Color, levels: u8) -> bool {
-    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
-    let mut mixes = MIXES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    let steps = 4096_u16;
-    let mixes = mixes.entry((from, to)).or_insert_with(|| {
-        (1..steps)
-            .map(|step| octant::mix(from, to, f32::from(step) / f32::from(steps)))
-            .collect()
-    });
-    let Color::Rgb(r, g, b) = colour else {
-        return false;
-    };
-    let near = |channel: u8| channel.saturating_sub(levels)..=channel.saturating_add(levels);
-    colour != from
-        && colour != to
-        && near(r).any(|r| near(g).any(|g| near(b).any(|b| mixes.contains(&Color::Rgb(r, g, b)))))
+    colour != from && colour != to && pixels::share_on(colour, from, to, 4096, levels).is_some()
 }
 
 /// Over a see-through base, the solar system mixes nothing into it.

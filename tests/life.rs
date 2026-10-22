@@ -4,7 +4,6 @@ mod pixels;
 
 use std::collections::BTreeSet;
 
-use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::life::{HOLD_GENERATIONS, Life};
 use hearth::theme;
@@ -166,30 +165,10 @@ fn pixel(scene: &Life, area: Rect, (x, y): (usize, usize)) -> Color {
 /// read back to within two in each channel, so the rounding of a mix to 8
 /// bits does not count.
 fn share(colour: Color, from: Color, to: Color) -> Option<f32> {
-    const STEPS: u16 = 128;
-    if colour == from {
-        return Some(0.0);
-    }
     if colour == to {
         return Some(1.0);
     }
-    let Color::Rgb(r, g, b) = colour else {
-        return None;
-    };
-    (0..=STEPS)
-        .map(|step| f32::from(step) / f32::from(STEPS))
-        .filter_map(|share| {
-            let Color::Rgb(mr, mg, mb) = octant::mix(from, to, share) else {
-                return None;
-            };
-            let gap = [r.abs_diff(mr), g.abs_diff(mg), b.abs_diff(mb)]
-                .into_iter()
-                .max()
-                .unwrap_or(0);
-            (gap <= 2).then_some((gap, share))
-        })
-        .min_by_key(|(gap, _)| *gap)
-        .map(|(_, share)| share)
+    pixels::share_on(colour, from, to, 128, 2)
 }
 
 /// A block, which never changes, and one lone cell at (2, 2), which dies

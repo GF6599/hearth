@@ -3,11 +3,11 @@
 mod pixels;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::murmuration::{
     FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration, PIXELS_PER_BIRD,
@@ -48,37 +48,10 @@ fn pixels_in(buffer: &Buffer, area: Rect, colours: &[Color]) -> BTreeSet<(usize,
         .collect()
 }
 
-/// The steps of each mix a test has read, by its two ends: each colour of
-/// the mix with the first step that rounds to it.
-type Mixes = HashMap<(Color, Color), HashMap<Color, u16>>;
-
 /// How far `colour` lies along the mix from `from` toward `to`, from 0 to
-/// 1, or none for a colour off it.
+/// 1, or none for a colour more than a level off it in a channel.
 fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
-    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
-    let mut mixes = MIXES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    let mixes = mixes.entry((from, to)).or_insert_with(|| {
-        let mut steps = HashMap::new();
-        for step in 0..=SHARE_STEPS {
-            let mix = octant::mix(from, to, f32::from(step) / f32::from(SHARE_STEPS));
-            steps.entry(mix).or_insert(step);
-        }
-        steps
-    });
-    let Color::Rgb(r, g, b) = colour else {
-        return None;
-    };
-    if let Some(step) = mixes.get(&colour) {
-        return Some(f32::from(*step) / f32::from(SHARE_STEPS));
-    }
-    let near = |channel: u8| channel.saturating_sub(1)..=channel.saturating_add(1);
-    near(r)
-        .flat_map(|r| near(g).flat_map(move |g| near(b).map(move |b| Color::Rgb(r, g, b))))
-        .find_map(|near| mixes.get(&near))
-        .map(|step| f32::from(*step) / f32::from(SHARE_STEPS))
+    pixels::share_on(colour, from, to, SHARE_STEPS, 1)
 }
 
 /// Whether `colour` shows a bird: lighter than the lightest role of the

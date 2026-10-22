@@ -2,12 +2,11 @@
 
 mod pixels;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
 use hearth::scenes::drive::Drive;
 use hearth::scenes::typing::Speed;
@@ -47,48 +46,10 @@ const RUN: u32 = 3000;
 /// share between two steps rounds to a colour one level from either.
 const SHARE_STEPS: u16 = 4096;
 
-/// The colours of a mix: each step a share rounds to, and each colour a
-/// test has asked about with what it found, so a colour seen on every frame
-/// is looked up once.
-#[derive(Default)]
-struct Mixes {
-    steps: HashMap<Color, u16>,
-    found: HashMap<Color, Option<u16>>,
-}
-
 /// How far `colour` lies along the mix from `from` toward `to`, from 0 to
-/// 1, or none for a colour off it.
+/// 1, or none for a colour more than a level off it in a channel.
 fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
-    static MIXES: OnceLock<Mutex<HashMap<(Color, Color), Mixes>>> = OnceLock::new();
-    let mut mixes = MIXES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    let mixes = mixes.entry((from, to)).or_insert_with(|| {
-        let mut steps = HashMap::new();
-        for step in 0..=SHARE_STEPS {
-            let mix = octant::mix(from, to, f32::from(step) / f32::from(SHARE_STEPS));
-            steps.entry(mix).or_insert(step);
-        }
-        Mixes {
-            steps,
-            found: HashMap::new(),
-        }
-    });
-    let Mixes { steps, found } = mixes;
-    let step =
-        *found.entry(colour).or_insert_with(|| {
-            let Color::Rgb(r, g, b) = colour else {
-                return None;
-            };
-            let near = |channel: u8| channel.saturating_sub(1)..=channel.saturating_add(1);
-            std::iter::once(colour)
-                .chain(near(r).flat_map(|r| {
-                    near(g).flat_map(move |g| near(b).map(move |b| Color::Rgb(r, g, b)))
-                }))
-                .find_map(|near| steps.get(&near).copied())
-        });
-    step.map(|step| f32::from(step) / f32::from(SHARE_STEPS))
+    pixels::share_on(colour, from, to, SHARE_STEPS, 1)
 }
 
 /// How many pixels out from the road's edge a post stands at the least. A

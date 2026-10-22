@@ -2,12 +2,12 @@
 
 mod pixels;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::constellations::{Constellations, NAMES, TRAIL};
 use hearth::scenes::typing::Speed;
@@ -44,26 +44,10 @@ fn render(scene: &Constellations, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The colours of each mix a test has read, by its two ends.
-type Mixes = HashMap<(Color, Color), HashSet<Color>>;
-
-/// Whether `colour` is a mix from `from` toward `to`, either end included.
+/// Whether `colour` is a mix from `from` toward `to`, either end included,
+/// to a level in each channel.
 fn on_mix(colour: Color, from: Color, to: Color) -> bool {
-    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
-    let mut mixes = MIXES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    let mixes = mixes.entry((from, to)).or_insert_with(|| {
-        (0..=SHARE_STEPS)
-            .map(|step| octant::mix(from, to, f32::from(step) / f32::from(SHARE_STEPS)))
-            .collect()
-    });
-    let Color::Rgb(r, g, b) = colour else {
-        return false;
-    };
-    let near = |channel: u8| channel.saturating_sub(1)..=channel.saturating_add(1);
-    near(r).any(|r| near(g).any(|g| near(b).any(|b| mixes.contains(&Color::Rgb(r, g, b)))))
+    pixels::share_on(colour, from, to, SHARE_STEPS, 1).is_some()
 }
 
 /// Whether `colour` is a mix from the sky toward the colour of a figure.

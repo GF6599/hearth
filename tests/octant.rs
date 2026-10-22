@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -692,9 +694,7 @@ fn a_ramp_passes_through_each_stop() {
 /// The share of the way from `from` to `to` whose mix is `colour`, to the
 /// nearest 1/256, or none for a colour off the line between them.
 fn share_of(from: Color, to: Color, colour: Color) -> Option<f32> {
-    (0..=256)
-        .map(|step| step as f32 / 256.0)
-        .find(|share| octant::mix(from, to, *share) == colour)
+    pixels::share_on(colour, from, to, 256, 0)
 }
 
 /// Each row of `canvas` from `rows`, pixel by pixel.

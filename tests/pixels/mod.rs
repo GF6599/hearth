@@ -4,7 +4,7 @@
 )]
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use ratatui::buffer::{Buffer, Cell};
@@ -121,6 +121,50 @@ pub fn between(colour: Color, one: Color, other: Color) -> bool {
         distance(colour, other),
     );
     near >= span / 20.0 && far >= span / 20.0 && near + far <= span + 2.0
+}
+
+/// The mixes `share_on` has read, by their two ends and steps: each colour
+/// of a mix with the first step that rounds to it.
+type Mixes = HashMap<(Color, Color, u16), HashMap<Color, u16>>;
+
+/// How far `colour` lies along the mix from `from` toward `to`, from 0 to
+/// 1, read at `steps` even steps: the share of the first step whose mix
+/// lies nearest by the largest gap in one channel, or none where that gap
+/// is more than `levels`. So `to` can read a step short of 1, where an
+/// earlier step already rounds to it. More steps or more levels match
+/// more colours, and so weaken a test that a colour is no mix, so each
+/// caller states its own.
+pub fn share_on(colour: Color, from: Color, to: Color, steps: u16, levels: u8) -> Option<f32> {
+    static MIXES: OnceLock<Mutex<Mixes>> = OnceLock::new();
+    let Color::Rgb(r, g, b) = colour else {
+        return None;
+    };
+    let mut mixes = MIXES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    let firsts = mixes.entry((from, to, steps)).or_insert_with(|| {
+        let mut firsts = HashMap::new();
+        for step in 0..=steps {
+            let mix = octant::mix(from, to, f32::from(step) / f32::from(steps));
+            firsts.entry(mix).or_insert(step);
+        }
+        firsts
+    });
+    let near = |channel: u8, gap: u8| channel.saturating_sub(gap)..=channel.saturating_add(gap);
+    (0..=levels)
+        .find_map(|gap| {
+            near(r, gap)
+                .flat_map(|nr| {
+                    near(g, gap).flat_map(move |ng| near(b, gap).map(move |nb| (nr, ng, nb)))
+                })
+                .filter(|(nr, ng, nb)| {
+                    r.abs_diff(*nr).max(g.abs_diff(*ng)).max(b.abs_diff(*nb)) == gap
+                })
+                .filter_map(|(nr, ng, nb)| firsts.get(&Color::Rgb(nr, ng, nb)).copied())
+                .min()
+        })
+        .map(|step| f32::from(step) / f32::from(steps))
 }
 
 /// The top left pixel of the cell at `position`, from the top left of
