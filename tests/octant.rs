@@ -1040,3 +1040,52 @@ fn a_colour_blends_as_a_pixel_of_the_canvas() {
         }
     }
 }
+
+/// A place on the screen shows what the last canvas drew there.
+/// Given: the same pixels on Rose Pine and on Dawn, whose base differs, and
+/// other pixels on Rose Pine.
+/// When: each canvas draws in turn to one place, and then the first again.
+/// Then: the place shows each time the cell that canvas draws at a place no
+/// canvas drew before, and the two bases draw two different cells.
+///
+/// Why it matters: a frame draws each place again, often with the same
+/// pixels. A cell kept from an earlier frame that showed after its pixels
+/// or its base changed would leave a stale block in the picture.
+#[test]
+fn a_place_shows_what_its_last_canvas_drew() {
+    // Given:
+    let dawn = &theme::ROSE_PINE_DAWN;
+    let mostly_base = [BASE, BASE, BASE, INK, INK, BASE, BASE, INK];
+    let halves = [OTHER, OTHER, OTHER, OTHER, INK, INK, INK, INK];
+    let draws = [
+        (PALETTE, mostly_base),
+        (dawn, mostly_base),
+        (PALETTE, halves),
+        (PALETTE, mostly_base),
+    ];
+    let canvas = |palette: &Palette, pixels: [Color; 8]| {
+        let mut canvas = Canvas::new(1, 1, palette);
+        for (pixel, colour) in pixels.into_iter().enumerate() {
+            canvas.set(pixel % CELL_WIDTH, pixel / CELL_WIDTH, colour);
+        }
+        canvas
+    };
+    let screen = Rect::new(0, 0, 1 + draws.len() as u16, 1);
+    let mut buffer = Buffer::empty(screen);
+
+    let mut shown = Vec::new();
+    for (fresh, (palette, pixels)) in draws.into_iter().enumerate() {
+        // When:
+        canvas(palette, pixels).render(Rect::new(0, 0, 1, 1), &mut buffer);
+        canvas(palette, pixels).render(Rect::new(1 + fresh as u16, 0, 1, 1), &mut buffer);
+
+        // Then:
+        assert_eq!(
+            buffer[(0, 0)],
+            buffer[(1 + fresh as u16, 0)],
+            "draw {fresh}"
+        );
+        shown.push(buffer[(0, 0)].clone());
+    }
+    assert_ne!(shown[0], shown[1], "Rose Pine and Dawn draw the same cell");
+}
