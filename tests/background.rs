@@ -112,6 +112,34 @@ fn seen(cell: &Cell, clear: &[Color]) -> (Option<[Color; PIXELS]>, String, Color
     }
 }
 
+/// Whether `shown` is `painted`, a colour dimmed half way toward the base,
+/// dimmed half way toward muted instead. The halving drops the low bit of
+/// each channel, so the colour before it is one of two values a channel.
+fn dimmed_toward_muted(painted: Color, shown: Color, palette: &Palette) -> bool {
+    let rgb = |colour: Color| match colour {
+        Color::Rgb(r, g, b) => Some([r, g, b]),
+        _ => None,
+    };
+    let (Some(painted), Some(shown), Some(base), Some(muted)) = (
+        rgb(painted),
+        rgb(shown),
+        rgb(palette.base),
+        rgb(palette.muted),
+    ) else {
+        return false;
+    };
+    (0..3).all(|channel| {
+        let (painted, base, muted) = (
+            i32::from(painted[channel]),
+            i32::from(base[channel]),
+            i32::from(muted[channel]),
+        );
+        (2 * painted - base..=2 * painted - base + 1)
+            .filter(|before| (0..=255).contains(before))
+            .any(|before| (before + muted) / 2 == i32::from(shown[channel]))
+    })
+}
+
 /// With the terminal's background, hearth paints none of its own.
 /// Given: a file that asks for the terminal's background on Dawn, and a
 /// file that asks for it alone, on Rose Pine as the default theme.
@@ -173,7 +201,8 @@ fn the_terminal_background_leaves_no_theme_background() {
 /// trace of that mix. The one other change is the typing scene's
 /// minimap: each cell it draws in blocks shows octant pixels in one of the
 /// block's colours, because blocks over the terminal's background read as
-/// a solid panel.
+/// a solid panel. A snippet line there dims toward muted and not toward
+/// the base, because the base does not show.
 ///
 /// Why it matters: a half block whose top was the base, cleared and not
 /// turned over, draws its lower colour over the whole cell and doubles the
@@ -220,7 +249,12 @@ fn the_terminal_background_keeps_every_picture() {
                     && lit(cell)
                     && colours.iter().any(|colour| *colour != Color::Reset)
                 {
-                    assert!(colours.contains(&cell.fg), "fg {:?} {at}", cell.fg);
+                    assert!(
+                        colours.iter().any(|colour| *colour == cell.fg
+                            || dimmed_toward_muted(*colour, cell.fg, palette)),
+                        "fg {:?} {at}",
+                        cell.fg
+                    );
                     assert_eq!(cell.bg, Color::Reset, "{at}");
                     continue;
                 }
