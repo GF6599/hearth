@@ -451,7 +451,7 @@ impl Stroke {
         let mut start = 0.0;
         let mut nearest = (f32::MAX, 0.0);
         for (leg, length) in self.path.windows(2).zip(&lengths) {
-            let (along, off) = octant::nearest(point, leg[0], leg[1], length * length);
+            let (along, off) = octant::nearest(point, leg[0], leg[1]);
             if off < nearest.0 {
                 nearest = (off, (start + along * length) / total.max(f32::MIN_POSITIVE));
             }

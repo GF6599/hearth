@@ -445,12 +445,10 @@ fn span(low: f32, high: f32, count: usize) -> Range<usize> {
 }
 
 /// The point of the segment from `from` to `to` nearest `point`: its share
-/// of the way from `from`, and its distance from `point`. `square` is the
-/// square of the segment's length in the caller's own rounding. The square
-/// of a length can differ in its last bit from the sum of the squares of
-/// the sides, and that can move a pixel.
-pub fn nearest(point: (f32, f32), from: (f32, f32), to: (f32, f32), square: f32) -> (f32, f32) {
+/// of the way from `from`, and its distance from `point`.
+pub fn nearest(point: (f32, f32), from: (f32, f32), to: (f32, f32)) -> (f32, f32) {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let square = dx * dx + dy * dy;
     // A segment of no length is a point, and the share along it would be
     // 0 / 0.
     let along = if square == 0.0 {
@@ -465,8 +463,7 @@ pub fn nearest(point: (f32, f32), from: (f32, f32), to: (f32, f32), square: f32)
 /// The distance from `point` to the nearest point of the segment from
 /// `from` to `to`.
 fn distance(point: (f32, f32), from: (f32, f32), to: (f32, f32)) -> f32 {
-    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
-    nearest(point, from, to, dx * dx + dy * dy).1
+    nearest(point, from, to).1
 }
 
 /// The pixels of a frame, `CELL_WIDTH` across and `CELL_HEIGHT` down in
