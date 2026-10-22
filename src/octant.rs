@@ -1,6 +1,7 @@
 //! Eight pixels in one cell, two across and four down, drawn as an octant
 //! glyph and two colours.
 
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::LazyLock;
@@ -633,12 +634,66 @@ impl Canvas {
                     let (x, y) = (left + pixel % CELL_WIDTH, top + pixel / CELL_WIDTH);
                     self.pixels[y * self.width() + x]
                 });
-                let (glyph, fore, back) = cell(pixels, self.base, &mut cache);
-                buf[Position::new(area.x + column, area.y + row)]
-                    .set_char(glyph)
-                    .set_fg(fore)
-                    .set_bg(back);
+                let place = Position::new(area.x + column, area.y + row);
+                let (glyph, fore, back) = SHOWN.with_borrow_mut(|shown| {
+                    let kept = shown.at(place);
+                    match kept {
+                        Some(drawn) if drawn.pixels == pixels && drawn.base == self.base => {
+                            drawn.cell
+                        }
+                        _ => {
+                            let cell = cell(pixels, self.base, &mut cache);
+                            *kept = Some(Drawn {
+                                pixels,
+                                base: self.base,
+                                cell,
+                            });
+                            cell
+                        }
+                    }
+                });
+                buf[place].set_char(glyph).set_fg(fore).set_bg(back);
             }
         }
+    }
+}
+
+thread_local! {
+    /// The cell each place on the screen last drew, by the pixels and the
+    /// base it drew them for. A frame draws every place again, mostly with
+    /// the same pixels, and the pair search for a cell of three colours or
+    /// more is about half the cost of drawing the fire.
+    static SHOWN: RefCell<Shown> = RefCell::new(Shown::default());
+}
+
+#[derive(Debug, Default)]
+struct Shown {
+    width: usize,
+    height: usize,
+    drawn: Vec<Option<Drawn>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Drawn {
+    pixels: [Color; CELL_WIDTH * CELL_HEIGHT],
+    base: Color,
+    cell: (char, Color, Color),
+}
+
+impl Shown {
+    /// The cell kept for `place`. A place past the screen kept so far
+    /// grows it, as when the terminal grows, and keeps every cell.
+    fn at(&mut self, place: Position) -> &mut Option<Drawn> {
+        let (x, y) = (usize::from(place.x), usize::from(place.y));
+        if x >= self.width || y >= self.height {
+            let (width, height) = (self.width.max(x + 1), self.height.max(y + 1));
+            let mut drawn = vec![None; width * height];
+            for row in 0..self.height {
+                drawn[row * width..row * width + self.width]
+                    .copy_from_slice(&self.drawn[row * self.width..(row + 1) * self.width]);
+            }
+            (self.width, self.height, self.drawn) = (width, height, drawn);
+        }
+        &mut self.drawn[y * self.width + x]
     }
 }
