@@ -217,6 +217,20 @@ fn spline(distance: f32) -> f32 {
     }
 }
 
+/// The pixels a splat reaches along one axis, `2 * SPLAT` on each side.
+const TAPS: usize = (4.0 * SPLAT) as usize + 1;
+
+/// The first pixel a splat at `at` reaches along one axis, and the share
+/// of the ink that each of the `TAPS` pixels from it takes.
+fn taps(at: f32) -> (isize, [f32; TAPS]) {
+    let first = (at - 2.0 * SPLAT).ceil();
+    let shares = std::array::from_fn(|tap| {
+        let place = first + tap as f32;
+        spline((place - at) / SPLAT) / SPLAT
+    });
+    (first as isize, shares)
+}
+
 /// A hump that is zero at both ends of `0..=length` and one in the middle,
 /// with its slope.
 fn window(at: f32, length: f32) -> (f32, f32) {
@@ -349,31 +363,26 @@ impl Ink {
     fn inks(&self) -> Vec<[f32; 5]> {
         let (columns, rows) = (self.width * PIXELS_ACROSS, self.rows * PIXELS_DOWN);
         let mut inks = vec![[0.0_f32; 5]; columns * rows];
-        let taps = |at: f32| {
-            let first = (at - 2.0 * SPLAT).ceil();
-            (0..=(4.0 * SPLAT) as usize).map(move |tap| {
-                let place = first + tap as f32;
-                (place, spline((place - at) / SPLAT) / SPLAT)
-            })
-        };
         for drop in &self.drops {
             for particle in &drop.particles {
                 let (x, y) = self.inside(
                     particle.x + particle.step.0 * self.progress,
                     particle.y + particle.step.1 * self.progress,
                 );
-                let x = x * PIXELS_ACROSS as f32 - 0.5;
-                let y = y * PIXELS_DOWN as f32 - 0.5;
-                for (column, across) in taps(x) {
-                    for (row, down) in taps(y) {
-                        if column < 0.0 || row < 0.0 {
+                let (left, across) = taps(x * PIXELS_ACROSS as f32 - 0.5);
+                let (top, down) = taps(y * PIXELS_DOWN as f32 - 0.5);
+                let ink = particle.ink();
+                for (column, across) in (left..).zip(across) {
+                    let Some(column) = usize::try_from(column).ok().filter(|at| *at < columns)
+                    else {
+                        continue;
+                    };
+                    let ink = ink * across;
+                    for (row, down) in (top..).zip(down) {
+                        let Some(row) = usize::try_from(row).ok().filter(|at| *at < rows) else {
                             continue;
-                        }
-                        let (column, row) = (column as usize, row as usize);
-                        if column < columns && row < rows {
-                            inks[row * columns + column][drop.accent] +=
-                                particle.ink() * across * down;
-                        }
+                        };
+                        inks[row * columns + column][drop.accent] += ink * down;
                     }
                 }
             }
