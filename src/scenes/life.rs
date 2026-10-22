@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
-use crate::scene::{Rng, Scene};
+use crate::scene::{Cells, Rng, Scene};
 use crate::theme::Palette;
 
 /// Generations a still life or a period-two oscillator may hold before the
@@ -45,11 +45,7 @@ pub struct Life {
     /// fades from.
     died_at: Vec<u8>,
     shades: Shades,
-    /// The cells of the last tick. The board changes only at a tick, and
-    /// a cell of three colours or more costs a search for its nearest
-    /// pair, so each frame between two ticks copies the cells and does not
-    /// draw them again.
-    cells: Buffer,
+    cells: Cells,
     /// The two generations before this one, newest last.
     history: VecDeque<Vec<bool>>,
     held: usize,
@@ -66,7 +62,7 @@ impl Life {
             dead_for: Vec::new(),
             died_at: Vec::new(),
             shades: Shades::new(palette),
-            cells: Buffer::empty(Rect::ZERO),
+            cells: Cells::default(),
             history: VecDeque::with_capacity(2),
             held: 0,
         }
@@ -220,19 +216,13 @@ impl Scene for Life {
             self.reseed();
         }
         self.bury(&before);
-        let mut cells = Buffer::empty(area);
-        self.draw(area, &mut cells);
+        let mut cells = std::mem::take(&mut self.cells);
+        cells.draw(area, |buf| self.draw(area, buf));
         self.cells = cells;
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        if self.cells.area == area {
-            for position in area.positions() {
-                buf[position].clone_from(&self.cells[position]);
-            }
-        } else {
-            self.draw(area, buf);
-        }
+        self.cells.render(area, buf, |buf| self.draw(area, buf));
     }
 }
 

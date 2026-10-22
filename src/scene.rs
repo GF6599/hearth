@@ -172,6 +172,34 @@ pub trait Scene {
     }
 }
 
+/// The cells a scene drew at its last tick, for a scene whose picture
+/// changes only at a tick. A cell of three colours or more costs a search
+/// for its nearest pair, so each frame between two ticks copies the cells
+/// and does not draw them again.
+#[derive(Debug, Default)]
+pub struct Cells(Buffer);
+
+impl Cells {
+    /// `draw` must write every cell of `area`, because a cell it leaves
+    /// keeps what the last tick drew there.
+    pub fn draw(&mut self, area: Rect, draw: impl FnOnce(&mut Buffer)) {
+        if self.0.area != area {
+            self.0 = Buffer::empty(area);
+        }
+        draw(&mut self.0);
+    }
+
+    pub fn render(&self, area: Rect, buf: &mut Buffer, draw: impl FnOnce(&mut Buffer)) {
+        if self.0.area == area {
+            for position in area.positions() {
+                buf[position].clone_from(&self.0[position]);
+            }
+        } else {
+            draw(buf);
+        }
+    }
+}
+
 /// In the order of `ALL`, because `--help` lists the scenes in the order
 /// of this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

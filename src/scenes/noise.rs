@@ -4,7 +4,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::octant::{self, Canvas};
-use crate::scene::{Rng, Scene};
+use crate::scene::{Cells, Rng, Scene};
 use crate::theme::Palette;
 
 /// Soft static: a field of gradient noise that drifts across the screen,
@@ -17,11 +17,7 @@ pub struct Noise {
     lattice: Lattice,
     shades: [Color; SHADES],
     ticks: u64,
-    /// The cells of the last tick. The field changes only at a tick, and a
-    /// cell of three shades or more costs a search for its nearest pair,
-    /// so each frame between two ticks copies the cells and does not draw
-    /// them again.
-    cells: Buffer,
+    cells: Cells,
 }
 
 /// The shades the field takes, from the base to the text. Neighbouring
@@ -158,7 +154,7 @@ impl Noise {
             lattice: Lattice::new(&mut rng),
             shades: shades(palette),
             ticks: 0,
-            cells: Buffer::empty(Rect::ZERO),
+            cells: Cells::default(),
         }
     }
 
@@ -209,19 +205,12 @@ impl Scene for Noise {
                 self.canvas.set(x, y, self.shade(*sum));
             }
         }
-        if self.cells.area != area {
-            self.cells = Buffer::empty(area);
-        }
-        self.canvas.render(area, &mut self.cells);
+        self.cells
+            .draw(area, |cells| self.canvas.render(area, cells));
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        if self.cells.area == area {
-            for position in area.positions() {
-                buf[position].clone_from(&self.cells[position]);
-            }
-        } else {
-            self.canvas.render(area, buf);
-        }
+        self.cells
+            .render(area, buf, |buf| self.canvas.render(area, buf));
     }
 }
