@@ -173,9 +173,8 @@ pub trait Scene {
 }
 
 /// The cells a scene drew at its last tick, for a scene whose picture
-/// changes only at a tick. A cell of three colours or more costs a search
-/// for its nearest pair, so each frame between two ticks copies the cells
-/// and does not draw them again.
+/// changes only at a tick. Each frame between two ticks copies the cells,
+/// which costs less than drawing the picture again.
 #[derive(Debug, Default)]
 pub struct Cells(Buffer);
 
