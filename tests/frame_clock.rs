@@ -246,36 +246,38 @@ fn title(buffer: &Buffer) -> Vec<Color> {
 }
 
 /// Given: the picker at 120 by 30.
-/// When: it draws the frames of one `GLOW_TICKS` period.
-/// Then: the title keeps its colours through the frames of each tick, and
-/// changes them at some tick.
+/// When: it draws the frames of two `GLOW_TICKS` periods.
+/// Then: each frame of the second period shows the title in the colours
+/// of the frame one period before, and in other colours than the frames a
+/// quarter and a half of a period before.
 ///
 /// Why it matters: the title glows at the pace of ticks, so it keeps the
 /// pace it had when the app drew one frame a tick. A glow that counted
-/// frames would pulse four times as fast.
+/// frames as ticks would pulse four times as fast.
 #[test]
 fn the_title_glows_at_the_pace_of_ticks() {
     // Given:
     let mut app = App::picker(7, Arc::new(Corpus::embedded()));
-    let mut changed = false;
-    let mut at_tick = title(&app_frame(&app, WIDE));
+    let period = usize::try_from(mark::GLOW_TICKS * FRAMES_PER_TICK).unwrap();
+    let mut titles = Vec::new();
 
-    for tick in 0..mark::GLOW_TICKS {
-        // When, then:
-        for frame in 1..FRAMES_PER_TICK {
-            app.frame(WIDE);
-            assert_eq!(
-                title(&app_frame(&app, WIDE)),
-                at_tick,
-                "tick {tick} frame {frame}"
+    for _ in 0..2 * period {
+        // When:
+        app.frame(WIDE);
+        titles.push(title(&app_frame(&app, WIDE)));
+    }
+
+    // Then:
+    for frame in period..2 * period {
+        assert_eq!(titles[frame], titles[frame - period], "frame {frame}");
+        for shift in [period / 4, period / 2] {
+            assert_ne!(
+                titles[frame],
+                titles[frame - shift],
+                "frame {frame}: the title repeats after {shift} frames"
             );
         }
-        app.frame(WIDE);
-        let next = title(&app_frame(&app, WIDE));
-        changed |= next != at_tick;
-        at_tick = next;
     }
-    assert!(changed, "the title never glows");
 }
 
 /// Given: two apps on the same seed, for fire, matrix and typing.
