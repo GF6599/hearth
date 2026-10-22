@@ -304,7 +304,7 @@ impl Solar {
                 let out =
                     ((x as f32 - centre.0).hypot(y as f32 - centre.1) - radius) / (glow - radius);
                 if (0.0..1.0).contains(&out) {
-                    let share = stepped(GLOW_EDGE * (1.0 - out).powi(2), SHADE_STEPS);
+                    let share = octant::falloff(out, GLOW_EDGE, SHADE_STEPS);
                     canvas.blend(column, row, self.palette.gold, share);
                 }
             }

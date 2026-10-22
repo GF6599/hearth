@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 
 use ratatui::style::Color;
 
-use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas, stepped};
+use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas, falloff, stepped};
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
@@ -363,7 +363,7 @@ impl Drive {
             {
                 let out = ((column as f64 - x).hypot(row as f64 - y) - radius) / (reach - radius);
                 if (0.0..1.0).contains(&out) {
-                    let share = stepped((HALO.1 * (1.0 - out).powi(2)) as f32, COVERAGE_STEPS);
+                    let share = falloff(out as f32, HALO.1 as f32, COVERAGE_STEPS);
                     canvas.blend(column, row, self.palette.text, share);
                 }
             }
@@ -651,7 +651,7 @@ impl Drive {
                 {
                     let out = ((column as f64 - x) / across).hypot((row as f64 - y) / down);
                     if out < 1.0 {
-                        let share = stepped((GLOW.1 * (1.0 - out).powi(2)) as f32, COVERAGE_STEPS);
+                        let share = falloff(out as f32, GLOW.1 as f32, COVERAGE_STEPS);
                         canvas.blend(column, row, palette.love, share);
                     }
                 }

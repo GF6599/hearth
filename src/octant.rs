@@ -422,6 +422,13 @@ pub fn stepped(share: f32, steps: f32) -> f32 {
     (share * steps).round() / steps
 }
 
+/// The share of a glow `out` of the way from its inner edge, where it is
+/// `edge`, to its reach, where it is none. It falls with the square of the
+/// way left, so the glow thins into the sky with no rim at its reach.
+pub fn falloff(out: f32, edge: f32, steps: f32) -> f32 {
+    stepped(edge * (1.0 - out).powi(2), steps)
+}
+
 /// Where each sample lies from the centre of its pixel, across or down.
 const OFFSETS: [f32; SAMPLES] = [-0.375, -0.125, 0.125, 0.375];
 
