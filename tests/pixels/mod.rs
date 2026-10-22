@@ -3,7 +3,8 @@
     reason = "each test binary builds this module and uses only some of it"
 )]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::{Mutex, OnceLock};
 
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
@@ -169,6 +170,42 @@ pub fn share_on(colour: Color, from: Color, to: Color, steps: u16, levels: u8) -
                 .min()
         })
         .map(|step| f32::from(step) / f32::from(steps))
+}
+
+const MIX_SAMPLES: f32 = 200.0;
+
+/// Every colour within a channel level of a mix from `base` toward one of
+/// `colours`, at each of `samples` out of `MIX_SAMPLES` along the way,
+/// less the colours within a level of the base or of one of `colours`
+/// themselves.
+pub fn base_mixes(base: Color, colours: &[Color], samples: Range<u16>) -> HashSet<(u8, u8, u8)> {
+    let mut near: HashSet<(u8, u8, u8)> = colours
+        .iter()
+        .flat_map(|colour| {
+            samples.clone().flat_map(move |sample| {
+                around(octant::mix(base, *colour, f32::from(sample) / MIX_SAMPLES))
+            })
+        })
+        .collect();
+    for end in colours.iter().chain([&base]) {
+        for each in around(*end) {
+            near.remove(&each);
+        }
+    }
+    near
+}
+
+/// Each colour within a channel level of `colour`.
+fn around(colour: Color) -> Vec<(u8, u8, u8)> {
+    let Color::Rgb(r, g, b) = colour else {
+        panic!("{colour:?} has no RGB value");
+    };
+    (0..27)
+        .map(|at| {
+            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
+            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
+        })
+        .collect()
 }
 
 /// The top left pixel of the cell at `position`, from the top left of

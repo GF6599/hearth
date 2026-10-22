@@ -2,7 +2,7 @@
 
 mod pixels;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use hearth::config::Background;
@@ -1187,37 +1187,6 @@ fn a_lit_window_warms_the_wall_beside_it() {
     }
 }
 
-/// Each colour within a channel step of `colour`.
-fn around(colour: Color) -> Vec<(u8, u8, u8)> {
-    let Color::Rgb(r, g, b) = colour else {
-        return Vec::new();
-    };
-    (0..27)
-        .map(|at| {
-            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
-            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
-        })
-        .collect()
-}
-
-/// Every colour within a channel step of a mix strictly between `base` and
-/// one of `colours`, sampled finely along each mix, less the colours within
-/// a step of the base or of one of `colours` themselves.
-fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
-    let mut near: HashSet<(u8, u8, u8)> = colours
-        .iter()
-        .flat_map(|colour| {
-            (1..200).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
-        })
-        .collect();
-    for end in colours.iter().chain([&base]) {
-        for each in around(*end) {
-            near.remove(&each);
-        }
-    }
-    near
-}
-
 /// Over the terminal's background the city mixes no colour with the base.
 /// Given: the scene in flat Rose Pine, whose base and surface are the
 /// terminal's own background, from three seeds.
@@ -1238,7 +1207,7 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
         palette.rose,
         palette.love,
     ];
-    let mut mixes = base_mixes(palette.base, &drawn);
+    let mut mixes = pixels::base_mixes(palette.base, &drawn, 1..200);
     // The greys of Rose Pine lie almost on one line from the base, so a lit
     // wall lies near a mix toward the moon. The moon mixes only by a step
     // of coverage, so the test reads those steps and no other.

@@ -2,12 +2,11 @@
 
 mod pixels;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use hearth::config::Background;
 use hearth::corpus::Corpus;
-use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
+use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
 use hearth::scenes::tide::{DRY_TICKS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
 use hearth::scenes::typing::Speed;
@@ -789,37 +788,6 @@ fn the_waterline_glides_between_two_ticks() {
     }
 }
 
-/// Each colour within a channel step of `colour`.
-fn around(colour: Color) -> Vec<(u8, u8, u8)> {
-    let (r, g, b) = channels(colour);
-    (0..27)
-        .map(|at| {
-            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
-            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
-        })
-        .collect()
-}
-
-/// Every colour within a channel step of a mix between `base` and one of
-/// `colours` that holds a tenth of the base or more, sampled finely along
-/// each mix, less the colours within a step of the base or of one of
-/// `colours` themselves. Deep water leans pine toward overlay, and overlay
-/// lies near the base, so the last tenth of each mix reads as its colour.
-fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
-    let mut near: HashSet<(u8, u8, u8)> = colours
-        .iter()
-        .flat_map(|colour| {
-            (1..180).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
-        })
-        .collect();
-    for end in colours.iter().chain([&base]) {
-        for each in around(*end) {
-            near.remove(&each);
-        }
-    }
-    near
-}
-
 /// Over the terminal's background the beach mixes no colour with the base.
 /// Given: the scene in flat Rose Pine, whose base and surface are the
 /// terminal's own background.
@@ -841,7 +809,9 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
         palette.rose,
         palette.love,
     ];
-    let mixes = base_mixes(palette.base, &drawn);
+    // Deep water leans pine toward overlay, and overlay lies near the base,
+    // so the last tenth of each mix reads as its colour.
+    let mixes = pixels::base_mixes(palette.base, &drawn, 1..180);
     let mut scene = Tide::new(Rng::seed_from_u64(7), palette);
     for tick in 0..2000 {
         scene.tick(AREA);

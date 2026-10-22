@@ -712,37 +712,6 @@ fn a_cloud_glides_between_two_ticks() {
     }
 }
 
-/// Each colour within a channel step of `colour`.
-fn around(colour: Color) -> Vec<(u8, u8, u8)> {
-    let Color::Rgb(r, g, b) = colour else {
-        return Vec::new();
-    };
-    (0..27)
-        .map(|at| {
-            let step = |channel: u8, by: u8| channel.saturating_add(by).saturating_sub(1);
-            (step(r, at % 3), step(g, at / 3 % 3), step(b, at / 9))
-        })
-        .collect()
-}
-
-/// Every colour within a channel step of a mix strictly between `base` and
-/// one of `colours`, sampled finely along each mix, less the colours within
-/// a step of the base or of one of `colours` themselves.
-fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
-    let mut near: HashSet<(u8, u8, u8)> = colours
-        .iter()
-        .flat_map(|colour| {
-            (1..200).flat_map(move |step| around(octant::mix(base, *colour, step as f32 / 200.0)))
-        })
-        .collect();
-    for end in colours.iter().chain([&base]) {
-        for each in around(*end) {
-            near.remove(&each);
-        }
-    }
-    near
-}
-
 /// Over the terminal's background the ink mixes no colour with the water.
 /// Given: the scene in flat Rose Pine, whose base is the terminal's own
 /// background.
@@ -756,7 +725,7 @@ fn base_mixes(base: Color, colours: &[Color]) -> HashSet<(u8, u8, u8)> {
 fn over_the_terminal_background_no_ink_mixes_with_the_water() {
     // Given:
     let palette = &theme::FLAT_THEMES[0];
-    let mixes = base_mixes(palette.base, &ink::accents(palette));
+    let mixes = pixels::base_mixes(palette.base, &ink::accents(palette), 1..200);
     let mut scene = Ink::new(Rng::seed_from_u64(7), palette);
     for tick in 0..500 {
         scene.tick(AREA);
