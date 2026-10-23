@@ -35,7 +35,7 @@ jobs:
           # reads git, so the token stays out of .git/config.
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
 
@@ -49,7 +49,7 @@ jobs:
           # which then links every binary the release ships.
           use-cache: false
 
-      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: v2.18.3
           # A dispatch run renders the archives, checksums and cask that a tag
