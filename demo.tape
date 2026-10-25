@@ -7,7 +7,7 @@ Set FontSize 14
 Set Width 900
 Set Height 506
 Set Theme "Rose Pine"
-Set Framerate 10
+Set Framerate 8
 Set TypingSpeed 40ms
 
 # A fixed seed draws the same frames on every recording.
@@ -21,58 +21,58 @@ Sleep 2s
 Enter
 
 # embers
-Sleep 6s
+Sleep 3000ms
 Tab
 # ink
-Sleep 7s
+Sleep 3500ms
 Tab
 # tide
-Sleep 6s
+Sleep 3000ms
 Tab
 # constellations
-Sleep 8s
+Sleep 4000ms
 Tab
 # solar
-Sleep 7s
+Sleep 3500ms
 Tab
 # drive
-Sleep 7s
+Sleep 3500ms
 Tab
 # city
-Sleep 7s
+Sleep 3500ms
 Tab
 # river
-Sleep 7s
+Sleep 3500ms
 Tab
 # matrix
-Sleep 4s
+Sleep 2000ms
 Tab
 # fire
-Sleep 4s
+Sleep 2000ms
 Tab
 # life
-Sleep 4s
+Sleep 2000ms
 Tab
 # pipes
-Sleep 5s
+Sleep 2500ms
 Tab
 # bonsai
-Sleep 7s
+Sleep 3500ms
 Tab
 # aquarium
-Sleep 5s
+Sleep 2500ms
 Tab
 # murmuration
-Sleep 5s
+Sleep 2500ms
 Tab
 # hourglass
-Sleep 5s
+Sleep 2500ms
 Tab
 # study
-Sleep 7s
+Sleep 3500ms
 Tab
 # typing
-Sleep 5s
+Sleep 2500ms
 
 Escape
 Sleep 1500ms
