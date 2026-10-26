@@ -18,7 +18,7 @@ use crate::corpus::{Corpus, SourceFile};
 use crate::highlight;
 use crate::minimap::Outline;
 use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
-use crate::scene::{self, FRAME_RATE, Rng, Scene};
+use crate::scene::{self, Rng, Scene, TICK_RATE};
 use crate::snippet;
 use crate::theme::{self, Palette};
 use crate::tree::{self, Tree};
@@ -102,8 +102,8 @@ impl Speed {
         )
     }
 
-    fn per_frame(self) -> f64 {
-        f64::from(self.0) * FRAME_RATE.as_secs_f64()
+    fn per_tick(self) -> f64 {
+        f64::from(self.0) * TICK_RATE.as_secs_f64()
     }
 }
 
@@ -659,7 +659,7 @@ impl Scene for Typing {
                 return;
             }
         }
-        self.credit += self.speed.per_frame() * self.rng.random_range(JITTER);
+        self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
         while self.credit >= 1.0 {
             self.credit -= 1.0;
             self.press();

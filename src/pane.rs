@@ -396,10 +396,11 @@ impl Pane {
 /// parts and the count stays whole.
 const CREDIT_PER_TICK: u32 = QUARTERS_PER_TICK * FRAMES_PER_TICK;
 
-/// Runs one frame. Typing keeps one tick a frame and counts its own speed
-/// in keystrokes. Every other scene ticks once for each whole tick its rate
-/// has paid for, then learns how far it is towards the next. Returns
-/// whether the frame moved anything the scene draws: a tick always may.
+/// Runs one frame. A scene ticks once for each whole tick its rate has paid
+/// for, then learns how far it is towards the next. Typing counts its own
+/// speed in keystrokes, so it ticks as a scene at 1× does, whatever the
+/// rate. Returns whether the frame moved anything the scene draws: a tick
+/// always may.
 pub fn advance(
     scene: &mut dyn Scene,
     kind: SceneKind,
@@ -407,11 +408,11 @@ pub fn advance(
     credit: &mut u32,
     area: Rect,
 ) -> bool {
-    if kind == SceneKind::Typing {
-        scene.tick(area);
-        return true;
-    }
-    *credit += rate.quarters();
+    *credit += if kind == SceneKind::Typing {
+        QUARTERS_PER_TICK
+    } else {
+        rate.quarters()
+    };
     let mut ticked = false;
     while *credit >= CREDIT_PER_TICK {
         *credit -= CREDIT_PER_TICK;

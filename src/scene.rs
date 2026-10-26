@@ -161,7 +161,7 @@ pub trait Scene {
     /// How far the scene has run from its last tick towards its next, from
     /// 0 up to but not including 1, given after each frame. A scene that
     /// glides between ticks draws from it. The others ignore it and show
-    /// their last tick. Typing ticks once a frame, so it gets none.
+    /// their last tick.
     ///
     /// Returns whether the new progress moves anything the scene draws. A
     /// frame that moves nothing is not drawn, so a scene that returns false
