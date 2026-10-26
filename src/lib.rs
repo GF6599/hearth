@@ -14,6 +14,7 @@
 //!              ├── picker    The scene list, the only chrome
 //!              ├── scene     The Scene trait and the list of scenes
 //!              ├── scenes    One module per scene
+//!              ├── screen    Draws each frame as one synchronized update
 //!              ├── corpus    The source files the typing scene types
 //!              ├── history   The commits the river scene draws
 //!              ├── highlight Colours a source file by its grammar
@@ -40,6 +41,7 @@ pub mod pane;
 pub mod picker;
 pub mod scene;
 pub mod scenes;
+pub mod screen;
 pub mod snippet;
 pub mod splitmix;
 pub mod theme;

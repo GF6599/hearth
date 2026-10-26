@@ -8,6 +8,7 @@ use hearth::config::{self, Config};
 use hearth::events::{self, TerminalEvents};
 use hearth::scene::FRAME_RATE;
 use hearth::scenes::typing;
+use hearth::screen;
 
 fn main() {
     let cli = Cli::parse();
@@ -65,7 +66,7 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
 
         loop {
             if app.take_redraw() {
-                terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+                screen::draw(&mut terminal, &app)?;
             }
 
             let timeout = FRAME_RATE.saturating_sub(last_frame.elapsed());
