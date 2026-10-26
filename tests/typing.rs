@@ -13,7 +13,7 @@ use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::minimap::Outline;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{FRAME_RATE, FRAMES_PER_TICK, Rng, Scene};
+use hearth::scene::{Rng, Scene, TICK_RATE};
 use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
 use hearth::theme;
 use rand::SeedableRng;
@@ -287,7 +287,7 @@ fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
 }
 
 /// Given: a file of one long line, so no newline pauses the typing.
-/// When: the scene ticks once a frame for three seconds of wall time at 50
+/// When: the scene ticks once a tick for three seconds of wall time at 50
 /// and at 100 keystrokes per second.
 /// Then: it types about 150 and about 300 glyphs.
 ///
@@ -296,7 +296,7 @@ fn a_wide_glyph_is_dropped_so_the_row_does_not_tear() {
 #[test]
 fn the_scene_types_at_the_speed_it_is_given() {
     let area = Rect::new(0, 0, 1100, 5);
-    let frames = (3.0 / FRAME_RATE.as_secs_f64()).round() as usize;
+    let ticks = (3.0 / TICK_RATE.as_secs_f64()).round() as usize;
     for (speed, expected) in [("50", 150), ("100", 300)] {
         // Given:
         let scene = Typing::new(
@@ -307,7 +307,7 @@ fn the_scene_types_at_the_speed_it_is_given() {
         );
 
         // When:
-        let buffer = render(&ticked(scene, area, frames), area, area);
+        let buffer = render(&ticked(scene, area, ticks), area, area);
 
         // Then:
         let count = typed(&buffer).len();
@@ -318,7 +318,7 @@ fn the_scene_types_at_the_speed_it_is_given() {
     }
 }
 
-/// A file typed at 200 keystrokes per second for the frames of ten ticks:
+/// A file typed at 200 keystrokes per second for ten ticks:
 /// between 60 and 180 keystrokes, which types a short file and stays inside
 /// the hold.
 fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
@@ -328,8 +328,7 @@ fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
         Arc::new(Corpus::from_files([(path.to_string(), text.to_string())])),
         "200".parse().unwrap(),
     );
-    let frames = 10 * FRAMES_PER_TICK as usize;
-    render(&ticked(scene, area, frames), area, area)
+    render(&ticked(scene, area, 10), area, area)
 }
 
 fn colour_at(buffer: &Buffer, needle: &str) -> Color {

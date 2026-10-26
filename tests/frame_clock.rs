@@ -193,18 +193,19 @@ fn a_scene_knows_its_progress_towards_the_next_tick() {
 
 /// Given: the typing scene at each rate.
 /// When: it runs 32 frames.
-/// Then: it ticks once each frame.
+/// Then: it ticks on the last frame of each tick, whatever the rate.
 ///
-/// Why it matters: typing counts its speed in keystrokes per second, so it
-/// spends each frame's share of them on the frame, whatever the rate.
+/// Why it matters: typing counts its speed in keystrokes per second, so the
+/// rate does not change it. A tick spends a tick's share of the keystrokes
+/// at once, so the terminal draws typing once a tick and not on each frame.
 #[test]
-fn typing_ticks_once_a_frame() {
+fn typing_ticks_once_a_tick() {
     for rate in every_rate() {
         let mut scene = Recorded::default();
         let mut credit = 0;
         for frame in 1..=32 {
             advance(&mut scene, SceneKind::Typing, rate, &mut credit, AREA);
-            assert_eq!(scene.ticks, frame, "{rate}");
+            assert_eq!(scene.ticks, frame / FRAMES_PER_TICK, "{rate} frame {frame}");
         }
     }
 }

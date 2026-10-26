@@ -118,7 +118,9 @@ fn a_frame_that_asks_for_no_draw_shows_the_last_picture() {
 ///
 /// Why it matters: these scenes draw the same picture on the three frames
 /// between two ticks, and the render, the diff and the compare of those
-/// frames were most of what they cost.
+/// frames were most of what they cost. The terminal redraws its whole
+/// window for each frame that changes any cell, so a draw on each frame
+/// costs the GPU up to four times what a draw on each tick does.
 #[test]
 fn a_scene_that_does_not_glide_asks_for_one_draw_a_tick() {
     let stepping = [
@@ -130,6 +132,7 @@ fn a_scene_that_does_not_glide_asks_for_one_draw_a_tick() {
         SceneKind::Bonsai,
         SceneKind::Aquarium,
         SceneKind::Hourglass,
+        SceneKind::Typing,
     ];
     for kind in stepping {
         // Given:
