@@ -41,3 +41,8 @@ unreachable = "warn"
 needless_collect = "warn"
 or_fun_call = "warn"
 redundant_clone = "warn"
+
+[dev-dependencies]
+# Replays the bytes hearth writes, so a test reads the screen a terminal
+# would show and not the escapes that drew it.
+vt100 = "0.18.1"
