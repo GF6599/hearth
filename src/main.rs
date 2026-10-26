@@ -48,7 +48,7 @@ fn main() {
 /// Runs the loop on the alternate screen and restores the terminal on every
 /// exit, including the error one.
 fn run_tui(mut app: App) -> std::io::Result<()> {
-    let mut terminal = match ratatui::try_init() {
+    let mut terminal = match screen::open() {
         Ok(terminal) => terminal,
         Err(e) => {
             ratatui::restore();
