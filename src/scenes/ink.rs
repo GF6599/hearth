@@ -459,8 +459,9 @@ impl Scene for Ink {
         self.time = self.time.wrapping_add(1);
     }
 
-    fn set_progress(&mut self, progress: f64) {
-        self.progress = progress as f32;
+    fn set_progress(&mut self, progress: f64) -> bool {
+        let progress = progress as f32;
+        std::mem::replace(&mut self.progress, progress) != progress
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {

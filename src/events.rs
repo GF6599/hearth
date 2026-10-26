@@ -50,6 +50,7 @@ pub fn handle_events(
 }
 
 fn dispatch(app: &mut App, event: Event) {
+    app.request_redraw();
     if let Event::Key(key) = event {
         dispatch_key(app, key);
     }

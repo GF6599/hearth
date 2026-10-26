@@ -381,8 +381,9 @@ impl Pane {
         self.scene.set_speed(speed);
     }
 
-    pub fn tick(&mut self, rate: Rate, area: Rect) {
-        advance(&mut *self.scene, self.kind, rate, &mut self.credit, area);
+    /// Returns whether the frame moved anything the pane draws.
+    pub fn tick(&mut self, rate: Rate, area: Rect) -> bool {
+        advance(&mut *self.scene, self.kind, rate, &mut self.credit, area)
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -397,16 +398,26 @@ const CREDIT_PER_TICK: u32 = QUARTERS_PER_TICK * FRAMES_PER_TICK;
 
 /// Runs one frame. Typing keeps one tick a frame and counts its own speed
 /// in keystrokes. Every other scene ticks once for each whole tick its rate
-/// has paid for, then learns how far it is towards the next.
-pub fn advance(scene: &mut dyn Scene, kind: SceneKind, rate: Rate, credit: &mut u32, area: Rect) {
+/// has paid for, then learns how far it is towards the next. Returns
+/// whether the frame moved anything the scene draws: a tick always may.
+pub fn advance(
+    scene: &mut dyn Scene,
+    kind: SceneKind,
+    rate: Rate,
+    credit: &mut u32,
+    area: Rect,
+) -> bool {
     if kind == SceneKind::Typing {
         scene.tick(area);
-        return;
+        return true;
     }
     *credit += rate.quarters();
+    let mut ticked = false;
     while *credit >= CREDIT_PER_TICK {
         *credit -= CREDIT_PER_TICK;
         scene.tick(area);
+        ticked = true;
     }
-    scene.set_progress(f64::from(*credit) / f64::from(CREDIT_PER_TICK));
+    let glided = scene.set_progress(f64::from(*credit) / f64::from(CREDIT_PER_TICK));
+    ticked || glided
 }

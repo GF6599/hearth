@@ -785,11 +785,10 @@ impl Embers {
     /// A spark keeps its column between two ticks, because its next drift
     /// is a random step that only the tick can draw.
     fn render_spark(&self, spark: &Spark, pixels: &[Pixel], area: Rect, buf: &mut Buffer) {
-        let y = spark.y - spark.rise * self.progress as f32;
-        if y < 0.0 {
+        let Some(row) = spark_row(spark, self.progress) else {
             return;
-        }
-        let (column, row) = (spark.x as usize / CELL_WIDTH, y as usize / CELL_HEIGHT);
+        };
+        let column = spark.x as usize / CELL_WIDTH;
         let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(row)) else {
             return;
         };
@@ -859,15 +858,22 @@ impl Scene for Embers {
         self.halo = self.light_air();
     }
 
-    fn set_progress(&mut self, progress: f64) {
-        self.progress = progress;
+    fn set_progress(&mut self, progress: f64) -> bool {
+        let before = std::mem::replace(&mut self.progress, progress);
+        self.falls
+            .iter()
+            .any(|&fall| shift(fall, progress) != shift(fall, before))
+            || self
+                .sparks
+                .iter()
+                .any(|spark| spark_row(spark, progress) != spark_row(spark, before))
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let shifts: Vec<usize> = self
             .falls
             .iter()
-            .map(|&fall| (fall as f64 * self.progress) as usize)
+            .map(|&fall| shift(fall, self.progress))
             .collect();
         let glided;
         let pixels = if shifts.iter().all(|&shift| shift == 0) {
@@ -894,4 +900,17 @@ impl Scene for Embers {
             self.render_spark(spark, pixels, area, buf);
         }
     }
+}
+
+/// The pixels a log that falls `fall` on the next tick has fallen a share
+/// `progress` of the way there.
+fn shift(fall: usize, progress: f64) -> usize {
+    (fall as f64 * progress) as usize
+}
+
+/// The row of cells a spark shows in a share `progress` of a tick after
+/// its last, or none once it has risen past the top.
+fn spark_row(spark: &Spark, progress: f64) -> Option<usize> {
+    let y = spark.y - spark.rise * progress as f32;
+    (y >= 0.0).then_some(y as usize / CELL_HEIGHT)
 }

@@ -625,8 +625,8 @@ impl Scene for Study {
         };
     }
 
-    fn set_progress(&mut self, progress: f64) {
-        self.progress = progress;
+    fn set_progress(&mut self, progress: f64) -> bool {
+        std::mem::replace(&mut self.progress, progress) != progress
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {

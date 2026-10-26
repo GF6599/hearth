@@ -64,7 +64,9 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
         app.frame(terminal.get_frame().area());
 
         loop {
-            terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+            if app.take_redraw() {
+                terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+            }
 
             let timeout = FRAME_RATE.saturating_sub(last_frame.elapsed());
             events::handle_events(&mut app, &mut source, timeout)?;

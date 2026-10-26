@@ -151,8 +151,9 @@ impl Scene for Recorded {
 
     fn render(&self, _area: Rect, _buf: &mut Buffer) {}
 
-    fn set_progress(&mut self, progress: f64) {
+    fn set_progress(&mut self, progress: f64) -> bool {
         self.progress = Some(progress);
+        true
     }
 }
 

@@ -626,9 +626,7 @@ impl City {
         let Some(train) = self.train else {
             return;
         };
-        // The train moves on a whole pixel at a time towards where the next
-        // tick puts it, so it glides at an even pace at any rate.
-        let glide = (TRAIN_SPEED as f64 * self.progress).floor() as i64;
+        let glide = glide(self.progress);
         let left = train.left + if train.forward { glide } else { -glide };
         let car = (CARRIAGE.0 + CARRIAGE.1) as i64;
         let carries = |x: usize| {
@@ -834,7 +832,15 @@ impl Scene for City {
         self.pixels().render(area, buf);
     }
 
-    fn set_progress(&mut self, progress: f64) {
-        self.progress = progress;
+    fn set_progress(&mut self, progress: f64) -> bool {
+        let before = std::mem::replace(&mut self.progress, progress);
+        self.train.is_some() && glide(progress) != glide(before)
     }
+}
+
+/// The whole pixels the train has moved a share `progress` of the way to
+/// where the next tick puts it. It moves a whole pixel at a time, so it
+/// glides at an even pace at any rate.
+fn glide(progress: f64) -> i64 {
+    (TRAIN_SPEED as f64 * progress).floor() as i64
 }

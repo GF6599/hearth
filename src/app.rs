@@ -60,6 +60,10 @@ pub struct App {
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
     fresh: bool,
+    /// The screen may differ from the last draw, so the next one is due.
+    redraw: bool,
+    /// The area of the last frame, so a resize draws the screen again.
+    area: Rect,
     pub should_quit: bool,
 }
 
@@ -128,6 +132,8 @@ impl App {
             query: None,
             frames: 0,
             fresh: false,
+            redraw: true,
+            area: Rect::default(),
             should_quit: false,
         };
         if scene.is_none() {
@@ -176,6 +182,19 @@ impl App {
         self
     }
 
+    /// Whether the screen may differ from the last draw. A frame that asks
+    /// for no draw shows the same picture, so the loop skips its render,
+    /// its diff and its write.
+    pub fn take_redraw(&mut self) -> bool {
+        std::mem::take(&mut self.redraw)
+    }
+
+    /// An event can change anything on the screen, and a resize reaches the
+    /// terminal only through a draw.
+    pub fn request_redraw(&mut self) {
+        self.redraw = true;
+    }
+
     pub fn is_picking(&self) -> bool {
         self.mode == Mode::Picking
     }
@@ -192,12 +211,18 @@ impl App {
     /// runs in its place.
     pub fn frame(&mut self, area: Rect) {
         self.frames = self.frames.wrapping_add(1);
+        // The notice holds still while it counts down, so only the frame
+        // that takes it off the screen needs a draw.
+        self.redraw |= self.notice == 1 || area != self.area;
         self.notice = self.notice.saturating_sub(1);
+        self.area = area;
         let layout = self.panes.layout(area);
         let picking = self.is_picking().then(|| self.panes.focus());
+        // The picker's title glows and its preview runs on every frame.
+        self.redraw |= picking.is_some();
         for (index, (pane, inside)) in self.panes.iter_mut().zip(&layout.panes).enumerate() {
             if Some(index) != picking {
-                pane.tick(self.rates[slot_of(pane.kind)], *inside);
+                self.redraw |= pane.tick(self.rates[slot_of(pane.kind)], *inside);
             }
         }
         if let Some(focus) = picking {

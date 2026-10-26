@@ -64,13 +64,14 @@ fn at_one(kind: SceneKind) -> App {
     App::configured(Some(kind), 7, Arc::new(Corpus::embedded()), &config)
 }
 
-/// Draws as the terminal loop does, after the first draw: each frame
-/// draws only when it asks to.
+/// Draws as the terminal loop does: one frame, the first draw, then each
+/// frame draws only when it asks to.
 ///
 /// A frame that asks for no draw leaves the last picture on the screen, so
 /// it must render that same picture. A frame that does not is a stale
 /// screen, and this panics on it.
 fn run(app: &mut App, area: Rect, frames: usize) -> Vec<bool> {
+    app.frame(area);
     assert!(app.take_redraw(), "the first frame asks for no draw");
     let mut shown = picture(app, area);
     (1..=frames)
@@ -138,7 +139,9 @@ fn a_scene_that_does_not_glide_asks_for_one_draw_a_tick() {
         let asked = run(&mut app, AREA, 64);
 
         // Then:
-        let ticks: Vec<bool> = (1..=64).map(|frame| frame % FRAMES_PER_TICK == 0).collect();
+        let ticks: Vec<bool> = (1..=64)
+            .map(|frame| (frame + 1) % FRAMES_PER_TICK == 0)
+            .collect();
         assert_eq!(asked, ticks, "{kind:?}");
     }
 }

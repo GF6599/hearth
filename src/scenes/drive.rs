@@ -681,7 +681,7 @@ impl Scene for Drive {
         self.pixels().render(area, buf);
     }
 
-    fn set_progress(&mut self, progress: f64) {
-        self.progress = progress;
+    fn set_progress(&mut self, progress: f64) -> bool {
+        std::mem::replace(&mut self.progress, progress) != progress
     }
 }

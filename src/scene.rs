@@ -162,7 +162,13 @@ pub trait Scene {
     /// 0 up to but not including 1, given after each frame. A scene that
     /// glides between ticks draws from it. The others ignore it and show
     /// their last tick. Typing ticks once a frame, so it gets none.
-    fn set_progress(&mut self, _progress: f64) {}
+    ///
+    /// Returns whether the new progress moves anything the scene draws. A
+    /// frame that moves nothing is not drawn, so a scene that returns false
+    /// and draws a different picture leaves a stale one on the screen.
+    fn set_progress(&mut self, _progress: f64) -> bool {
+        false
+    }
 
     /// What a scene that keeps real time has left to run, for `+` and `-`
     /// to show. The rate means nothing to such a scene. The others have
