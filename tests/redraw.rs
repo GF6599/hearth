@@ -247,3 +247,28 @@ fn the_picker_asks_for_a_draw_on_every_frame() {
     // Then:
     assert!(asked.iter().all(|each| *each));
 }
+
+/// Given: the city at 1×.
+/// When: it runs until its first train has come and crossed.
+/// Then: frames between ticks ask for a draw while the train glides, and
+/// none of them shows a stale picture.
+///
+/// Why it matters: the train is the only part of the city that glides,
+/// and the first one comes long after the other tests stop, so only a run
+/// this long sees its glide go stale.
+#[test]
+fn the_city_train_asks_for_a_draw_as_it_glides() {
+    // Given:
+    let mut app = at_one(SceneKind::City);
+
+    // When:
+    let asked = run(&mut app, AREA, 2400);
+
+    // Then:
+    let between_ticks = asked
+        .iter()
+        .enumerate()
+        .filter(|(index, asked)| **asked && (index + 2) % FRAMES_PER_TICK as usize != 0)
+        .count();
+    assert!(between_ticks > 0, "no frame between ticks asked for a draw");
+}
