@@ -171,6 +171,8 @@ impl Synth {
 }
 
 pub use speaker::Speaker;
+#[cfg(target_os = "macos")]
+pub use speaker::stops_the_sound;
 
 /// The synth on the audio thread of the default output. Cues reach it
 /// through a channel whose receiver takes no lock, so the audio thread
@@ -186,6 +188,12 @@ mod speaker {
     enum Message {
         Cue(Cue),
         On(bool),
+    }
+
+    /// A glitch passes, and macOS moves the stream to a new default device
+    /// by itself. Every other error leaves the stream silent.
+    pub fn stops_the_sound(kind: cpal::ErrorKind) -> bool {
+        !matches!(kind, cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceChanged)
     }
 
     pub struct Speaker {
@@ -235,8 +243,10 @@ mod speaker {
                             frame.fill(synth.sample());
                         }
                     },
-                    move |e| {
-                        let _ = failed.send(e.to_string());
+                    move |e: cpal::Error| {
+                        if stops_the_sound(e.kind()) {
+                            let _ = failed.send(e.to_string());
+                        }
                     },
                     None,
                 )
