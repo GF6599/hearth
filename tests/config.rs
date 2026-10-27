@@ -444,9 +444,17 @@ fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
 
 /// Starts the picker and each scene under `config`, and checks every cell
 /// of a frame against `foreign`, the colours the theme must not show.
+///
+/// Every start takes one seed. A cell's colour averages its pixels, so a
+/// shaded edge passes through a smooth range of the theme's blends, and on
+/// some seeds one of them lands on a Rose Pine colour exactly. A scene that
+/// reads a Rose Pine colour shows it on every seed, so one seed finds it.
 fn assert_theme_everywhere(config: &Config, area: Rect, name: &str, foreign: &[Color]) {
-    let mut starts = vec![vec!["hearth"]];
-    starts.extend(ALL.iter().map(|kind| vec!["hearth", kind.name()]));
+    let mut starts = vec![vec!["hearth", "--seed", "7"]];
+    starts.extend(
+        ALL.iter()
+            .map(|kind| vec!["hearth", kind.name(), "--seed", "7"]),
+    );
     for args in starts {
         // When:
         let mut app = app(&args, config);
