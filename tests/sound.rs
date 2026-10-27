@@ -8,7 +8,7 @@ use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::pane::Direction;
-use hearth::scene::{SceneKind, TICK_RATE};
+use hearth::scene::{QUARTERS_PER_TICK, Rate, SceneKind, TICK_RATE};
 use hearth::sound::{Cue, Mixer};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -25,19 +25,31 @@ fn seconds(seconds: f64) -> usize {
     (seconds * f64::from(RATE)).round() as usize
 }
 
-/// Renders `ticks` ticks of stereo frames, with the cue on each tick for
-/// which `cue` is true, and returns the left channel.
-fn rendered(mixer: &mut Mixer, ticks: usize, cue: impl Fn(usize) -> bool) -> Vec<f32> {
-    let mut left = Vec::with_capacity(ticks * tick_samples());
+/// Renders `ticks` ticks of stereo frames, with `cue` on each tick for
+/// which `when` is true.
+fn played(
+    mixer: &mut Mixer,
+    ticks: usize,
+    cue: Cue,
+    when: impl Fn(usize) -> bool,
+) -> Vec<[f32; 2]> {
+    let mut played = Vec::with_capacity(ticks * tick_samples());
     let mut frames = vec![0.0; tick_samples() * 2];
     for tick in 0..ticks {
-        if cue(tick) {
-            mixer.play(Cue::Typing);
+        if when(tick) {
+            mixer.play(cue);
         }
         mixer.render(&mut frames);
-        left.extend(frames.iter().step_by(2));
+        played.extend(frames.as_chunks::<2>().0);
     }
-    left
+    played
+}
+
+fn rendered(mixer: &mut Mixer, ticks: usize, cue: impl Fn(usize) -> bool) -> Vec<f32> {
+    played(mixer, ticks, Cue::Typing, cue)
+        .iter()
+        .map(|[left, _]| *left)
+        .collect()
 }
 
 fn ticks(seconds: f64) -> usize {
@@ -165,6 +177,117 @@ fn a_mixer_that_is_off_is_silent_and_forgets_its_cues() {
     // Then:
     assert_eq!(loudest(&off), 0.0);
     assert_eq!(loudest(&on), 0.0);
+}
+
+/// Given: a mixer.
+/// When: the fire cue comes on every tick for three seconds.
+/// Then: after the fade in, the fire plays from -45 to -25 dB with no
+/// sample past full scale, and its left and right channels differ by more
+/// than -60 dB.
+///
+/// Why it matters: the fire is a binaural recording, and copied to one
+/// channel it loses the room it was recorded in.
+#[test]
+fn the_fire_plays_its_recording_in_stereo() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+
+    // When:
+    let frames = played(&mut mixer, ticks(3.0), Cue::Fire, |_| true);
+
+    // Then:
+    let heard = &frames[seconds(0.5)..];
+    let both: Vec<f32> = heard.iter().flatten().copied().collect();
+    let level = decibels(&both);
+    assert!((-45.0..=-25.0).contains(&level), "{level} dB");
+    assert!(
+        loudest(&both) <= 1.0,
+        "{} is past full scale",
+        loudest(&both)
+    );
+    let side: Vec<f32> = heard
+        .iter()
+        .map(|[left, right]| (left - right) / 2.0)
+        .collect();
+    assert!(
+        decibels(&side) > -60.0,
+        "{} dB between the channels",
+        decibels(&side)
+    );
+}
+
+/// Given: a mixer.
+/// When: the fire cue comes on every tick for a minute, which plays the
+/// recording through more than once.
+/// Then: after the fade in, no two milliseconds are quieter than -70 dB.
+///
+/// Why it matters: a fire crackles on with no break. An MP3 cut starts
+/// with a few milliseconds the decoder fills while it warms up, and a loop
+/// that played them would drop out at each turn.
+#[test]
+fn the_fire_never_drops_out() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+
+    // When:
+    let frames = played(&mut mixer, ticks(60.0), Cue::Fire, |_| true);
+
+    // Then:
+    let left: Vec<f32> = frames[seconds(0.5)..]
+        .iter()
+        .map(|[left, _]| *left)
+        .collect();
+    let quietest = left
+        .chunks_exact(seconds(0.002))
+        .map(decibels)
+        .fold(f64::INFINITY, f64::min);
+    assert!(quietest >= -70.0, "{quietest} dB");
+}
+
+/// Given: two mixers.
+/// When: one gets the fire cue on every tick, and the other only on the
+/// ticks of a fire at its slowest speed, for three seconds.
+/// Then: both render the same frames.
+///
+/// Why it matters: the fire sends its cue when it ticks, and a sound that
+/// faded between two slow ticks would pulse.
+#[test]
+fn the_fire_plays_on_at_its_slowest_speed() {
+    // Given:
+    let mut slowest = Rate::NORMAL;
+    while slowest.slower() != slowest {
+        slowest = slowest.slower();
+    }
+    let every = (QUARTERS_PER_TICK / slowest.quarters()) as usize;
+
+    // When:
+    let steady = played(&mut Mixer::new(RATE), ticks(3.0), Cue::Fire, |_| true);
+    let slow = played(&mut Mixer::new(RATE), ticks(3.0), Cue::Fire, |tick| {
+        tick % every == 0
+    });
+
+    // Then:
+    let differ = steady.iter().zip(&slow).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "{differ} frames differ");
+}
+
+/// Given: a mixer that plays the fire.
+/// When: it is turned off.
+/// Then: the next tick is silent.
+///
+/// Why it matters: `m` must stop the sound at once, not after its fade.
+#[test]
+fn turning_the_mixer_off_silences_the_fire_at_once() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+    played(&mut mixer, ticks(1.0), Cue::Fire, |_| true);
+
+    // When:
+    mixer.set_on(false);
+    let after = played(&mut mixer, 1, Cue::Fire, |_| false);
+
+    // Then:
+    assert_eq!(loudest(after.as_flattened()), 0.0);
 }
 
 fn config_file(name: &str, text: &str) -> PathBuf {

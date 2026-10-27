@@ -5,6 +5,7 @@ mod pixels;
 use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::fire::{self, Fire, MAX_HEAT};
+use hearth::sound::Cue;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -471,5 +472,28 @@ fn a_smaller_area_drops_the_old_buffer() {
         if let Some(bottom) = fires.bands(area, canvas).last() {
             assert!(bottom.iter().all(|&band| band >= HOTTEST), "{bottom:?}");
         }
+    }
+}
+
+/// Given: a fire.
+/// When: it ticks three times, and its cues are taken after each tick.
+/// Then: each tick sends one fire cue.
+///
+/// Why it matters: the fire sound plays while the cues come and fades out
+/// when they stop.
+#[test]
+fn each_tick_sends_one_fire_cue() {
+    // Given:
+    let area = Rect::new(0, 0, 40, 10);
+    let mut fire = scene(7);
+
+    for _ in 0..3 {
+        // When:
+        fire.tick(area);
+        let mut cues = Vec::new();
+        fire.drain_cues(&mut cues);
+
+        // Then:
+        assert_eq!(cues, [Cue::Fire]);
     }
 }
