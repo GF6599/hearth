@@ -164,7 +164,8 @@ fn a_synth_that_is_off_is_silent_and_forgets_its_keys() {
     assert_eq!(first_heard(&on), None);
 }
 
-/// Given: the typing scene with a long line to type.
+/// Given: the typing scene past the head of a function of one long line,
+/// so each key it types is an `x`.
 /// When: it runs one tick.
 /// Then: it sends one key cue for each glyph it typed, each at a place in
 /// the tick from 0 up to 1, in order.
@@ -175,7 +176,13 @@ fn a_synth_that_is_off_is_silent_and_forgets_its_keys() {
 fn typing_sends_one_key_for_each_glyph() {
     // Given:
     let mut app = typing_app();
-    app.tick(WIDE);
+    for _ in 0..20 {
+        if typed(&app) > 0 {
+            break;
+        }
+        app.tick(WIDE);
+    }
+    assert!(typed(&app) > 0, "no x typed");
     let _ = app.take_cues();
 
     for _ in 0..20 {
