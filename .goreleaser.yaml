@@ -10,14 +10,26 @@ before:
     - cargo install --locked cargo-zigbuild@0.23.4
 
 builds:
-  - builder: rust
+  # Apple's linker builds the macOS binaries. zig's writes a framework once for
+  # each crate that asks for it, and dyld refuses to start a binary that names
+  # one library twice.
+  - id: macos
+    builder: rust
     binary: hearth
+    command: build
     flags:
       - --release
       - --locked
     targets:
       - x86_64-apple-darwin
       - aarch64-apple-darwin
+  - id: linux
+    builder: rust
+    binary: hearth
+    flags:
+      - --release
+      - --locked
+    targets:
       - x86_64-unknown-linux-gnu
       - aarch64-unknown-linux-gnu
 
