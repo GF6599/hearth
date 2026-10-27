@@ -21,6 +21,9 @@ syntect = { version = "5.3", default-features = false, features = ["parsing", "d
 # One parser reads and writes the config file, and a write keeps the
 # user's comments and key order.
 toml_edit = "0.25"
+# A pure Rust MP3 decoder, so the sound recordings play without a C
+# toolchain and without a second lossy encode.
+nanomp3 = "0.2"
 
 [profile.release]
 lto = true
