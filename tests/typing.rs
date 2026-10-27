@@ -13,8 +13,10 @@ use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::minimap::Outline;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, TICK_RATE};
+use hearth::pane::advance;
+use hearth::scene::{FRAME_RATE, Rate, Rng, Scene, SceneKind, TICK_RATE};
 use hearth::scenes::typing::{FINDING, MOST_SNIPPET_LINES, Shortest, Speed, Typing};
+use hearth::sound::Cue;
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -1591,4 +1593,148 @@ fn a_seed_fixes_the_functions_however_long_the_scan_takes() {
 
     // Then:
     assert_eq!(patient, hasty);
+}
+
+/// Whether `now` shows the rows of `held` with `k` of them gone from the
+/// top and the rest moved up to the top of the frame, and that `k`. `None`
+/// for any other picture, such as a frame that typing moved up a row,
+/// which also shows a new row at the bottom.
+fn scrolled_from(held: &[CodeRow], now: &[CodeRow]) -> Option<usize> {
+    let gone = held.len().checked_sub(now.len())?;
+    let moved_up = now
+        .iter()
+        .zip(&held[gone..])
+        .zip(held)
+        .all(|((row, was), top)| {
+            row.number == was.number && row.text == was.text && row.x == was.x && row.y == top.y
+        });
+    (gone > 0 && moved_up).then_some(gone)
+}
+
+struct ScrollFrame {
+    gone: usize,
+    cursors: Vec<Position>,
+    cues: Vec<Cue>,
+}
+
+/// Runs frames as the app does until a finished snippet scrolls away and
+/// the next one opens. Returns the rows of the last frame that held the
+/// whole snippet, and each frame after it up to the one that opens the next.
+fn scroll(speed: Speed, area: Rect) -> (Vec<CodeRow>, Vec<ScrollFrame>) {
+    let mut scene = Typing::new(
+        Rng::seed_from_u64(7),
+        &theme::ROSE_PINE,
+        corpus(&function("long", MOST_SNIPPET_LINES)),
+        speed,
+    );
+    let mut credit = 0;
+    let mut previous = Vec::new();
+    let mut held: Option<Vec<CodeRow>> = None;
+    let mut frames = Vec::new();
+    for _ in 0..4000 {
+        advance(
+            &mut scene,
+            SceneKind::Typing,
+            Rate::NORMAL,
+            &mut credit,
+            area,
+        );
+        let mut cues = Vec::new();
+        scene.drain_cues(&mut cues);
+        let buffer = render(&scene, area, area);
+        // The frames before the first tick draw no editor frame.
+        if !buffer.content().iter().any(|cell| cell.symbol() == "┌") {
+            continue;
+        }
+        let rows = code_rows(&buffer);
+        let from = held.as_deref().unwrap_or(&previous);
+        match scrolled_from(from, &rows) {
+            Some(gone) => {
+                held.get_or_insert_with(|| std::mem::take(&mut previous));
+                frames.push(ScrollFrame {
+                    gone,
+                    cursors: cursors(&buffer),
+                    cues,
+                });
+            }
+            None if held.is_some() => return (held.unwrap_or_default(), frames),
+            None => previous = rows,
+        }
+    }
+    panic!("the code never scrolled away");
+}
+
+/// The frames from the last held frame until `gone` first reaches `rows`.
+fn frames_until(frames: &[ScrollFrame], rows: usize) -> usize {
+    1 + frames
+        .iter()
+        .position(|frame| frame.gone >= rows)
+        .expect("the scroll stopped short")
+}
+
+/// A finished function scrolls up and out of the frame, slow, then fast,
+/// then slow, before the next one types.
+/// Given: a function longer than the frame, at the default speed and at
+/// the fastest.
+/// When: the scene types it, holds it, and runs on to the next function.
+/// Then: the code moves up row by row and never back, the frame empties
+/// before the next function opens, the middle third of the rows goes in
+/// less time than the first or the last third, and the whole scroll takes
+/// from 0.6 to 0.8 seconds at both speeds.
+///
+/// Why it matters: a jump to a blank frame reads as a cut, and a scroll
+/// that ran at the typing speed would be gone in one frame at the fastest.
+#[test]
+fn a_finished_function_scrolls_away_slow_fast_slow() {
+    for speed in [Speed::DEFAULT, Speed::from_cps(1000).unwrap()] {
+        // Given:
+        let area = TALL_AREA;
+
+        // When:
+        let (held, frames) = scroll(speed, area);
+
+        // Then:
+        let rows = held.len();
+        assert_eq!(rows, TALL_AREA_ROWS, "{speed}");
+        assert!(
+            frames.windows(2).all(|pair| pair[0].gone <= pair[1].gone),
+            "{speed}: the code moved back down"
+        );
+        let empty = frames_until(&frames, rows);
+        assert!(
+            frames[empty - 1].cursors.is_empty(),
+            "{speed}: the cursor stayed in the empty frame"
+        );
+        let first = frames_until(&frames, rows.div_ceil(3));
+        let second = frames_until(&frames, (2 * rows).div_ceil(3));
+        let (middle, last) = (second - first, empty - second);
+        assert!(
+            middle < first && middle < last,
+            "{speed}: thirds took {first}, {middle} and {last} frames"
+        );
+        // Whole rows hide the slowest frames at each end, so the scroll
+        // shows for less than its full time.
+        let seconds = empty as f64 * FRAME_RATE.as_secs_f64();
+        assert!(
+            (0.6..=0.8).contains(&seconds),
+            "{speed}: the scroll took {seconds} s"
+        );
+    }
+}
+
+/// Given: a function longer than the frame, at the default speed.
+/// When: the scene scrolls it away.
+/// Then: no frame of the scroll sends a key cue.
+///
+/// Why it matters: a click while the code moves and no glyph appears is
+/// heard as typing that is not on the screen.
+#[test]
+fn the_scroll_sends_no_key() {
+    // When:
+    let (_, frames) = scroll(Speed::DEFAULT, TALL_AREA);
+
+    // Then:
+    assert!(!frames.is_empty());
+    let cues: Vec<&Cue> = frames.iter().flat_map(|frame| &frame.cues).collect();
+    assert!(cues.is_empty(), "{cues:?}");
 }
