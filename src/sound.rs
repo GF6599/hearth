@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 pub enum Cue {
     /// The scene typed at least one key.
     Typing,
+    Fire,
 }
 
 /// Seconds the sound keeps playing after its last cue, longer than the
@@ -46,6 +47,11 @@ impl Recording {
 fn typing() -> &'static Recording {
     static TYPING: OnceLock<Recording> = OnceLock::new();
     TYPING.get_or_init(|| Recording::decode(include_bytes!("../sounds/typing.mp3")))
+}
+
+fn fire() -> &'static Recording {
+    static FIRE: OnceLock<Recording> = OnceLock::new();
+    FIRE.get_or_init(|| Recording::decode(include_bytes!("../sounds/fire.mp3")))
 }
 
 /// A recording that loops while its cue keeps coming, and fades out when
@@ -113,6 +119,7 @@ impl Bed {
 #[derive(Debug)]
 pub struct Mixer {
     typing: Bed,
+    fire: Bed,
     on: bool,
 }
 
@@ -122,6 +129,7 @@ impl Mixer {
     pub fn new(rate: u32) -> Self {
         Self {
             typing: Bed::new(typing(), rate as f32),
+            fire: Bed::new(fire(), rate as f32),
             on: true,
         }
     }
@@ -134,6 +142,7 @@ impl Mixer {
         }
         match cue {
             Cue::Typing => self.typing.cue(),
+            Cue::Fire => self.fire.cue(),
         }
     }
 
@@ -141,6 +150,7 @@ impl Mixer {
         self.on = on;
         if !on {
             self.typing.silence();
+            self.fire.silence();
         }
     }
 
@@ -152,7 +162,8 @@ impl Mixer {
     }
 
     pub fn frame(&mut self) -> [f32; 2] {
-        self.typing.frame()
+        let (typing, fire) = (self.typing.frame(), self.fire.frame());
+        [typing[0] + fire[0], typing[1] + fire[1]]
     }
 }
 

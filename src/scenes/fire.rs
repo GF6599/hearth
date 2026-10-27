@@ -5,6 +5,7 @@ use ratatui::style::Color;
 
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
+use crate::sound::Cue;
 use crate::theme::Palette;
 
 /// Heat is kept finer than the colour steps, so the decay per row can be
@@ -81,6 +82,7 @@ pub struct Fire {
     /// The colour each heat draws over the base, read once, because a frame
     /// draws every pixel and a mix is slow.
     shades: Vec<Color>,
+    cues: Vec<Cue>,
 }
 
 impl Fire {
@@ -97,6 +99,7 @@ impl Fire {
                     .map(|heat| shade(palette, &stops, heat))
                     .collect()
             },
+            cues: Vec::new(),
         }
     }
 
@@ -120,6 +123,7 @@ impl Scene for Fire {
         if width == 0 || rows == 0 {
             return;
         }
+        self.cues.push(Cue::Fire);
         let bottom = (rows - 1) * width;
         self.heat[bottom..bottom + width].fill(MAX_HEAT);
 
@@ -139,6 +143,10 @@ impl Scene for Fire {
                 }
             }
         }
+    }
+
+    fn drain_cues(&mut self, out: &mut Vec<Cue>) {
+        out.append(&mut self.cues);
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
