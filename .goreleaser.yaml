@@ -23,6 +23,9 @@ builds:
     targets:
       - x86_64-apple-darwin
       - aarch64-apple-darwin
+    hooks:
+      post:
+        - cmd: scripts/macos-binary-starts.sh "{{ .Path }}" "{{ .Target }}"
   - id: linux
     builder: rust
     binary: hearth
