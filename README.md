@@ -91,6 +91,7 @@ scene = "fire"            # the scene a bare `hearth` starts. Absent: the picker
 repo = "rust-lang/rust"   # what the typing scene types and the river draws. Absent: hearth's own source, and the history of the current directory
 theme = "rose-pine-dawn"  # rose-pine, rose-pine-moon, rose-pine-dawn, catppuccin-mocha, catppuccin-latte, tokyo-night, tokyo-night-day, kanagawa-wave, kanagawa-lotus, dracula, dracula-alucard, solarized-dark or solarized-light. Absent: rose-pine
 background = "terminal"   # theme or terminal. Absent: theme
+sound = false             # true or false. Absent: true
 
 [speed]
 typing = 50     # keystrokes per second, from 1 to 1000
@@ -131,7 +132,12 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 | `x` | Close the pane |
 | `h` `j` `k` `l` | Move to the pane on that side, also the arrows |
 | `t` | Next colour theme |
+| `m` | Turn the sound off or on |
 | `q` / `Ctrl-c` | Quit |
+
+### Sound
+
+The typing scene clicks for each key it types. Every click is made as it plays, from the seed, so `--seed` replays the same clicks, and hearth carries no sound files. With split panes, only the focused pane plays. Sound is on until `m` turns it off, and `m` saves the choice to the config file the way `t` saves the theme. Sound plays on macOS. On Linux, or with no output device, hearth runs silent and the notice says why.
 
 ### Panes
 
