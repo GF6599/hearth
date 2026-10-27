@@ -17,6 +17,14 @@ demo:
     mkdir -p doc
     vhs demo.tape
 
+# Cut each sound recording from its CC0 preview on Freesound, with no
+# re-encode. Typing: "Custom Mechanical Keyboard" by tofu_delivery,
+# https://freesound.org/people/tofu_delivery/sounds/588650/
+[group('dev')]
+sounds:
+    mkdir -p sounds
+    ffmpeg -y -loglevel error -ss 1 -t 24 -i https://cdn.freesound.org/previews/588/588650_6529953-hq.mp3 -c copy -map_metadata -1 sounds/typing.mp3
+
 # Lint with the same denial level CI uses
 [group('dev')]
 lint:
