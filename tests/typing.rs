@@ -321,8 +321,8 @@ fn the_scene_types_at_the_speed_it_is_given() {
 }
 
 /// A file typed at 200 keystrokes per second for ten ticks:
-/// between 60 and 180 keystrokes, which types a short file and stays inside
-/// the hold.
+/// between 60 and 180 keystrokes, which types a short file and ends before
+/// the scroll after it moves a row.
 fn typed_file(path: &str, text: &str, area: Rect) -> Buffer {
     let scene = Typing::new(
         Rng::seed_from_u64(7),

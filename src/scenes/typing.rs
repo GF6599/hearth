@@ -36,7 +36,7 @@ const INLINE_BYTES: usize = 32 * 1024;
 
 /// Pauses count in keystrokes, so a faster speed shortens them too.
 const LINE_PAUSE: RangeInclusive<u32> = 2..=8;
-const FILE_PAUSE: u32 = 150;
+const FILE_PAUSE: u32 = 75;
 /// The time a finished function takes to scroll out of the frame. It does
 /// not follow the speed, because a scroll counted in keystrokes would be
 /// gone in one frame at the fastest.
