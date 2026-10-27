@@ -9,31 +9,44 @@ use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::pane::Direction;
 use hearth::scene::{SceneKind, TICK_RATE};
-use hearth::sound::{Cue, Synth};
+use hearth::sound::{Cue, Mixer};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 const RATE: u32 = 48_000;
 const AREA: Rect = Rect::new(0, 0, 80, 20);
-/// Wide enough that the typing frame holds every glyph the tests type.
-const WIDE: Rect = Rect::new(0, 0, 300, 20);
 
+/// Samples per channel in one tick.
 fn tick_samples() -> usize {
     (TICK_RATE.as_secs_f64() * f64::from(RATE)).round() as usize
 }
 
-fn rendered(seed: u64, cues: &[Cue], samples: usize) -> Vec<f32> {
-    let mut synth = Synth::new(RATE, seed);
-    for cue in cues {
-        synth.play(*cue);
-    }
-    let mut out = vec![0.0; samples];
-    synth.render(&mut out);
-    out
+fn seconds(seconds: f64) -> usize {
+    (seconds * f64::from(RATE)).round() as usize
 }
 
-fn keys(places: &[f32]) -> Vec<Cue> {
-    places.iter().map(|&at| Cue::Key { at }).collect()
+/// Renders `ticks` ticks of stereo frames, with the cue on each tick for
+/// which `cue` is true, and returns the left channel.
+fn rendered(mixer: &mut Mixer, ticks: usize, cue: impl Fn(usize) -> bool) -> Vec<f32> {
+    let mut left = Vec::with_capacity(ticks * tick_samples());
+    let mut frames = vec![0.0; tick_samples() * 2];
+    for tick in 0..ticks {
+        if cue(tick) {
+            mixer.play(Cue::Typing);
+        }
+        mixer.render(&mut frames);
+        left.extend(frames.iter().step_by(2));
+    }
+    left
+}
+
+fn ticks(seconds: f64) -> usize {
+    (seconds / TICK_RATE.as_secs_f64()).round() as usize
+}
+
+fn decibels(samples: &[f32]) -> f64 {
+    let power = samples.iter().map(|s| f64::from(*s).powi(2)).sum::<f64>() / samples.len() as f64;
+    10.0 * power.max(1e-12).log10()
 }
 
 fn loudest(samples: &[f32]) -> f32 {
@@ -42,8 +55,116 @@ fn loudest(samples: &[f32]) -> f32 {
         .fold(0.0, |most, sample| most.max(sample.abs()))
 }
 
-fn first_heard(samples: &[f32]) -> Option<usize> {
-    samples.iter().position(|sample| sample.abs() > 1e-4)
+/// The longest run of samples too quiet to hear.
+fn longest_silence(samples: &[f32]) -> usize {
+    samples
+        .split(|sample| sample.abs() >= 1e-4)
+        .map(<[f32]>::len)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Given: a mixer.
+/// When: the typing cue comes on every tick for three seconds.
+/// Then: after the fade in, the recording plays at about its own level,
+/// from -45 to -25 dB, and no sample goes past full scale.
+///
+/// Why it matters: a recording far louder than the others startles, one
+/// far quieter is not heard, and a sample past full scale clips.
+#[test]
+fn typing_plays_the_typing_recording() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+
+    // When:
+    let samples = rendered(&mut mixer, ticks(3.0), |_| true);
+
+    // Then:
+    let heard = &samples[seconds(0.5)..];
+    let level = decibels(heard);
+    assert!((-45.0..=-25.0).contains(&level), "{level} dB");
+    assert!(
+        loudest(heard) <= 1.0,
+        "{} is past full scale",
+        loudest(heard)
+    );
+}
+
+/// Given: a mixer that has played the typing cue on every tick for a
+/// second.
+/// When: the cues stop.
+/// Then: the sound still plays for the next 0.15 seconds, and from one
+/// second after the last cue it is silent.
+///
+/// Why it matters: the scene pauses at the end of each line, and a sound
+/// that stopped on each pause would stutter. A sound that went on long
+/// after the typing stopped would not follow the screen.
+#[test]
+fn the_typing_sound_bridges_a_line_pause_and_then_fades_out() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+    let typed = ticks(1.0);
+
+    // When:
+    let samples = rendered(&mut mixer, typed + ticks(2.0), |tick| tick < typed);
+
+    // Then:
+    let last_cue = (typed - 1) * tick_samples();
+    let pause = &samples[last_cue..last_cue + seconds(0.15)];
+    assert!(
+        decibels(pause) > -50.0,
+        "{} dB in the pause",
+        decibels(pause)
+    );
+    let after = &samples[last_cue + seconds(1.0)..];
+    assert_eq!(
+        loudest(after),
+        0.0,
+        "still heard a second after the last cue"
+    );
+}
+
+/// Given: a mixer.
+/// When: the typing cue comes on every tick for a minute, which plays the
+/// recording through more than twice.
+/// Then: after the fade in, no stretch of silence is longer than five
+/// milliseconds.
+///
+/// Why it matters: an MP3 starts and ends with a few milliseconds of
+/// padding, and a loop that kept it would tick at each turn.
+#[test]
+fn the_recording_loops_with_no_gap() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+
+    // When:
+    let samples = rendered(&mut mixer, ticks(60.0), |_| true);
+
+    // Then:
+    let gap = longest_silence(&samples[seconds(0.5)..]);
+    assert!(gap <= seconds(0.005), "{gap} silent samples in a row");
+}
+
+/// Given: a mixer that is turned off.
+/// When: the typing cue comes, then the mixer is turned on again.
+/// Then: it renders silence before and after it is turned on.
+///
+/// Why it matters: a muted hearth must be silent, and a cue sent while it
+/// was muted must not play late when the sound comes back.
+#[test]
+fn a_mixer_that_is_off_is_silent_and_forgets_its_cues() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+    mixer.set_on(false);
+
+    // When:
+    let off = rendered(&mut mixer, 1, |_| true);
+    mixer.set_on(true);
+    let on = rendered(&mut mixer, 2, |_| false);
+
+    // Then:
+    assert_eq!(loudest(&off), 0.0);
+    assert_eq!(loudest(&on), 0.0);
 }
 
 fn config_file(name: &str, text: &str) -> PathBuf {
@@ -71,164 +192,14 @@ fn header(app: &App) -> String {
         .collect()
 }
 
-/// Given: three keys at the start, the middle and near the end of a tick.
-/// When: one synth renders them twice from seed 7, and once from seed 8.
-/// Then: the two renders from seed 7 are the same, the one from seed 8
-/// differs, and each is heard.
-///
-/// Why it matters: `--seed` replays a run, so it replays its sound too,
-/// and the seed gives each click its own small variation.
-#[test]
-fn a_seed_renders_the_same_clicks() {
-    // Given:
-    let cues = keys(&[0.0, 0.5, 0.9]);
-
-    // When:
-    let first = rendered(7, &cues, RATE as usize);
-    let again = rendered(7, &cues, RATE as usize);
-    let other = rendered(8, &cues, RATE as usize);
-
-    // Then:
-    assert_eq!(first, again);
-    assert_ne!(first, other);
-    assert!(loudest(&first) > 0.01, "the clicks are not heard");
-}
-
-/// Given: two hundred keys on the same place in a tick.
-/// When: the synth renders them.
-/// Then: no sample goes past full scale.
-///
-/// Why it matters: a sample past full scale clips in the output, which is
-/// heard as a crack.
-#[test]
-fn many_clicks_at_once_stay_under_full_scale() {
-    // Given:
-    let cues = keys(&[0.0; 200]);
-
-    // When:
-    let samples = rendered(7, &cues, tick_samples() * 2);
-
-    // Then:
-    assert!(
-        loudest(&samples) <= 1.0,
-        "{} is past full scale",
-        loudest(&samples)
-    );
-    assert!(loudest(&samples) > 0.01, "the clicks are not heard");
-}
-
-/// Given: one key at the start of a tick and one at its middle.
-/// When: each renders alone.
-/// Then: the first is heard at once, and the second half a tick later.
-///
-/// Why it matters: a tick holds several keystrokes, and keys that sound at
-/// once are heard as one chord and not as typing.
-#[test]
-fn a_key_sounds_at_its_place_in_the_tick() {
-    // When:
-    let start = first_heard(&rendered(7, &keys(&[0.0]), tick_samples()));
-    let middle = first_heard(&rendered(7, &keys(&[0.5]), tick_samples()));
-
-    // Then:
-    let half = tick_samples() / 2;
-    assert!(start.unwrap() < 10, "the start is heard at {start:?}");
-    let middle = middle.unwrap();
-    assert!(
-        middle.abs_diff(half) < 10,
-        "the middle is heard at {middle}, not {half}"
-    );
-}
-
-/// Given: a synth that is turned off.
-/// When: a key plays, then the synth is turned on again.
-/// Then: it renders silence before and after it is turned on.
-///
-/// Why it matters: a muted hearth must be silent, and a key typed while it
-/// was muted must not play late when the sound comes back.
-#[test]
-fn a_synth_that_is_off_is_silent_and_forgets_its_keys() {
-    // Given:
-    let mut synth = Synth::new(RATE, 7);
-    synth.set_on(false);
-
-    // When:
-    synth.play(Cue::Key { at: 0.0 });
-    let mut off = vec![0.0; tick_samples()];
-    synth.render(&mut off);
-    synth.set_on(true);
-    let mut on = vec![0.0; tick_samples()];
-    synth.render(&mut on);
-
-    // Then:
-    assert_eq!(first_heard(&off), None);
-    assert_eq!(first_heard(&on), None);
-}
-
-/// Given: the typing scene past the head of a function of one long line,
-/// so each key it types is an `x`.
-/// When: it runs one tick.
-/// Then: it sends one key cue for each glyph it typed, each at a place in
-/// the tick from 0 up to 1, in order.
-///
-/// Why it matters: a click with no glyph, or a glyph with no click, is
-/// heard as sound out of step with the screen.
-#[test]
-fn typing_sends_one_key_for_each_glyph() {
-    // Given:
-    let mut app = typing_app();
-    for _ in 0..20 {
-        if typed(&app) > 0 {
-            break;
-        }
-        app.tick(WIDE);
-    }
-    assert!(typed(&app) > 0, "no x typed");
-    let _ = app.take_cues();
-
-    for _ in 0..20 {
-        // When:
-        let before = typed(&app);
-        app.tick(WIDE);
-        let cues = app.take_cues();
-
-        // Then:
-        assert_eq!(cues.len(), typed(&app) - before);
-        let places: Vec<f32> = cues
-            .iter()
-            .map(|cue| match cue {
-                Cue::Key { at } => *at,
-            })
-            .collect();
-        assert!(
-            places.iter().all(|at| (0.0..1.0).contains(at)),
-            "{places:?}"
-        );
-        assert!(
-            places.windows(2).all(|pair| pair[0] < pair[1]),
-            "{places:?}"
-        );
-    }
-}
-
-/// The count of `x` the typing scene shows.
-fn typed(app: &App) -> usize {
-    let mut buffer = Buffer::empty(WIDE);
-    app.render(WIDE, &mut buffer);
-    buffer
-        .content()
-        .iter()
-        .filter(|cell| cell.symbol() == "x")
-        .count()
-}
-
 /// Given: typing in the left pane and noise in the right pane, which has
 /// the focus.
 /// When: both run for fifty ticks, and then the focus moves left for one.
 /// Then: no cue comes while noise has the focus, and the tick after the
-/// move sends the keys of that tick only.
+/// move sends the one cue of that tick only.
 ///
 /// Why it matters: only the focused pane plays, and a pane without the
-/// focus must not save up its keys and play them all when it gets it.
+/// focus must not save up its cues and play them all when it gets it.
 #[test]
 fn only_the_focused_pane_sends_cues() {
     // Given:
@@ -253,11 +224,7 @@ fn only_the_focused_pane_sends_cues() {
         "{} cues from the pane without focus",
         unfocused.len()
     );
-    assert!(
-        (1..=10).contains(&focused.len()),
-        "{} cues in one tick",
-        focused.len()
-    );
+    assert_eq!(focused, [Cue::Typing]);
 }
 
 /// Given: hearth with no config file setting `sound`.

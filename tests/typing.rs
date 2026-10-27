@@ -1724,12 +1724,12 @@ fn a_finished_function_scrolls_away_slow_fast_slow() {
 
 /// Given: a function longer than the frame, at the default speed.
 /// When: the scene scrolls it away.
-/// Then: no frame of the scroll sends a key cue.
+/// Then: no frame of the scroll sends a cue.
 ///
-/// Why it matters: a click while the code moves and no glyph appears is
-/// heard as typing that is not on the screen.
+/// Why it matters: typing heard while the code moves and no glyph appears
+/// is typing that is not on the screen.
 #[test]
-fn the_scroll_sends_no_key() {
+fn the_scroll_sends_no_cue() {
     // When:
     let (_, frames) = scroll(Speed::DEFAULT, TALL_AREA);
 
@@ -1737,4 +1737,49 @@ fn the_scroll_sends_no_key() {
     assert!(!frames.is_empty());
     let cues: Vec<&Cue> = frames.iter().flat_map(|frame| &frame.cues).collect();
     assert!(cues.is_empty(), "{cues:?}");
+}
+
+/// Given: a function of twelve lines, at the default speed.
+/// When: the scene ticks until it has typed the function and holds it.
+/// Then: each tick that changed the frame sends one typing cue, and each
+/// tick that left the frame as it was, at a line pause or in the hold,
+/// sends none.
+///
+/// Why it matters: the typing sound plays while keys appear and fades out
+/// when they stop, so a cue on a still frame is sound with nothing typed.
+#[test]
+fn a_tick_that_types_sends_one_typing_cue() {
+    // Given:
+    let area = TALL_AREA;
+    let mut scene = scene(7, &function("twelve", 12));
+    let mut last = render(&scene, area, area);
+    let (mut still, mut typing, mut paused) = (0, 0, 0);
+
+    for _ in 0..1000 {
+        // When:
+        scene.tick(area);
+        let mut cues = Vec::new();
+        scene.drain_cues(&mut cues);
+        let now = render(&scene, area, area);
+
+        // Then:
+        if now == last {
+            assert!(cues.is_empty(), "{cues:?} on a still frame");
+            still += 1;
+            if still == 12 {
+                assert!(
+                    typing > 10 && paused > 0,
+                    "{typing} typing, {paused} paused"
+                );
+                return;
+            }
+        } else {
+            assert_eq!(cues, [Cue::Typing]);
+            paused += usize::from(still > 0);
+            typing += 1;
+            still = 0;
+        }
+        last = now;
+    }
+    panic!("the scene never held a function");
 }
