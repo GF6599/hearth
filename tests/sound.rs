@@ -373,3 +373,22 @@ fn a_muted_start_says_nothing_about_sound() {
     // Then:
     assert!(!header(&app).contains("no sound"), "{}", header(&app));
 }
+
+/// Given: each kind of error the audio device reports.
+/// When: the speaker reads it.
+/// Then: a glitch and a move to another device keep the sound playing, and
+/// a lost device or a stream that must be built again stops it.
+///
+/// Why it matters: macOS reports a glitch whenever the machine is busy, and
+/// a speaker that stops on one stays silent until hearth starts again.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_glitch_or_a_new_device_keeps_the_sound_playing() {
+    use cpal::ErrorKind;
+    use hearth::sound::stops_the_sound;
+
+    assert!(!stops_the_sound(ErrorKind::Xrun));
+    assert!(!stops_the_sound(ErrorKind::DeviceChanged));
+    assert!(stops_the_sound(ErrorKind::DeviceNotAvailable));
+    assert!(stops_the_sound(ErrorKind::StreamInvalidated));
+}
