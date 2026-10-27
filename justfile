@@ -20,10 +20,15 @@ demo:
 # Cut each sound recording from its CC0 preview on Freesound, with no
 # re-encode. Typing: "Custom Mechanical Keyboard" by tofu_delivery,
 # https://freesound.org/people/tofu_delivery/sounds/588650/
+# Fire: "(binaural) fire crackling" by yfjesse,
+# https://freesound.org/people/yfjesse/sounds/734248/
+# The fire comes through a pipe, because ffmpeg stalls when it seeks that
+# far into a file over HTTP.
 [group('dev')]
 sounds:
     mkdir -p sounds
     ffmpeg -y -loglevel error -ss 1 -t 24 -i https://cdn.freesound.org/previews/588/588650_6529953-hq.mp3 -c copy -map_metadata -1 sounds/typing.mp3
+    curl -sfL https://cdn.freesound.org/previews/734/734248_2391840-hq.mp3 | ffmpeg -y -loglevel error -ss 146 -t 45 -i pipe: -c copy -map_metadata -1 -f mp3 sounds/fire.mp3
 
 # Lint with the same denial level CI uses
 [group('dev')]
