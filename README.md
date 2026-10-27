@@ -137,7 +137,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 
 ### Sound
 
-The typing scene clicks for each key it types. Every click is made as it plays, from the seed, so `--seed` replays the same clicks, and hearth carries no sound files. With split panes, only the focused pane plays. Sound is on until `m` turns it off, and `m` saves the choice to the config file the way `t` saves the theme. Sound plays on macOS. On Linux, or with no output device, hearth runs silent and the notice says why.
+While the typing scene types, it plays a recording of a mechanical keyboard at a person's own pace, so the sound stays calm at any typing speed. The sound carries over the pause at the end of a line and fades out while a function holds and scrolls away. The recording is "Custom Mechanical Keyboard" by tofu_delivery on [Freesound](https://freesound.org/people/tofu_delivery/sounds/588650/), in the public domain (CC0), and `just sounds` cuts it again from its source. With split panes, only the focused pane plays. Sound is on until `m` turns it off, and `m` saves the choice to the config file the way `t` saves the theme. Sound plays on macOS. On Linux, or with no output device, hearth runs silent and the notice says why.
 
 ### Panes
 
