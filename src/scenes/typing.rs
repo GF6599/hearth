@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
+use std::time::Duration;
 
 use rand::seq::SliceRandom;
 use rand::{RngExt, SeedableRng};
@@ -36,6 +37,10 @@ const INLINE_BYTES: usize = 32 * 1024;
 /// Pauses count in keystrokes, so a faster speed shortens them too.
 const LINE_PAUSE: RangeInclusive<u32> = 2..=8;
 const FILE_PAUSE: u32 = 150;
+/// The time a finished function takes to scroll out of the frame. It does
+/// not follow the speed, because a scroll counted in keystrokes would be
+/// gone in one frame at the fastest.
+const SCROLL: Duration = Duration::from_millis(800);
 
 /// A tick types between half and one and a half times its share, so the
 /// rhythm is uneven the way a person's is.
@@ -209,6 +214,8 @@ pub struct Typing {
     lines: Vec<Vec<(char, Color)>>,
     pause: u32,
     finished: bool,
+    /// Set from the end of the hold until the next function opens.
+    scroll: Option<Scroll>,
     background: Background,
     cues: Vec<Cue>,
 }
@@ -253,6 +260,7 @@ impl Typing {
             lines: vec![Vec::new()],
             pause: 0,
             finished: false,
+            scroll: None,
             background: Background::Theme,
             cues: Vec::new(),
         }
@@ -354,6 +362,7 @@ impl Typing {
         self.offset = 0;
         self.lines = vec![Vec::new()];
         self.finished = false;
+        self.scroll = None;
         self.current = Some((file, span.start));
         // The lines above the definition are comments and attributes,
         // which name no function, so the first name is the snippet's own.
@@ -548,7 +557,17 @@ impl Typing {
         buf.set_stringn(right_x, y, &right, room, style);
     }
 
-    /// Spends one keystroke: on a pause, on opening the next file, or on
+    /// The rows gone from the top of the `shown` rows of code.
+    fn scrolled(&self, shown: usize) -> usize {
+        self.scroll
+            .map_or(0, |scroll| (scroll.share() * shown as f64).round() as usize)
+    }
+
+    fn shown_rows(&self) -> usize {
+        self.lines.len().min(usize::from(self.rows.unwrap_or(0)))
+    }
+
+    /// Spends one keystroke: on a pause, on the start of the scroll, or on
     /// one glyph. Returns whether it typed a glyph.
     fn press(&mut self) -> bool {
         if self.pause > 0 {
@@ -556,7 +575,7 @@ impl Typing {
             return false;
         }
         if self.finished {
-            self.open_next();
+            self.scroll = Some(Scroll::default());
             return false;
         }
         let Some(&(glyph, colour)) = self.glyphs.get(self.offset) else {
@@ -572,6 +591,31 @@ impl Typing {
             line.push((glyph, colour));
         }
         true
+    }
+}
+
+/// A finished function on its way up and out of the frame.
+#[derive(Debug, Default, Clone, Copy)]
+struct Scroll {
+    ticks: u32,
+    /// How far the scene is from its last tick towards its next.
+    progress: f64,
+}
+
+impl Scroll {
+    fn ticks_to_end() -> f64 {
+        SCROLL.as_secs_f64() / TICK_RATE.as_secs_f64()
+    }
+
+    /// The share of the code gone from the frame, from 0 to 1. It moves
+    /// slowly at each end and fastest in the middle.
+    fn share(self) -> f64 {
+        let time = ((f64::from(self.ticks) + self.progress) / Self::ticks_to_end()).min(1.0);
+        time * time * (3.0 - 2.0 * time)
+    }
+
+    fn ended(self) -> bool {
+        f64::from(self.ticks) >= Self::ticks_to_end()
     }
 }
 
@@ -663,6 +707,16 @@ impl Scene for Typing {
                 return;
             }
         }
+        if let Some(scroll) = &mut self.scroll {
+            scroll.ticks = scroll.ticks.saturating_add(1);
+            scroll.progress = 0.0;
+            // `open` ends the scroll. A file the scan has not reached
+            // keeps the frame empty until a later tick opens one.
+            if scroll.ended() {
+                self.open_next();
+            }
+            return;
+        }
         self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
         let presses = self.credit.floor();
         self.credit -= presses;
@@ -673,11 +727,26 @@ impl Scene for Typing {
                 let at = (f64::from(press) / presses) as f32;
                 self.cues.push(Cue::Key { at });
             }
+            if self.scroll.is_some() {
+                break;
+            }
         }
     }
 
     fn drain_cues(&mut self, out: &mut Vec<Cue>) {
         out.append(&mut self.cues);
+    }
+
+    /// Only a scroll moves between ticks, and only a frame that moves it
+    /// a whole row draws.
+    fn set_progress(&mut self, progress: f64) -> bool {
+        let shown = self.shown_rows();
+        let before = self.scrolled(shown);
+        let Some(scroll) = &mut self.scroll else {
+            return false;
+        };
+        scroll.progress = progress;
+        self.scrolled(shown) != before
     }
 
     fn set_speed(&mut self, speed: Speed) {
@@ -725,6 +794,7 @@ impl Scene for Typing {
         };
         let code_x = inner.x + u16::try_from(gutter).unwrap_or(0);
         let top = self.lines.len().saturating_sub(usize::from(inner.height));
+        let top = top + self.scrolled(self.lines.len() - top);
         let shown = &self.lines[top..];
         for (y, (index, line)) in (inner.y..inner.bottom()).zip(shown.iter().enumerate()) {
             if gutter > 0 {
