@@ -20,6 +20,7 @@ use crate::minimap::Outline;
 use crate::octant::{CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{self, Rng, Scene, TICK_RATE};
 use crate::snippet;
+use crate::sound::Cue;
 use crate::theme::{self, Palette};
 use crate::tree::{self, Tree};
 
@@ -209,6 +210,7 @@ pub struct Typing {
     pause: u32,
     finished: bool,
     background: Background,
+    cues: Vec<Cue>,
 }
 
 impl Typing {
@@ -252,6 +254,7 @@ impl Typing {
             pause: 0,
             finished: false,
             background: Background::Theme,
+            cues: Vec::new(),
         }
     }
 
@@ -546,20 +549,20 @@ impl Typing {
     }
 
     /// Spends one keystroke: on a pause, on opening the next file, or on
-    /// one glyph.
-    fn press(&mut self) {
+    /// one glyph. Returns whether it typed a glyph.
+    fn press(&mut self) -> bool {
         if self.pause > 0 {
             self.pause -= 1;
-            return;
+            return false;
         }
         if self.finished {
             self.open_next();
-            return;
+            return false;
         }
         let Some(&(glyph, colour)) = self.glyphs.get(self.offset) else {
             self.finished = true;
             self.pause = FILE_PAUSE;
-            return;
+            return false;
         };
         self.offset += 1;
         if glyph == '\n' {
@@ -568,6 +571,7 @@ impl Typing {
         } else if let Some(line) = self.lines.last_mut() {
             line.push((glyph, colour));
         }
+        true
     }
 }
 
@@ -660,10 +664,20 @@ impl Scene for Typing {
             }
         }
         self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
-        while self.credit >= 1.0 {
-            self.credit -= 1.0;
-            self.press();
+        let presses = self.credit.floor();
+        self.credit -= presses;
+        // A press lands at its share of the tick, so the keys of one tick
+        // sound one after another and not as a chord.
+        for press in 0..presses as u32 {
+            if self.press() {
+                let at = (f64::from(press) / presses) as f32;
+                self.cues.push(Cue::Key { at });
+            }
         }
+    }
+
+    fn drain_cues(&mut self, out: &mut Vec<Cue>) {
+        out.append(&mut self.cues);
     }
 
     fn set_speed(&mut self, speed: Speed) {

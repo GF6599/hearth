@@ -13,6 +13,7 @@ use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::scene::{ALL, FRAMES_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
+use crate::sound::Cue;
 use crate::theme::{self, Palette};
 use toml_edit::Value;
 
@@ -64,6 +65,14 @@ pub struct App {
     redraw: bool,
     /// The area of the last frame, so a resize draws the screen again.
     area: Rect,
+    sound: bool,
+    /// Why no sound can play, when none can.
+    silent: Option<String>,
+    /// The cues of the focused pane since the last `take_cues`.
+    cues: Vec<Cue>,
+    /// The cues of every other pane, dropped on each frame, so a pane that
+    /// gets the focus does not play the keys it typed without it.
+    unheard: Vec<Cue>,
     pub should_quit: bool,
 }
 
@@ -134,6 +143,10 @@ impl App {
             fresh: false,
             redraw: true,
             area: Rect::default(),
+            sound: config.sound.unwrap_or(true),
+            silent: None,
+            cues: Vec::new(),
+            unheard: Vec::new(),
             should_quit: false,
         };
         if scene.is_none() {
@@ -175,6 +188,46 @@ impl App {
         self.unsaved = saved.err().map(|e| e.to_string());
         self.notice_text = name.to_string();
         self.notice = NOTICE_FRAMES;
+    }
+
+    pub fn sound_on(&self) -> bool {
+        self.sound
+    }
+
+    pub fn toggle_sound(&mut self) {
+        self.sound = !self.sound;
+        let saved = match &self.saving {
+            Some(path) => config::save_sound(path, self.sound),
+            None => Ok(()),
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = match (self.sound, &self.silent) {
+            (false, _) => "sound off".to_string(),
+            (true, None) => "sound on".to_string(),
+            (true, Some(reason)) => format!("sound on, no sound: {reason}"),
+        };
+        self.notice = NOTICE_FRAMES;
+        self.redraw = true;
+    }
+
+    /// No sound can play, for `reason`. The notice says so while sound is
+    /// on, and a user who turned it off hears of it only on turning it on.
+    pub fn without_sound(&mut self, reason: &str) {
+        self.silent = Some(reason.to_string());
+        if self.sound {
+            self.unsaved = None;
+            self.notice_text = format!("no sound: {reason}");
+            self.notice = NOTICE_FRAMES;
+            self.redraw = true;
+        }
+    }
+
+    pub fn take_cues(&mut self) -> Vec<Cue> {
+        std::mem::take(&mut self.cues)
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.panes.focused().seed
     }
 
     pub fn saving_to(mut self, path: PathBuf) -> Self {
@@ -220,10 +273,17 @@ impl App {
         let picking = self.is_picking().then(|| self.panes.focus());
         // The picker's title glows and its preview runs on every frame.
         self.redraw |= picking.is_some();
+        let focus = self.panes.focus();
         for (index, (pane, inside)) in self.panes.iter_mut().zip(&layout.panes).enumerate() {
             if Some(index) != picking {
                 self.redraw |= pane.tick(self.rates[slot_of(pane.kind)], *inside);
             }
+            let heard = index == focus && picking.is_none();
+            pane.drain_cues(if heard {
+                &mut self.cues
+            } else {
+                &mut self.unheard
+            });
         }
         if let Some(focus) = picking {
             let kind = ALL[self.selected];
@@ -234,8 +294,10 @@ impl App {
             self.picker_top = top;
             if let (Some(scene), Some(preview)) = (&mut self.preview, preview) {
                 advance(&mut **scene, kind, rate, &mut self.preview_credit, preview);
+                scene.drain_cues(&mut self.unheard);
             }
         }
+        self.unheard.clear();
     }
 
     fn with_picker<R>(&self, f: impl FnOnce(Picker) -> R) -> R {

@@ -8,6 +8,7 @@ use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scene::{FRAMES_PER_TICK, QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
+use crate::sound::Cue;
 use crate::theme::{self, Palette};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,6 +385,10 @@ impl Pane {
     /// Returns whether the frame moved anything the pane draws.
     pub fn tick(&mut self, rate: Rate, area: Rect) -> bool {
         advance(&mut *self.scene, self.kind, rate, &mut self.credit, area)
+    }
+
+    pub fn drain_cues(&mut self, out: &mut Vec<Cue>) {
+        self.scene.drain_cues(out);
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {

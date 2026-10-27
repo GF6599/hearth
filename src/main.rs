@@ -9,6 +9,7 @@ use hearth::events::{self, TerminalEvents};
 use hearth::scene::FRAME_RATE;
 use hearth::scenes::typing;
 use hearth::screen;
+use hearth::sound::Speaker;
 
 fn main() {
     let cli = Cli::parse();
@@ -59,6 +60,10 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
         }
     };
 
+    let mut speaker = Speaker::open(app.seed(), app.sound_on())
+        .map_err(|reason| app.without_sound(&reason))
+        .ok();
+
     let result = (|| -> std::io::Result<()> {
         let mut source = TerminalEvents;
         let mut last_frame = Instant::now();
@@ -75,6 +80,7 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
             if last_frame.elapsed() >= FRAME_RATE {
                 last_frame = Instant::now();
                 app.frame(terminal.get_frame().area());
+                play(&mut app, &mut speaker);
             }
 
             if app.should_quit {
@@ -86,4 +92,24 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
 
     ratatui::restore();
     result
+}
+
+/// Hands the focused pane's cues to the speaker. A speaker that fails is
+/// closed, and the notice says why the sound stopped.
+fn play(app: &mut App, speaker: &mut Option<Speaker>) {
+    let cues = app.take_cues();
+    let Some(open) = speaker else {
+        return;
+    };
+    let failed = open
+        .set_on(app.sound_on())
+        .err()
+        .or_else(|| open.take_error());
+    match failed {
+        Some(reason) => {
+            app.without_sound(&reason);
+            *speaker = None;
+        }
+        None => open.play(cues),
+    }
 }

@@ -30,6 +30,7 @@ use crate::scenes::solar::Solar;
 use crate::scenes::study::Study;
 use crate::scenes::tide::Tide;
 use crate::scenes::typing::{Shortest, Speed, Typing};
+use crate::sound::Cue;
 use crate::theme::Palette;
 
 /// The one random source every scene draws from. A seed fixes every frame.
@@ -169,6 +170,10 @@ pub trait Scene {
     fn set_progress(&mut self, _progress: f64) -> bool {
         false
     }
+
+    /// Moves the cues of the ticks since the last call into `out`. A scene
+    /// keeps its cues until then, so a frame that ticks twice loses none.
+    fn drain_cues(&mut self, _out: &mut Vec<Cue>) {}
 
     /// What a scene that keeps real time has left to run, for `+` and `-`
     /// to show. The rate means nothing to such a scene. The others have

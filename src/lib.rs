@@ -15,6 +15,7 @@
 //!              ├── scene     The Scene trait and the list of scenes
 //!              ├── scenes    One module per scene
 //!              ├── screen    Draws each frame as one synchronized update
+//!              ├── sound     Turns the cues of the focused scene into sound
 //!              ├── corpus    The source files the typing scene types
 //!              ├── history   The commits the river scene draws
 //!              ├── highlight Colours a source file by its grammar
@@ -43,6 +44,7 @@ pub mod scene;
 pub mod scenes;
 pub mod screen;
 pub mod snippet;
+pub mod sound;
 pub mod splitmix;
 pub mod theme;
 pub mod tree;

@@ -1,6 +1,6 @@
 //! The preferences a user keeps between runs: the scene to start, the
-//! repository to type, the colour theme and its background, and the speed
-//! of each scene.
+//! repository to type, the colour theme and its background, the sound, and
+//! the speed of each scene.
 
 use std::fs;
 use std::io::{self, Write};
@@ -30,6 +30,8 @@ pub struct Config {
     /// The place of the theme in `theme::THEMES`.
     pub theme: Option<usize>,
     pub background: Background,
+    /// `None` where the file does not set it, which plays sound.
+    pub sound: Option<bool>,
     pub typing: Option<Speed>,
     pub hourglass: Lengths,
     pub shortest: Shortest,
@@ -98,12 +100,17 @@ impl Config {
                         _ => return Err(fail("background must be theme or terminal".into())),
                     };
                 }
+                "sound" => {
+                    let on = item.as_bool();
+                    config.sound =
+                        Some(on.ok_or_else(|| fail("sound must be true or false".into()))?);
+                }
                 "speed" => config.read_speeds(item).map_err(fail)?,
                 "hourglass" => config.read_lengths(item).map_err(fail)?,
                 "typing" => config.read_typing(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo, theme, background, speed, hourglass and typing"
+                        "{other} is not a setting. The settings are scene, repo, theme, background, sound, speed, hourglass and typing"
                     )));
                 }
             }
@@ -211,6 +218,13 @@ pub fn save_speed(path: &Path, scene: SceneKind, speed: impl Into<Value>) -> io:
 pub fn save_theme(path: &Path, name: &str) -> io::Result<()> {
     let mut document = read_document(path)?;
     set_in_place(document.as_table_mut(), "theme", Value::from(name));
+    replace(path, &document.to_string())
+}
+
+/// Sets whether hearth plays sound, the same way.
+pub fn save_sound(path: &Path, on: bool) -> io::Result<()> {
+    let mut document = read_document(path)?;
+    set_in_place(document.as_table_mut(), "sound", Value::from(on));
     replace(path, &document.to_string())
 }
 
