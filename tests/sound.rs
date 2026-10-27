@@ -221,9 +221,8 @@ fn the_fire_plays_its_recording_in_stereo() {
 /// recording through more than once.
 /// Then: after the fade in, no two milliseconds are quieter than -70 dB.
 ///
-/// Why it matters: a fire crackles on with no break. An MP3 cut starts
-/// with a few milliseconds the decoder fills while it warms up, and a loop
-/// that played them would drop out at each turn.
+/// Why it matters: a fire crackles on with no break. An MP3 starts and
+/// ends with padding, and a loop that kept it would drop out at each turn.
 #[test]
 fn the_fire_never_drops_out() {
     // Given:
