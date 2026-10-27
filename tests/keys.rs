@@ -486,3 +486,27 @@ fn enter_in_a_search_starts_the_match() {
     // Then:
     assert!(listed(&app).len() >= 5, "{:?}", listed(&app));
 }
+
+/// Given: a scene running with sound on.
+/// When: `m` is pressed, then pressed again.
+/// Then: sound turns off, then on.
+///
+/// Why it matters: `m` is the one way to silence hearth while it runs.
+#[test]
+fn m_turns_the_sound_off_and_on() {
+    // Given:
+    let mut app = App::new(SceneKind::Fire, 7, corpus());
+    assert!(app.sound_on());
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char('m'))]);
+
+    // Then:
+    assert!(!app.sound_on());
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char('m'))]);
+
+    // Then:
+    assert!(app.sound_on());
+}
