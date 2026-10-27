@@ -226,10 +226,6 @@ impl App {
         std::mem::take(&mut self.cues)
     }
 
-    pub fn seed(&self) -> u64 {
-        self.panes.focused().seed
-    }
-
     pub fn saving_to(mut self, path: PathBuf) -> Self {
         self.saving = Some(path);
         self

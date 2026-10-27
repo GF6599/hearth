@@ -1,172 +1,158 @@
-//! The cues a scene sends, the synth that turns them into samples, and the
-//! speaker that plays them.
+//! The cues a scene sends, the mixer that turns them into the recordings
+//! they stand for, and the speaker that plays them.
 
-use std::f32::consts::TAU;
-use std::ops::Range;
+use std::sync::OnceLock;
 
-use rand::{RngExt, SeedableRng};
-
-use crate::scene::{Rng, TICK_RATE};
-use crate::splitmix;
-
-/// What happened in a scene on its last tick, for the synth to sound.
+/// What happened in a scene on its last tick, for the mixer to sound.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Cue {
-    /// A key struck `at` its share of the way through the tick, from 0 up
-    /// to but not including 1.
-    Key { at: f32 },
+    /// The scene typed at least one key.
+    Typing,
 }
 
-/// The clicks that can ring at once. The synth makes room for all of them
-/// when it is built, because the audio thread must not wait on the
-/// allocator. A key past the last voice is dropped.
-const VOICES: usize = 64;
-const KEY_LEVEL: Range<f32> = 0.2..0.35;
-/// The cut-off of the noise in a click, in hertz: a lower one sounds like
-/// a softer key.
-const KEY_BRIGHTNESS: Range<f32> = 2500.0..5500.0;
-/// The click loses its lows below this, so it snaps and does not thud.
-const KEY_FLOOR: f32 = 500.0;
-/// The pitch of the knock of the key case under the snap, in hertz.
-const KEY_PITCH: Range<f32> = 140.0..260.0;
-/// Seconds for the snap and for the knock to fall to about a third.
-const KEY_SNAP: Range<f32> = 0.0012..0.0022;
-const KEY_KNOCK: Range<f32> = 0.006..0.010;
-const KNOCK_SHARE: f32 = 0.5;
-/// A click ends when it has fallen this far, about 0.1 % of its start.
-const KEY_RING: f32 = 7.0;
-/// Seconds for the sound to fade in or out a third of the way, short
-/// enough to feel at once and long enough not to click.
-const FADE: f32 = 0.005;
+/// Seconds the sound keeps playing after its last cue, longer than the
+/// longest pause at the end of a line at the default speed, so the sound
+/// does not stutter at each line.
+const HOLD: f32 = 0.3;
+const FADE_IN: f32 = 0.1;
+const FADE_OUT: f32 = 0.4;
 
 #[derive(Debug)]
-struct Click {
-    /// Samples before the click starts.
-    wait: u32,
-    level: f32,
-    bright: f32,
-    floor: f32,
-    low: f32,
-    lowest: f32,
-    snap: f32,
-    snap_fall: f32,
-    knock: f32,
-    knock_fall: f32,
-    phase: f32,
-    step: f32,
+struct Recording {
+    frames: Vec<[f32; 2]>,
+    rate: u32,
 }
 
-impl Click {
-    /// The next sample, or `None` once the click has rung out.
-    fn sample(&mut self, noise: f32) -> Option<f32> {
-        if self.wait > 0 {
-            self.wait -= 1;
-            return Some(0.0);
-        }
-        if self.knock < (-KEY_RING).exp() {
-            return None;
-        }
-        self.low += self.bright * (noise - self.low);
-        self.lowest += self.floor * (self.low - self.lowest);
-        let snap = (self.low - self.lowest) * self.snap;
-        let knock = self.phase.sin() * self.knock * KNOCK_SHARE;
-        self.snap *= self.snap_fall;
-        self.knock *= self.knock_fall;
-        self.phase = (self.phase + self.step) % TAU;
-        Some(self.level * (snap + knock))
-    }
-}
-
-/// Turns cues into mono samples at one rate. It holds no device, so a test
-/// renders it offline. A seed fixes every sample.
-#[derive(Debug)]
-pub struct Synth {
-    rate: f32,
-    rng: Rng,
-    noise: u64,
-    clicks: Vec<Click>,
-    on: bool,
-    gain: f32,
-    fade: f32,
-}
-
-impl Synth {
-    pub fn new(rate: u32, seed: u64) -> Self {
-        let rate = rate as f32;
-        let mut rng = Rng::seed_from_u64(seed);
+impl Recording {
+    /// The decoder trims the encoder's delay and padding, so the recording
+    /// loops with no gap.
+    fn decode(mp3: &[u8]) -> Self {
+        let decoded = nanomp3::decode_all::<f32>(mp3);
+        let channels = decoded
+            .channels
+            .map_or(1, |channels| usize::from(channels.num()));
+        let frames = decoded
+            .samples
+            .chunks_exact(channels)
+            .map(|frame| [frame[0], frame[channels - 1]])
+            .collect();
         Self {
-            rate,
-            noise: rng.random(),
-            rng,
-            clicks: Vec::with_capacity(VOICES),
-            on: true,
-            gain: 1.0,
-            fade: 1.0 - (-1.0 / (FADE * rate)).exp(),
+            frames,
+            rate: decoded.sample_rate,
+        }
+    }
+}
+
+fn typing() -> &'static Recording {
+    static TYPING: OnceLock<Recording> = OnceLock::new();
+    TYPING.get_or_init(|| Recording::decode(include_bytes!("../sounds/typing.mp3")))
+}
+
+/// A recording that loops while its cue keeps coming, and fades out when
+/// the cue stops. It keeps its place while silent, so it goes on where it
+/// left off.
+#[derive(Debug)]
+struct Bed {
+    recording: &'static Recording,
+    /// The place in the recording, in its frames.
+    place: f64,
+    /// The recording's frames for each output frame.
+    step: f64,
+    level: f32,
+    rise: f32,
+    fall: f32,
+    /// Output frames left before the bed fades out.
+    held: u32,
+    hold: u32,
+}
+
+impl Bed {
+    fn new(recording: &'static Recording, rate: f32) -> Self {
+        Self {
+            recording,
+            place: 0.0,
+            step: f64::from(recording.rate) / f64::from(rate),
+            level: 0.0,
+            rise: 1.0 / (FADE_IN * rate),
+            fall: 1.0 / (FADE_OUT * rate),
+            held: 0,
+            hold: (HOLD * rate) as u32,
         }
     }
 
-    /// A cue that arrives while the synth is off is dropped, so it does not
-    /// play late when the sound comes back.
+    fn cue(&mut self) {
+        self.held = self.hold;
+    }
+
+    fn silence(&mut self) {
+        self.held = 0;
+        self.level = 0.0;
+    }
+
+    fn frame(&mut self) -> [f32; 2] {
+        if self.held > 0 {
+            self.held -= 1;
+            self.level = (self.level + self.rise).min(1.0);
+        } else {
+            self.level = (self.level - self.fall).max(0.0);
+        }
+        let frames = &self.recording.frames;
+        if self.level == 0.0 || frames.is_empty() {
+            return [0.0; 2];
+        }
+        let index = self.place as usize;
+        let share = (self.place - index as f64) as f32;
+        let (now, next) = (frames[index], frames[(index + 1) % frames.len()]);
+        self.place = (self.place + self.step) % frames.len() as f64;
+        [0, 1].map(|c| (now[c] + (next[c] - now[c]) * share) * self.level)
+    }
+}
+
+/// Turns cues into stereo frames at one rate. It holds no device, so a
+/// test renders it offline.
+#[derive(Debug)]
+pub struct Mixer {
+    typing: Bed,
+    on: bool,
+}
+
+impl Mixer {
+    /// Decodes each recording the first time a mixer is built, which takes
+    /// a moment, so the speaker builds its mixer before the stream starts.
+    pub fn new(rate: u32) -> Self {
+        Self {
+            typing: Bed::new(typing(), rate as f32),
+            on: true,
+        }
+    }
+
+    /// A cue that arrives while the mixer is off is dropped, so it does
+    /// not play late when the sound comes back.
     pub fn play(&mut self, cue: Cue) {
-        if !self.on || self.clicks.len() >= VOICES {
+        if !self.on {
             return;
         }
         match cue {
-            Cue::Key { at } => {
-                let tick = TICK_RATE.as_secs_f32() * self.rate;
-                let click = self.click((at.clamp(0.0, 1.0) * tick) as u32);
-                self.clicks.push(click);
-            }
+            Cue::Typing => self.typing.cue(),
         }
     }
 
-    fn click(&mut self, wait: u32) -> Click {
-        let pole = |hertz: f32| 1.0 - (-TAU * hertz / self.rate).exp();
-        let fall = |seconds: f32| (-1.0 / (seconds * self.rate)).exp();
-        Click {
-            wait,
-            level: self.rng.random_range(KEY_LEVEL),
-            bright: pole(self.rng.random_range(KEY_BRIGHTNESS)),
-            floor: pole(KEY_FLOOR),
-            low: 0.0,
-            lowest: 0.0,
-            snap: 1.0,
-            snap_fall: fall(self.rng.random_range(KEY_SNAP)),
-            knock: 1.0,
-            knock_fall: fall(self.rng.random_range(KEY_KNOCK)),
-            phase: 0.0,
-            step: TAU * self.rng.random_range(KEY_PITCH) / self.rate,
-        }
-    }
-
-    /// Off fades the sound out. On fades it in again, and the clicks that
-    /// were ringing as it went off do not come back.
     pub fn set_on(&mut self, on: bool) {
-        if on && !self.on {
-            self.clicks.clear();
-        }
         self.on = on;
-    }
-
-    pub fn render(&mut self, out: &mut [f32]) {
-        for sample in out {
-            *sample = self.sample();
+        if !on {
+            self.typing.silence();
         }
     }
 
-    /// The soft limit keeps every sample under full scale, however many
-    /// clicks ring at once.
-    pub fn sample(&mut self) -> f32 {
-        let mut mix = 0.0;
-        let noise = &mut self.noise;
-        self.clicks.retain_mut(|click| {
-            *noise = noise.wrapping_add(1);
-            let white = (splitmix::mix(*noise) >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
-            click.sample(white).map(|sample| mix += sample).is_some()
-        });
-        let target = if self.on { 1.0 } else { 0.0 };
-        self.gain += (target - self.gain) * self.fade;
-        (mix * self.gain).tanh()
+    /// Fills `out` with interleaved left and right samples.
+    pub fn render(&mut self, out: &mut [f32]) {
+        for frame in out.as_chunks_mut::<2>().0 {
+            *frame = self.frame();
+        }
+    }
+
+    pub fn frame(&mut self) -> [f32; 2] {
+        self.typing.frame()
     }
 }
 
@@ -174,7 +160,7 @@ pub use speaker::Speaker;
 #[cfg(target_os = "macos")]
 pub use speaker::stops_the_sound;
 
-/// The synth on the audio thread of the default output. Cues reach it
+/// The mixer on the audio thread of the default output. Cues reach it
 /// through a channel whose receiver takes no lock, so the audio thread
 /// never waits for the draw loop.
 #[cfg(target_os = "macos")]
@@ -183,7 +169,7 @@ mod speaker {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    use super::{Cue, Synth};
+    use super::{Cue, Mixer};
 
     enum Message {
         Cue(Cue),
@@ -212,7 +198,7 @@ mod speaker {
     }
 
     impl Speaker {
-        pub fn open(seed: u64, on: bool) -> Result<Self, String> {
+        pub fn open(on: bool) -> Result<Self, String> {
             let device = cpal::default_host()
                 .default_output_device()
                 .ok_or("no output device")?;
@@ -225,8 +211,8 @@ mod speaker {
             }
             let config = supported.config();
             let channels = usize::from(config.channels);
-            let mut synth = Synth::new(config.sample_rate, seed);
-            synth.set_on(on);
+            let mut mixer = Mixer::new(config.sample_rate);
+            mixer.set_on(on);
             let (send, receive) = mpsc::channel();
             let (failed, errors) = mpsc::channel();
             let stream = device
@@ -235,12 +221,20 @@ mod speaker {
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         while let Ok(message) = receive.try_recv() {
                             match message {
-                                Message::Cue(cue) => synth.play(cue),
-                                Message::On(on) => synth.set_on(on),
+                                Message::Cue(cue) => mixer.play(cue),
+                                Message::On(on) => mixer.set_on(on),
                             }
                         }
                         for frame in data.chunks_mut(channels) {
-                            frame.fill(synth.sample());
+                            let [left, right] = mixer.frame();
+                            match frame {
+                                [mono] => *mono = (left + right) / 2.0,
+                                [l, r, rest @ ..] => {
+                                    (*l, *r) = (left, right);
+                                    rest.fill(0.0);
+                                }
+                                [] => {}
+                            }
                         }
                     },
                     move |e: cpal::Error| {
@@ -311,7 +305,7 @@ mod speaker {
     pub struct Speaker;
 
     impl Speaker {
-        pub fn open(_seed: u64, _on: bool) -> Result<Self, String> {
+        pub fn open(_on: bool) -> Result<Self, String> {
             Err("sound plays on macOS only".to_string())
         }
 

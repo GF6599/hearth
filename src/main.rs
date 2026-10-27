@@ -60,7 +60,7 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
         }
     };
 
-    let mut speaker = Speaker::open(app.seed(), app.sound_on())
+    let mut speaker = Speaker::open(app.sound_on())
         .map_err(|reason| app.without_sound(&reason))
         .ok();
 

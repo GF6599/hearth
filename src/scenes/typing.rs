@@ -720,16 +720,15 @@ impl Scene for Typing {
         self.credit += self.speed.per_tick() * self.rng.random_range(JITTER);
         let presses = self.credit.floor();
         self.credit -= presses;
-        // A press lands at its share of the tick, so the keys of one tick
-        // sound one after another and not as a chord.
-        for press in 0..presses as u32 {
-            if self.press() {
-                let at = (f64::from(press) / presses) as f32;
-                self.cues.push(Cue::Key { at });
-            }
+        let mut typed = false;
+        for _ in 0..presses as u32 {
+            typed |= self.press();
             if self.scroll.is_some() {
                 break;
             }
+        }
+        if typed {
+            self.cues.push(Cue::Typing);
         }
     }
 
