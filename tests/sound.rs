@@ -9,7 +9,7 @@ use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::pane::Direction;
 use hearth::scene::{QUARTERS_PER_TICK, Rate, SceneKind, TICK_RATE};
-use hearth::sound::{Cue, Mixer};
+use hearth::sound::{Cue, Mixer, Volume};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -287,6 +287,71 @@ fn turning_the_mixer_off_silences_the_fire_at_once() {
 
     // Then:
     assert_eq!(loudest(after.as_flattened()), 0.0);
+}
+
+/// Given: a mixer at full volume and a mixer at 50%.
+/// When: both get the fire cue on every tick for three seconds.
+/// Then: after the fade in, the one at 50% plays about 6 dB lower.
+///
+/// Why it matters: a volume must change how loud hearth plays and nothing
+/// else, so 50% is half the amplitude of the same sound.
+#[test]
+fn half_volume_plays_the_same_cues_six_db_lower() {
+    // Given:
+    let mut full = Mixer::new(RATE);
+    let mut half = Mixer::new(RATE);
+    half.set_volume(Volume::from_percent(50).unwrap());
+
+    // When:
+    let loud = played(&mut full, ticks(3.0), Cue::Fire, |_| true);
+    let quiet = played(&mut half, ticks(3.0), Cue::Fire, |_| true);
+
+    // Then:
+    let drop = decibels(quiet[seconds(0.5)..].as_flattened())
+        - decibels(loud[seconds(0.5)..].as_flattened());
+    assert!((-6.2..=-5.8).contains(&drop), "{drop} dB");
+}
+
+/// Given: a mixer at 0% volume.
+/// When: the typing cue and the fire cue come on every tick for three
+/// seconds.
+/// Then: every frame is silent.
+///
+/// Why it matters: 0% is the quietest level `[` reaches, and a user who
+/// chooses it expects no sound.
+#[test]
+fn zero_volume_is_silent() {
+    // Given:
+    let mut mixer = Mixer::new(RATE);
+    mixer.set_volume(Volume::from_percent(0).unwrap());
+
+    // When:
+    let mut frames = vec![0.0; tick_samples() * 2];
+    let mut heard = 0.0_f32;
+    for _ in 0..ticks(3.0) {
+        mixer.play(Cue::Typing);
+        mixer.play(Cue::Fire);
+        mixer.render(&mut frames);
+        heard = heard.max(loudest(&frames));
+    }
+
+    // Then:
+    assert_eq!(heard, 0.0);
+}
+
+/// Given: the whole numbers from -10 to 110.
+/// When: each is read as a volume.
+/// Then: only 0, 10, 20 and so on up to 100 are volumes.
+///
+/// Why it matters: `[` and `]` step the volume by 10%, so a level off that
+/// grid could never come back to a round one.
+#[test]
+fn a_volume_is_a_step_of_ten_from_0_to_100() {
+    let volumes: Vec<i64> = (-10..=110)
+        .filter(|percent| Volume::from_percent(*percent).is_ok())
+        .collect();
+
+    assert_eq!(volumes, vec![0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
 }
 
 fn config_file(name: &str, text: &str) -> PathBuf {
