@@ -92,6 +92,7 @@ repo = "rust-lang/rust"   # what the typing scene types and the river draws. Abs
 theme = "rose-pine-dawn"  # rose-pine, rose-pine-moon, rose-pine-dawn, catppuccin-mocha, catppuccin-latte, tokyo-night, tokyo-night-day, kanagawa-wave, kanagawa-lotus, dracula, dracula-alucard, solarized-dark or solarized-light. Absent: rose-pine
 background = "terminal"   # theme or terminal. Absent: theme
 sound = false             # true or false. Absent: true
+volume = 60               # percent, from 0 to 100 in steps of 10. Absent: 100
 
 [speed]
 typing = 50     # keystrokes per second, from 1 to 1000
@@ -133,11 +134,12 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 | `h` `j` `k` `l` | Move to the pane on that side, also the arrows |
 | `t` | Next colour theme |
 | `m` | Turn the sound off or on |
+| `[` / `]` | Make the sound quieter or louder by 10% |
 | `q` / `Ctrl-c` | Quit |
 
 ### Sound
 
-While the typing scene types, it plays a recording of a mechanical keyboard at a person's own pace, so the sound stays calm at any typing speed. The sound carries over the pause at the end of a line and fades out while a function holds and scrolls away. The recording is "Custom Mechanical Keyboard" by tofu_delivery on [Freesound](https://freesound.org/people/tofu_delivery/sounds/588650/), in the public domain (CC0). The fire scene plays a binaural recording of a crackling fire, which sounds best on headphones: "(binaural) fire crackling" by yfjesse on [Freesound](https://freesound.org/people/yfjesse/sounds/734248/), also CC0. `just sounds` cuts both recordings again from their sources. With split panes, only the focused pane plays, and a focus move fades one sound out and the next one in. Sound is on until `m` turns it off, and `m` saves the choice to the config file the way `t` saves the theme. Sound plays on macOS. On Linux, or with no output device, hearth runs silent and the notice says why.
+While the typing scene types, it plays a recording of a mechanical keyboard at a person's own pace, so the sound stays calm at any typing speed. The sound carries over the pause at the end of a line and fades out while a function holds and scrolls away. The recording is "Custom Mechanical Keyboard" by tofu_delivery on [Freesound](https://freesound.org/people/tofu_delivery/sounds/588650/), in the public domain (CC0). The fire scene plays a binaural recording of a crackling fire, which sounds best on headphones: "(binaural) fire crackling" by yfjesse on [Freesound](https://freesound.org/people/yfjesse/sounds/734248/), also CC0. `just sounds` cuts both recordings again from their sources. With split panes, only the focused pane plays, and a focus move fades one sound out and the next one in. Sound is on until `m` turns it off, and `m` saves the choice to the config file the way `t` saves the theme. `[` and `]` set the volume from 0% to 100% on top of the system volume and save it the same way, and `m` keeps the volume for when the sound comes back. Sound plays on macOS. On Linux, or with no output device, hearth runs silent and the notice says why.
 
 ### Panes
 
