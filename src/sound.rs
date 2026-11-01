@@ -40,6 +40,14 @@ impl Volume {
             .ok_or_else(Self::range_message)
     }
 
+    pub fn louder(self) -> Volume {
+        Volume((self.0 + Self::STEP).min(Self::FULL.0))
+    }
+
+    pub fn quieter(self) -> Volume {
+        Volume(self.0.saturating_sub(Self::STEP))
+    }
+
     pub fn percent(self) -> u8 {
         self.0
     }
@@ -228,11 +236,12 @@ mod speaker {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    use super::{Cue, Mixer};
+    use super::{Cue, Mixer, Volume};
 
     enum Message {
         Cue(Cue),
         On(bool),
+        Volume(Volume),
     }
 
     /// A glitch passes, and macOS moves the stream to a new default device
@@ -245,6 +254,7 @@ mod speaker {
         send: Sender<Message>,
         errors: Receiver<String>,
         on: bool,
+        volume: Volume,
         stream: cpal::Stream,
     }
 
@@ -257,7 +267,7 @@ mod speaker {
     }
 
     impl Speaker {
-        pub fn open(on: bool) -> Result<Self, String> {
+        pub fn open(on: bool, volume: Volume) -> Result<Self, String> {
             let device = cpal::default_host()
                 .default_output_device()
                 .ok_or("no output device")?;
@@ -272,6 +282,7 @@ mod speaker {
             let channels = usize::from(config.channels);
             let mut mixer = Mixer::new(config.sample_rate);
             mixer.set_on(on);
+            mixer.set_volume(volume);
             let (send, receive) = mpsc::channel();
             let (failed, errors) = mpsc::channel();
             let stream = device
@@ -282,6 +293,7 @@ mod speaker {
                             match message {
                                 Message::Cue(cue) => mixer.play(cue),
                                 Message::On(on) => mixer.set_on(on),
+                                Message::Volume(volume) => mixer.set_volume(volume),
                             }
                         }
                         for frame in data.chunks_mut(channels) {
@@ -308,6 +320,7 @@ mod speaker {
                 send,
                 errors,
                 on,
+                volume,
                 stream,
             };
             speaker.run()?;
@@ -336,6 +349,13 @@ mod speaker {
             self.run()
         }
 
+        pub fn set_volume(&mut self, volume: Volume) {
+            if volume != self.volume {
+                self.volume = volume;
+                let _ = self.send.send(Message::Volume(volume));
+            }
+        }
+
         /// The stream stops while the sound is off, so a muted hearth
         /// keeps the audio device idle.
         fn run(&self) -> Result<(), String> {
@@ -358,13 +378,13 @@ mod speaker {
 /// and the release links its Linux builds with zig, which has no copy of it.
 #[cfg(not(target_os = "macos"))]
 mod speaker {
-    use super::Cue;
+    use super::{Cue, Volume};
 
     #[derive(Debug)]
     pub struct Speaker;
 
     impl Speaker {
-        pub fn open(_on: bool) -> Result<Self, String> {
+        pub fn open(_on: bool, _volume: Volume) -> Result<Self, String> {
             Err("sound plays on macOS only".to_string())
         }
 
@@ -373,6 +393,8 @@ mod speaker {
         pub fn set_on(&mut self, _on: bool) -> Result<(), String> {
             Ok(())
         }
+
+        pub fn set_volume(&mut self, _volume: Volume) {}
 
         pub fn take_error(&self) -> Option<String> {
             None

@@ -107,6 +107,8 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('x') => app.close_pane(),
             KeyCode::Char('t') => app.next_theme(),
             KeyCode::Char('m') => app.toggle_sound(),
+            KeyCode::Char('[') => app.quieter(),
+            KeyCode::Char(']') => app.louder(),
             _ => {}
         }
     }

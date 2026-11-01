@@ -13,7 +13,7 @@ use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
 use crate::scene::{ALL, FRAMES_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
-use crate::sound::Cue;
+use crate::sound::{Cue, Volume};
 use crate::theme::{self, Palette};
 use toml_edit::Value;
 
@@ -66,6 +66,7 @@ pub struct App {
     /// The area of the last frame, so a resize draws the screen again.
     area: Rect,
     sound: bool,
+    volume: Volume,
     /// Why no sound can play, when none can.
     silent: Option<String>,
     /// The cues of the focused pane since the last `take_cues`.
@@ -144,6 +145,7 @@ impl App {
             redraw: true,
             area: Rect::default(),
             sound: config.sound.unwrap_or(true),
+            volume: config.volume,
             silent: None,
             cues: Vec::new(),
             unheard: Vec::new(),
@@ -206,6 +208,30 @@ impl App {
             (true, None) => "sound on".to_string(),
             (true, Some(reason)) => format!("sound on, no sound: {reason}"),
         };
+        self.notice = NOTICE_FRAMES;
+        self.redraw = true;
+    }
+
+    pub fn volume(&self) -> Volume {
+        self.volume
+    }
+
+    pub fn louder(&mut self) {
+        self.set_volume(self.volume.louder());
+    }
+
+    pub fn quieter(&mut self) {
+        self.set_volume(self.volume.quieter());
+    }
+
+    fn set_volume(&mut self, volume: Volume) {
+        self.volume = volume;
+        let saved = match &self.saving {
+            Some(path) => config::save_volume(path, volume),
+            None => Ok(()),
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = format!("volume {}%", volume.percent());
         self.notice = NOTICE_FRAMES;
         self.redraw = true;
     }

@@ -60,7 +60,7 @@ fn run_tui(mut app: App) -> std::io::Result<()> {
         }
     };
 
-    let mut speaker = Speaker::open(app.sound_on())
+    let mut speaker = Speaker::open(app.sound_on(), app.volume())
         .map_err(|reason| app.without_sound(&reason))
         .ok();
 
@@ -101,6 +101,7 @@ fn play(app: &mut App, speaker: &mut Option<Speaker>) {
     let Some(open) = speaker else {
         return;
     };
+    open.set_volume(app.volume());
     let failed = open
         .set_on(app.sound_on())
         .err()

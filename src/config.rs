@@ -237,6 +237,17 @@ pub fn save_sound(path: &Path, on: bool) -> io::Result<()> {
     replace(path, &document.to_string())
 }
 
+/// Sets the volume, the same way.
+pub fn save_volume(path: &Path, volume: Volume) -> io::Result<()> {
+    let mut document = read_document(path)?;
+    set_in_place(
+        document.as_table_mut(),
+        "volume",
+        Value::from(i64::from(volume.percent())),
+    );
+    replace(path, &document.to_string())
+}
+
 fn read_document(path: &Path) -> io::Result<DocumentMut> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
