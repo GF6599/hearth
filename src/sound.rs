@@ -18,6 +18,39 @@ const HOLD: f32 = 0.3;
 const FADE_IN: f32 = 0.1;
 const FADE_OUT: f32 = 0.4;
 
+/// How loud hearth plays, on top of the system volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Volume(u8);
+
+impl Volume {
+    pub const FULL: Volume = Volume(100);
+    const STEP: u8 = 10;
+
+    pub fn from_percent(percent: i64) -> Result<Volume, String> {
+        u8::try_from(percent)
+            .ok()
+            .filter(|percent| *percent <= Self::FULL.0 && percent % Self::STEP == 0)
+            .map(Volume)
+            .ok_or_else(Self::range_message)
+    }
+
+    pub fn percent(self) -> u8 {
+        self.0
+    }
+
+    pub fn range_message() -> String {
+        format!(
+            "a volume is a percent from 0 to {} in steps of {}",
+            Self::FULL.0,
+            Self::STEP
+        )
+    }
+
+    fn gain(self) -> f32 {
+        f32::from(self.0) / f32::from(Self::FULL.0)
+    }
+}
+
 #[derive(Debug)]
 struct Recording {
     frames: Vec<[f32; 2]>,
@@ -121,6 +154,7 @@ pub struct Mixer {
     typing: Bed,
     fire: Bed,
     on: bool,
+    gain: f32,
 }
 
 impl Mixer {
@@ -131,6 +165,7 @@ impl Mixer {
             typing: Bed::new(typing(), rate as f32),
             fire: Bed::new(fire(), rate as f32),
             on: true,
+            gain: Volume::FULL.gain(),
         }
     }
 
@@ -154,6 +189,10 @@ impl Mixer {
         }
     }
 
+    pub fn set_volume(&mut self, volume: Volume) {
+        self.gain = volume.gain();
+    }
+
     /// Fills `out` with interleaved left and right samples.
     pub fn render(&mut self, out: &mut [f32]) {
         for frame in out.as_chunks_mut::<2>().0 {
@@ -163,7 +202,10 @@ impl Mixer {
 
     pub fn frame(&mut self) -> [f32; 2] {
         let (typing, fire) = (self.typing.frame(), self.fire.frame());
-        [typing[0] + fire[0], typing[1] + fire[1]]
+        [
+            (typing[0] + fire[0]) * self.gain,
+            (typing[1] + fire[1]) * self.gain,
+        ]
     }
 }
 
