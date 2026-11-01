@@ -22,6 +22,12 @@ const FADE_OUT: f32 = 0.4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Volume(u8);
 
+impl Default for Volume {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
 impl Volume {
     pub const FULL: Volume = Volume(100);
     const STEP: u8 = 10;

@@ -1,6 +1,6 @@
 //! The preferences a user keeps between runs: the scene to start, the
-//! repository to type, the colour theme and its background, the sound, and
-//! the speed of each scene.
+//! repository to type, the colour theme and its background, the sound and
+//! its volume, and the speed of each scene.
 
 use std::fs;
 use std::io::{self, Write};
@@ -11,6 +11,7 @@ use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::{Shortest, Speed};
+use crate::sound::Volume;
 use crate::theme;
 
 /// What shows where a scene is empty.
@@ -32,6 +33,7 @@ pub struct Config {
     pub background: Background,
     /// `None` where the file does not set it, which plays sound.
     pub sound: Option<bool>,
+    pub volume: Volume,
     pub typing: Option<Speed>,
     pub hourglass: Lengths,
     pub shortest: Shortest,
@@ -105,12 +107,19 @@ impl Config {
                     config.sound =
                         Some(on.ok_or_else(|| fail("sound must be true or false".into()))?);
                 }
+                "volume" => {
+                    let volume = item
+                        .as_integer()
+                        .ok_or_else(Volume::range_message)
+                        .and_then(Volume::from_percent);
+                    config.volume = volume.map_err(|e| fail(format!("volume: {e}")))?;
+                }
                 "speed" => config.read_speeds(item).map_err(fail)?,
                 "hourglass" => config.read_lengths(item).map_err(fail)?,
                 "typing" => config.read_typing(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo, theme, background, sound, speed, hourglass and typing"
+                        "{other} is not a setting. The settings are scene, repo, theme, background, sound, volume, speed, hourglass and typing"
                     )));
                 }
             }
