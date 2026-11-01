@@ -12,6 +12,7 @@ use hearth::corpus::Corpus;
 use hearth::mark;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
+use hearth::sound::Volume;
 use hearth::theme::{self, Palette};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -162,6 +163,9 @@ fn a_bad_value_names_the_file_and_the_key() {
         ("half", "[typing]\nshortest = \"half\"\n", "typing.shortest"),
         ("fill-unknown", "[typing]\nlongest = 1\n", "typing.longest"),
         ("fill-flat", "typing = 0.5\n", "typing"),
+        ("off-step", "volume = 65\n", "volume"),
+        ("too-loud", "volume = 110\n", "volume"),
+        ("loud", "volume = \"loud\"\n", "volume"),
         ("broken", "[speed\n", ""),
     ];
     for (name, text, key) in cases {
@@ -218,6 +222,34 @@ fn the_background_is_the_themes_unless_the_file_asks_for_the_terminals() {
     let path = config_file("bg-unknown", Some("backdrop = \"terminal\"\n"));
     let error = Config::load(&path).unwrap_err();
     assert!(error.contains("background"), "{error}");
+}
+
+/// Given: files with no volume, with `volume = 60`, and with `volume = 0`.
+/// When: each loads.
+/// Then: the first plays at 100%, the second at 60%, and the third at 0%.
+///
+/// Why it matters: hearth must not play quieter for a user who never
+/// chose a volume.
+#[test]
+fn the_volume_is_full_unless_the_file_sets_one() {
+    for (name, text, percent) in [
+        ("volume-none", "", 100),
+        ("volume-60", "volume = 60\n", 60),
+        ("volume-0", "volume = 0\n", 0),
+    ] {
+        // Given:
+        let path = config_file(name, Some(text));
+
+        // When:
+        let config = Config::load(&path).unwrap();
+
+        // Then:
+        assert_eq!(
+            config.volume,
+            Volume::from_percent(percent).unwrap(),
+            "{name}"
+        );
+    }
 }
 
 /// Given: a file with a comment above the table, one above `fire`, one
