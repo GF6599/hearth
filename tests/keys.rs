@@ -487,6 +487,31 @@ fn enter_in_a_search_starts_the_match() {
     assert!(listed(&app).len() >= 5, "{:?}", listed(&app));
 }
 
+/// Given: a scene running at full volume.
+/// When: `[` is pressed, then `]`.
+/// Then: the volume goes down to 90%, then back up to 100%.
+///
+/// Why it matters: `[` and `]` are the one way to set the volume while
+/// hearth runs.
+#[test]
+fn brackets_lower_and_raise_the_volume() {
+    // Given:
+    let mut app = App::new(SceneKind::Fire, 7, corpus());
+    assert_eq!(app.volume().percent(), 100);
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char('['))]);
+
+    // Then:
+    assert_eq!(app.volume().percent(), 90);
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char(']'))]);
+
+    // Then:
+    assert_eq!(app.volume().percent(), 100);
+}
+
 /// Given: a scene running with sound on.
 /// When: `m` is pressed, then pressed again.
 /// Then: sound turns off, then on.

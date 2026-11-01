@@ -448,6 +448,55 @@ fn a_toggle_turns_sound_off_and_on_and_saves_it() {
     assert!(header(&app).contains("sound on"), "{}", header(&app));
 }
 
+/// Given: hearth started from a config file with `volume = 60` and a
+/// comment.
+/// When: the volume goes up five times, then down eleven times, saving to
+/// the file, and hearth starts again from it.
+/// Then: it stops at 100% and at 0%, the notice names each level, the file
+/// keeps the comment, and the new start plays at 0%.
+///
+/// Why it matters: a volume that does not last until the next start makes
+/// the user set it on every run.
+#[test]
+fn the_volume_steps_stops_at_the_ends_and_is_saved() {
+    // Given:
+    let path = config_file("volume", "# my settings\nvolume = 60\n");
+    let start = |path: &PathBuf| {
+        let config = Config::load(path).unwrap();
+        App::configured(
+            Some(SceneKind::Fire),
+            7,
+            Arc::new(Corpus::embedded()),
+            &config,
+        )
+        .saving_to(path.clone())
+    };
+    let mut app = start(&path);
+    assert_eq!(app.volume().percent(), 60);
+
+    // When:
+    for _ in 0..5 {
+        app.louder();
+    }
+
+    // Then:
+    assert_eq!(app.volume().percent(), 100);
+    assert!(header(&app).contains("volume 100%"), "{}", header(&app));
+    assert_eq!(Config::load(&path).unwrap().volume.percent(), 100);
+
+    // When:
+    for _ in 0..11 {
+        app.quieter();
+    }
+    let again = start(&path);
+
+    // Then:
+    assert_eq!(app.volume().percent(), 0);
+    assert!(header(&app).contains("volume 0%"), "{}", header(&app));
+    assert!(fs::read_to_string(&path).unwrap().contains("# my settings"));
+    assert_eq!(again.volume().percent(), 0);
+}
+
 /// Given: a config file with `sound = false`.
 /// When: hearth starts from it.
 /// Then: sound is off.
