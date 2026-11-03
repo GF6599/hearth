@@ -665,3 +665,29 @@ fn the_typing_table_takes_a_share_from_0_to_1() {
     let error = Config::load(&path).unwrap_err();
     assert!(error.contains("typing"), "{error}");
 }
+
+/// A save goes through when a crash left the temp file of an earlier save.
+/// Given: a config file, and beside it a temp file at the name this process
+/// saves through.
+/// When: the volume is saved.
+/// Then: the save succeeds and the file holds the volume.
+///
+/// Why it matters: a process id comes back after a reboot, and a temp file
+/// that blocks every save from it loses each change the user makes.
+#[test]
+fn a_stale_temp_file_does_not_block_a_save() {
+    // Given:
+    let path = config_file("stale-temp", Some("theme = \"dracula\"\n"));
+    let folder = path.parent().unwrap().canonicalize().unwrap();
+    let stale = folder.join(format!(".config.toml.{}.tmp", std::process::id()));
+    fs::write(&stale, "half a save\n").unwrap();
+
+    // When:
+    let saved = hearth::config::save_volume(&path, Volume::from_percent(40).unwrap());
+
+    // Then:
+    assert!(saved.is_ok(), "{saved:?}");
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("volume = 40"), "{text}");
+    assert!(text.contains("theme = \"dracula\""), "{text}");
+}
