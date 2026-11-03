@@ -18,7 +18,7 @@ use crate::theme::{self, Palette};
 use toml_edit::Value;
 
 /// Frames a changed speed stays on screen: 16 ticks, about one second.
-const NOTICE_FRAMES: u32 = 16 * FRAMES_PER_TICK;
+pub const NOTICE_FRAMES: u32 = 16 * FRAMES_PER_TICK;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {

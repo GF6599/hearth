@@ -17,7 +17,7 @@ use events::{letter, send};
 const AREA: Rect = Rect::new(0, 0, 60, 20);
 
 /// The frames the speed notice stays on screen.
-const NOTICE_FRAMES: usize = 16 * FRAMES_PER_TICK as usize;
+const NOTICE_FRAMES: usize = hearth::app::NOTICE_FRAMES as usize;
 
 fn picture(app: &App, area: Rect) -> Buffer {
     let mut buffer = Buffer::empty(area);

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::KeyCode;
-use hearth::app::App;
+use hearth::app::{App, NOTICE_FRAMES};
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::mark;
@@ -28,7 +28,6 @@ const WIDE: Rect = Rect::new(0, 0, 120, 30);
 
 /// The ticks a changed speed stays on screen, as it did when the app drew
 /// one frame a tick.
-const NOTICE_TICKS: u32 = 16;
 
 fn row_text(buffer: &Buffer, y: u16) -> String {
     (buffer.area.x..buffer.area.right())
@@ -198,7 +197,7 @@ fn the_notice_lasts_as_long_as_before() {
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
 
     // When, then:
-    let frames = NOTICE_TICKS * FRAMES_PER_TICK;
+    let frames = NOTICE_FRAMES;
     for frame in 1..frames {
         app.frame(AREA);
         assert!(header(&app).contains("1.5×"), "frame {frame}");
