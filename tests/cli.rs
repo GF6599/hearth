@@ -126,10 +126,11 @@ fn a_repository_with_no_function_is_refused_at_startup() {
     assert!(!stderr.contains("no function"), "{stderr}");
 }
 
-/// Given: no `HOME` and no `XDG_CONFIG_HOME`, and a bad config file in the
-/// temp folder, where any user on the machine can put one.
-/// When: hearth starts fire.
-/// Then: it does not read that file.
+/// Given: a bad config file in the temp folder, where any user on the
+/// machine can put one.
+/// When: hearth starts fire with `XDG_CONFIG_HOME` on that folder, and
+/// again with no `HOME` and no `XDG_CONFIG_HOME`.
+/// Then: the first start refuses the file, and the second does not read it.
 ///
 /// Why it matters: a config read from a shared folder lets another user
 /// choose the repository hearth runs git in, and a symlink planted there
@@ -146,19 +147,29 @@ fn no_home_folder_means_no_config_file() {
     )
     .unwrap();
 
+    let fire = |xdg: Option<&Path>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_hearth"));
+        command
+            .arg("fire")
+            .env_remove("HOME")
+            .env_remove("XDG_CONFIG_HOME")
+            .env("TMPDIR", &temp);
+        if let Some(xdg) = xdg {
+            command.env("XDG_CONFIG_HOME", xdg);
+        }
+        let output = command.output().unwrap();
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let refused = "scene must be";
+
     // When:
-    let output = Command::new(env!("CARGO_BIN_EXE_hearth"))
-        .arg("fire")
-        .env_remove("HOME")
-        .env_remove("XDG_CONFIG_HOME")
-        .env("TMPDIR", &temp)
-        .output()
-        .unwrap();
+    let read = fire(Some(&temp));
+    let unread = fire(None);
     let _ = fs::remove_dir_all(&temp);
 
     // Then:
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("scene must be"), "{stderr}");
+    assert!(read.contains(refused), "{read}");
+    assert!(!unread.contains(refused), "{unread}");
 }
 
 /// Runs `args` in a new pseudo terminal through `script`, so hearth opens
