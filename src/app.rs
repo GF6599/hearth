@@ -137,7 +137,7 @@ impl App {
             preview: None,
             preview_credit: 0,
             mode: Mode::Running,
-            selected: slot_of(kind),
+            selected: kind.slot(),
             picker_top: 0,
             query: None,
             frames: 0,
@@ -298,7 +298,7 @@ impl App {
         let focus = self.panes.focus();
         for (index, (pane, inside)) in self.panes.iter_mut().zip(&layout.panes).enumerate() {
             if Some(index) != picking {
-                self.redraw |= pane.tick(self.rates[slot_of(pane.kind)], *inside);
+                self.redraw |= pane.tick(self.rates[pane.kind.slot()], *inside);
             }
             let heard = index == focus && picking.is_none();
             pane.drain_cues(if heard {
@@ -425,12 +425,12 @@ impl App {
         match kind {
             SceneKind::Typing => format!("{} cps", self.speed),
             SceneKind::Hourglass => self.settings.lengths.to_string(),
-            _ => self.rates[slot_of(kind)].to_string(),
+            _ => self.rates[kind.slot()].to_string(),
         }
     }
 
     fn slot(&self) -> usize {
-        slot_of(self.panes.focused().kind)
+        self.panes.focused().kind.slot()
     }
 
     pub fn restart(&mut self) {
@@ -620,7 +620,7 @@ impl App {
             self.settings,
         );
         self.panes.split(split, pane);
-        self.selected = slot_of(kind);
+        self.selected = kind.slot();
         self.fresh = true;
         self.open_picker();
     }
@@ -651,7 +651,7 @@ impl App {
     fn switch_to(&mut self, kind: SceneKind) {
         self.fresh = false;
         self.panes.focused_mut().kind = kind;
-        self.selected = slot_of(kind);
+        self.selected = kind.slot();
         self.mode = Mode::Running;
         self.preview = None;
         self.restart();
@@ -672,8 +672,4 @@ fn palette(theme: usize, background: Background) -> &'static Palette {
         Background::Theme => theme::THEMES[theme].1,
         Background::Terminal => &theme::FLAT_THEMES[theme],
     }
-}
-
-fn slot_of(kind: SceneKind) -> usize {
-    ALL.iter().position(|k| *k == kind).unwrap_or(0)
 }

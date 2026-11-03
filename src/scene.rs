@@ -383,8 +383,11 @@ impl SceneKind {
         }
     }
 
+    pub fn slot(self) -> usize {
+        ALL.iter().position(|kind| *kind == self).unwrap_or(0)
+    }
+
     pub fn next(self) -> SceneKind {
-        let index = ALL.iter().position(|kind| *kind == self).unwrap_or(0);
-        ALL[(index + 1) % ALL.len()]
+        ALL[(self.slot() + 1) % ALL.len()]
     }
 }

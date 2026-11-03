@@ -157,9 +157,7 @@ impl Config {
             let rate = times
                 .and_then(Rate::from_times)
                 .ok_or_else(|| format!("speed.{name} must be one of {}", Rate::all_times()))?;
-            if let Some(slot) = ALL.iter().position(|each| *each == kind) {
-                self.rates[slot] = Some(rate);
-            }
+            self.rates[kind.slot()] = Some(rate);
         }
         Ok(())
     }
