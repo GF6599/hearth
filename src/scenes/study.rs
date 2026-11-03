@@ -6,6 +6,13 @@
 
 use std::ops::Range;
 
+/// Ticks between two flickers of the lamp, and between two flicks of the
+/// cat's tail.
+const FLICKER_EVERY: Range<u32> = 300..900;
+const FLICK_EVERY: Range<u32> = 80..250;
+/// Pixels behind each wisp of steam at which its trail draws again.
+const STEAM_TRAIL: [f64; 3] = [0.0, 8.0, 16.0];
+
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -362,8 +369,8 @@ impl Study {
         let lines = SCREEN.3 / 2;
         study.screen = (0..lines).map(|_| study.code()).collect();
         study.rain = (0..DROPS).map(|_| study.streak(false)).collect();
-        study.next_flicker = study.rng.random_range(300..900);
-        study.next_flick = study.rng.random_range(80..250);
+        study.next_flicker = study.rng.random_range(FLICKER_EVERY);
+        study.next_flick = study.rng.random_range(FLICK_EVERY);
         study
     }
 
@@ -480,7 +487,7 @@ impl Study {
         let scale = LETTER as f64;
         let last = self.steam_shades.len() - 1;
         for &(age, sway) in &self.steam {
-            for behind in [0.0, 8.0, 16.0] {
+            for behind in STEAM_TRAIL {
                 let age = age + self.progress - behind;
                 if age < 0.0 {
                     continue;
@@ -594,7 +601,7 @@ impl Scene for Study {
         }
         // A wisp goes once the last letter of steam that follows it has
         // risen out of the steam's area.
-        let gone = SPOUT.1 - STEAM.1 as f64 + 1.0 + 16.0 * RISE;
+        let gone = SPOUT.1 - STEAM.1 as f64 + 1.0 + STEAM_TRAIL[STEAM_TRAIL.len() - 1] * RISE;
         self.steam.retain(|(age, _)| age * RISE < gone);
         if self.next_wisp == 0 {
             let sway = self.rng.random_range(0.0..std::f64::consts::TAU);
@@ -607,14 +614,14 @@ impl Scene for Study {
             self.flicker -= 1;
         } else if self.next_flicker == 0 {
             self.flicker = 7;
-            self.next_flicker = self.rng.random_range(300..900);
+            self.next_flicker = self.rng.random_range(FLICKER_EVERY);
         } else {
             self.next_flicker -= 1;
         }
         self.flick = match self.flick {
             Some(tick) if tick + 1 < FLICK.len() * FLICK_TICKS => Some(tick + 1),
             Some(_) => {
-                self.next_flick = self.rng.random_range(80..250);
+                self.next_flick = self.rng.random_range(FLICK_EVERY);
                 None
             }
             None if self.next_flick == 0 => Some(0),
