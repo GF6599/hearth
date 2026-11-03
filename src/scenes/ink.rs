@@ -65,7 +65,10 @@ const PIXELS_DOWN: usize = CELL_HEIGHT / UNITS_DOWN;
 const SHADES: f32 = dither::SHADES as f32;
 
 /// The roles a drop can take, in the order `shade` reads its inks.
-pub fn accents(palette: &Palette) -> [Color; 5] {
+/// Count of the colours the ink falls in.
+pub const ACCENTS: usize = 5;
+
+pub fn accents(palette: &Palette) -> [Color; ACCENTS] {
     [
         palette.love,
         palette.iris,
@@ -122,7 +125,7 @@ impl Tones {
     /// most mix by the shares of the ink they hold, the first of two with
     /// the same ink taking the lead. The total mixes the water toward that
     /// blend, all the way at `FULL_INK`.
-    pub fn shade(&self, inks: &[f32; 5], x: usize, row: usize) -> Color {
+    pub fn shade(&self, inks: &[f32; ACCENTS], x: usize, row: usize) -> Color {
         let total: f32 = inks.iter().sum();
         let share = (total / FULL_INK).min(1.0);
         let step = (share * TONES as f32 + (dither::rank(x, row) as f32 + 0.5) / SHADES) as usize;
@@ -329,11 +332,10 @@ impl Ink {
     }
 
     fn drop_one(&mut self) {
-        let count = accents(self.palette).len();
         let accent = match self.last_accent {
-            None => self.rng.random_range(0..count),
+            None => self.rng.random_range(0..ACCENTS),
             Some(last) => {
-                let other = self.rng.random_range(0..count - 1);
+                let other = self.rng.random_range(0..ACCENTS - 1);
                 if other >= last { other + 1 } else { other }
             }
         };
@@ -360,9 +362,9 @@ impl Ink {
     /// so a cloud is one smooth density that fades at its edge and does not
     /// break into lone pixels. The shares always sum to one, so a cloud
     /// that glides keeps its ink.
-    fn inks(&self) -> Vec<[f32; 5]> {
+    fn inks(&self) -> Vec<[f32; ACCENTS]> {
         let (columns, rows) = (self.width * PIXELS_ACROSS, self.rows * PIXELS_DOWN);
-        let mut inks = vec![[0.0_f32; 5]; columns * rows];
+        let mut inks = vec![[0.0_f32; ACCENTS]; columns * rows];
         for drop in &self.drops {
             for particle in &drop.particles {
                 let (x, y) = self.inside(
