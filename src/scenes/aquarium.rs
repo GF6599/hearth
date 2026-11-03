@@ -312,13 +312,11 @@ impl Scene for Aquarium {
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let (width, height) = (area.width.min(self.size.0), area.height.min(self.size.1));
-        let inside =
-            |x: i32, y: i32| x >= 0 && y >= 0 && x < i32::from(width) && y < i32::from(height);
         let mut put = |x: i32, y: i32, glyph: char, colour: Color| {
-            if inside(x, y) {
-                let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else {
-                    return;
-                };
+            if let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y))
+                && x < width
+                && y < height
+            {
                 buf[(area.x + x, area.y + y)].set_char(glyph).set_fg(colour);
             }
         };

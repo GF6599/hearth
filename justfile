@@ -14,7 +14,6 @@ run *args:
 [group('run')]
 demo:
     cargo build --locked --release
-    mkdir -p doc
     vhs demo.tape
 
 # Cut each sound recording from its CC0 preview on Freesound, with no

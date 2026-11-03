@@ -403,7 +403,7 @@ impl Scene for Solar {
         self.width = area.width;
         self.height = area.height;
         self.time = self.time.wrapping_add(1);
-        if resized || self.backdrop.is_none() {
+        if resized {
             self.backdrop = Some(self.backdrop(area.width, area.height));
         }
     }
