@@ -369,6 +369,9 @@ fn plus_twice_runs_a_scene_at_twice_its_pace() {
 /// default, fire shows `1.5×` after its own 2×, and the scene after fire
 /// shows `1×` after its own `1.5×`.
 ///
+/// Why it matters: one shared speed carries the last scene's change into
+/// the next scene, and a speed that a restart, Tab or the picker resets is
+/// lost each time the user moves.
 #[test]
 fn each_scene_keeps_its_own_speed() {
     // Given:
