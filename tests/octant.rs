@@ -1089,3 +1089,45 @@ fn a_place_shows_what_its_last_canvas_drew() {
     }
     assert_ne!(shown[0], shown[1], "Rose Pine and Dawn draw the same cell");
 }
+
+/// Clearing a cell keeps its picture and reads the base as the terminal's.
+/// Given: cells of ink and base, the base on top, below, left or right,
+/// and one cell of base alone.
+/// When: each is cleared of the base.
+/// Then: every pixel that was ink is ink, every pixel that was the base
+/// is the terminal's, and the cell of base alone is blank.
+///
+/// Why it matters: a block whose base half is not turned over paints its
+/// ink over the whole cell, and the fire doubles over the terminal's
+/// background.
+#[test]
+fn clearing_a_cell_turns_the_base_into_the_terminals() {
+    const B: Color = BASE;
+    const I: Color = INK;
+    for pixels in [
+        [B, B, B, B, I, I, I, I],
+        [I, I, I, I, B, B, B, B],
+        [B, I, B, I, B, I, B, I],
+        [I, B, I, B, I, B, I, B],
+    ] {
+        // Given:
+        let mut cell = draw(pixels);
+
+        // When:
+        octant::clear(&mut cell, BASE);
+
+        // Then:
+        let expected = pixels.map(|colour| if colour == BASE { Color::Reset } else { colour });
+        assert_eq!(shown(&cell), expected, "{pixels:?}");
+    }
+
+    // Given, when:
+    let mut blank = draw([B; 8]);
+    octant::clear(&mut blank, BASE);
+
+    // Then:
+    assert_eq!(
+        (blank.symbol(), blank.fg, blank.bg),
+        (" ", Color::Reset, Color::Reset)
+    );
+}
