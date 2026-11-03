@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod palette;
 mod pixels;
 
 use hearth::octant;
@@ -11,6 +12,8 @@ use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+
+use palette::{LIGHT, two_tone};
 
 fn scene(seed: u64) -> Fire {
     Fire::new(Rng::seed_from_u64(seed), &theme::ROSE_PINE)
@@ -50,38 +53,13 @@ fn shown(buffer: &Buffer, area: Rect) -> Vec<Vec<Option<Color>>> {
     })
 }
 
-const DARK: Color = Color::Rgb(0, 0, 0);
-const LIGHT: Color = Color::Rgb(255, 255, 255);
-
 /// Rose Pine with each stop of the ramp from `band` up in light and every
 /// other colour in dark. A pixel is light from the heat of the band's stop
 /// up, dark at the heat of the stop below and under it, and a grey mix of
 /// the two between. A cell of the whole ramp can hold eight colours and
 /// draws only two, but a cell of these holds at most three.
 fn from_band(band: usize) -> &'static Palette {
-    let tone = |colour: Color| {
-        if RAMP[band..].contains(&colour) {
-            LIGHT
-        } else {
-            DARK
-        }
-    };
-    let rose_pine = &theme::ROSE_PINE;
-    Box::leak(Box::new(Palette {
-        base: tone(rose_pine.base),
-        surface: tone(rose_pine.surface),
-        overlay: tone(rose_pine.overlay),
-        muted: tone(rose_pine.muted),
-        subtle: tone(rose_pine.subtle),
-        text: tone(rose_pine.text),
-        love: tone(rose_pine.love),
-        gold: tone(rose_pine.gold),
-        rose: tone(rose_pine.rose),
-        pine: tone(rose_pine.pine),
-        foam: tone(rose_pine.foam),
-        iris: tone(rose_pine.iris),
-        ..*rose_pine
-    }))
+    two_tone(&theme::ROSE_PINE, &RAMP[band..])
 }
 
 /// One fire for each band above the coldest, from one seed. A palette

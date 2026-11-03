@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod palette;
 mod pixels;
 
 use std::sync::Arc;
@@ -15,6 +16,8 @@ use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+
+use palette::{LIGHT, two_tone};
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const PALETTE: &Palette = &theme::ROSE_PINE;
@@ -50,29 +53,6 @@ fn view(scene: &Study, width: u16, height: u16) -> Vec<Vec<Color>> {
     pixels(&render(scene, area, area), area)
 }
 
-/// `palette` with `colour` in light and every other colour in dark.
-fn two_tone(palette: &Palette, colour: Color) -> &'static Palette {
-    let tone = |each: Color| if each == colour { LIGHT } else { DARK };
-    Box::leak(Box::new(Palette {
-        base: tone(palette.base),
-        surface: tone(palette.surface),
-        overlay: tone(palette.overlay),
-        muted: tone(palette.muted),
-        subtle: tone(palette.subtle),
-        text: tone(palette.text),
-        love: tone(palette.love),
-        gold: tone(palette.gold),
-        rose: tone(palette.rose),
-        pine: tone(palette.pine),
-        foam: tone(palette.foam),
-        iris: tone(palette.iris),
-        ..*palette
-    }))
-}
-
-const DARK: Color = Color::Rgb(0, 0, 0);
-const LIGHT: Color = Color::Rgb(255, 255, 255);
-
 /// Scenes from seed 7, one for each colour of a palette, each with its
 /// colour in light and the rest in dark. A palette changes no tick, so the
 /// scenes run in step, and a cell of two tones draws each pixel as it is.
@@ -100,7 +80,7 @@ impl Toned {
         let scenes = colours
             .into_iter()
             .map(|colour| {
-                let scene = Study::new(Rng::seed_from_u64(7), two_tone(palette, colour));
+                let scene = Study::new(Rng::seed_from_u64(7), two_tone(palette, &[colour]));
                 (colour, scene)
             })
             .collect();
@@ -452,7 +432,7 @@ const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
 /// A scene from seed 7 with `colour` in light and every other colour in
 /// dark, so each pixel of that colour shows as it is.
 fn lit_scene(colour: Color) -> Study {
-    Study::new(Rng::seed_from_u64(7), two_tone(PALETTE, colour))
+    Study::new(Rng::seed_from_u64(7), two_tone(PALETTE, &[colour]))
 }
 
 /// Whether each pixel of the picture is lit, at `progress` from the last

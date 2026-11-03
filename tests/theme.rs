@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 mod events;
+mod palette;
 
 use std::sync::Arc;
 
@@ -13,6 +14,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use palette::colours;
+
 use events::send_keys;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
@@ -24,23 +27,6 @@ fn frame(app: &mut App, ticks: usize) -> Buffer {
     let mut buffer = Buffer::empty(AREA);
     app.render(AREA, &mut buffer);
     buffer
-}
-
-fn colours(palette: &Palette) -> [Color; 12] {
-    [
-        palette.base,
-        palette.surface,
-        palette.overlay,
-        palette.muted,
-        palette.subtle,
-        palette.text,
-        palette.love,
-        palette.gold,
-        palette.rose,
-        palette.pine,
-        palette.foam,
-        palette.iris,
-    ]
 }
 
 /// The colours of `before` that `after` does not have.

@@ -1,15 +1,18 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod palette;
 mod pixels;
 
 use hearth::octant;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::embers::{BURN_TICKS, Embers, SETTLE_TICKS};
-use hearth::theme::{self, Palette};
+use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+
+use palette::{DARK, LIGHT, two_tone};
 
 const AREA: Rect = Rect::new(0, 0, 80, 24);
 
@@ -42,31 +45,6 @@ fn pixels(buffer: &Buffer) -> Vec<Vec<Option<Color>>> {
     })
 }
 
-const DARK: Color = Color::Rgb(0, 0, 0);
-const LIGHT: Color = Color::Rgb(255, 255, 255);
-
-/// Rose Pine with the colours of `set` in light and every other colour in
-/// dark.
-fn two_tone(set: &[Color]) -> &'static Palette {
-    let tone = |colour: Color| if set.contains(&colour) { LIGHT } else { DARK };
-    let rose_pine = &theme::ROSE_PINE;
-    Box::leak(Box::new(Palette {
-        base: tone(rose_pine.base),
-        surface: tone(rose_pine.surface),
-        overlay: tone(rose_pine.overlay),
-        muted: tone(rose_pine.muted),
-        subtle: tone(rose_pine.subtle),
-        text: tone(rose_pine.text),
-        love: tone(rose_pine.love),
-        gold: tone(rose_pine.gold),
-        rose: tone(rose_pine.rose),
-        pine: tone(rose_pine.pine),
-        foam: tone(rose_pine.foam),
-        iris: tone(rose_pine.iris),
-        ..*rose_pine
-    }))
-}
-
 /// Scenes from one seed, each in two tones: one set of colours in light
 /// and the rest in dark. A palette changes no tick, so the scenes run in
 /// step. A cell of the whole palette can hold three colours and draws only
@@ -81,7 +59,7 @@ impl Toned {
         Self {
             scenes: sets
                 .iter()
-                .map(|set| Embers::new(Rng::seed_from_u64(seed), two_tone(set)))
+                .map(|set| Embers::new(Rng::seed_from_u64(seed), two_tone(&theme::ROSE_PINE, set)))
                 .collect(),
         }
     }
@@ -698,7 +676,7 @@ fn tops(buffer: &Buffer) -> Vec<Option<usize>> {
 #[test]
 fn a_falling_log_sits_between_two_ticks() {
     // Given:
-    let base = two_tone(&[theme::ROSE_PINE.base]);
+    let base = two_tone(&theme::ROSE_PINE, &[theme::ROSE_PINE.base]);
     let mut glide = Embers::new(Rng::seed_from_u64(7), base);
     let mut plain = Embers::new(Rng::seed_from_u64(7), base);
     let quiet = *BURN_TICKS.start() - 2;

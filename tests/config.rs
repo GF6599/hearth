@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod palette;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,10 +15,12 @@ use hearth::mark;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
 use hearth::sound::Volume;
-use hearth::theme::{self, Palette};
+use hearth::theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+
+use palette::colours;
 
 const AREA: Rect = Rect::new(0, 0, 60, 6);
 
@@ -416,23 +420,6 @@ fn the_picker_shows_each_scene_at_its_saved_speed() {
             "{expected}: {rows:#?}"
         );
     }
-}
-
-fn colours(palette: &Palette) -> [Color; 12] {
-    [
-        palette.base,
-        palette.surface,
-        palette.overlay,
-        palette.muted,
-        palette.subtle,
-        palette.text,
-        palette.love,
-        palette.gold,
-        palette.rose,
-        palette.pine,
-        palette.foam,
-        palette.iris,
-    ]
 }
 
 /// Given: a file that sets each theme other than the default, by the name

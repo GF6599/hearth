@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod palette;
 mod pixels;
 
 use std::fs;
@@ -21,6 +22,8 @@ use pixels::PIXELS;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
+
+use palette::roles;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 const THEMES: [&str; 2] = ["rose-pine", "rose-pine-dawn"];
@@ -278,22 +281,6 @@ fn the_terminal_background_keeps_every_picture() {
             }
         }
     }
-}
-
-/// The colours of the palette that a picture draws in.
-const fn roles(palette: &Palette) -> [Color; 10] {
-    [
-        palette.overlay,
-        palette.muted,
-        palette.subtle,
-        palette.text,
-        palette.love,
-        palette.gold,
-        palette.rose,
-        palette.pine,
-        palette.foam,
-        palette.iris,
-    ]
 }
 
 /// An octant glyph that holds at least one pixel.
