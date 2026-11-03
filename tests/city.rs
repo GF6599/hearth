@@ -2,7 +2,7 @@
 
 mod pixels;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use hearth::config::Background;
@@ -629,13 +629,35 @@ fn places(city: &[(usize, usize, Color)]) -> Vec<(usize, usize)> {
     city.iter().map(|(x, y, _)| (*x, *y)).collect()
 }
 
+/// Cells with a lit window, and cells with a lit lamp, above the shore and
+/// off the train's rows.
+fn lit_cells(rows: &[Vec<Color>]) -> (BTreeSet<(usize, usize)>, BTreeSet<(usize, usize)>) {
+    let (rail, shore) = (rail(rows), ground(rows) + 1);
+    let (mut windows, mut lamps) = (BTreeSet::new(), BTreeSet::new());
+    for (y, row) in rows[..shore].iter().enumerate() {
+        if !off_the_line(y, rail) {
+            continue;
+        }
+        for (x, colour) in row.iter().enumerate() {
+            let cell = (x / CELL_WIDTH, y / CELL_HEIGHT);
+            if is_window(*colour) {
+                windows.insert(cell);
+            } else if *colour == PALETTE.love {
+                lamps.insert(cell);
+            }
+        }
+    }
+    (windows, lamps)
+}
+
 /// A far window that turns never changes the shape of what stands in front
 /// of it.
 /// Given: the scene at a hundred by thirty, from seeds 4 and 69, whose
 /// skylines put the lamp of a near antenna beside a far window.
-/// When: it ticks over a few seconds.
-/// Then: the places of the towers and windows stay the same from a frame
-/// to the next.
+/// When: it ticks over a few seconds, in which some window turns and some
+/// lamp lights.
+/// Then: no lit window shares a cell with a lit lamp, and the places of
+/// the towers and windows stay the same from a frame to the next.
 ///
 /// Why it matters: a cell draws two colours, so a lamp in the cell of a
 /// far window and its wall takes the wall's colour while the window is
@@ -646,18 +668,42 @@ fn a_far_window_never_shares_a_cell_with_a_lamp() {
         // Given:
         let mut scene = City::new(Rng::seed_from_u64(seed), PALETTE);
         let mut before = None;
+        let mut lit_before = None;
+        let (mut window_cells, mut lamp_cells) = (BTreeSet::new(), BTreeSet::new());
+        let mut turns = 0;
 
         for tick in 0..FEW_SECONDS {
             // When:
             scene.tick(AREA);
-            let now = places(&skyline(&frame(&scene, AREA)));
+            let rows = frame(&scene, AREA);
+            let now = places(&skyline(&rows));
+            let (windows, lamps) = lit_cells(&rows);
 
             // Then:
             if let Some(before) = &before {
                 assert_eq!(*before, now, "seed {seed} tick {tick}: the skyline moved");
             }
+            if lit_before.as_ref().is_some_and(|lit| *lit != windows) {
+                turns += 1;
+            }
             before = Some(now);
+            lit_before = Some(windows.clone());
+            window_cells.extend(windows);
+            lamp_cells.extend(lamps);
         }
+        assert!(
+            turns > 0,
+            "seed {seed}: no window turned in {FEW_SECONDS} ticks"
+        );
+        assert!(
+            !lamp_cells.is_empty(),
+            "seed {seed}: no lamp lit in {FEW_SECONDS} ticks"
+        );
+        let shared: Vec<_> = window_cells.intersection(&lamp_cells).collect();
+        assert!(
+            shared.is_empty(),
+            "seed {seed}: a lit window and a lamp in cells {shared:?}"
+        );
     }
 }
 
