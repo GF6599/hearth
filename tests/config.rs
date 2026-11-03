@@ -4,6 +4,7 @@ mod frames;
 mod palette;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -323,8 +324,6 @@ fn the_first_save_creates_the_folder_and_the_file() {
 /// screensaver to a full disk.
 #[test]
 fn a_failed_save_shows_in_the_notice_and_keeps_the_speed() {
-    use std::os::unix::fs::PermissionsExt;
-
     // Given:
     let path = config_file("locked", Some("[speed]\nfire = 2.0\n"));
     let folder = path.parent().unwrap().to_path_buf();
@@ -521,7 +520,11 @@ fn t_saves_the_theme_and_keeps_the_comments() {
         // Then:
         let saved = fs::read_to_string(&path).unwrap();
         let loaded = Config::load(&path).unwrap();
-        assert_eq!(loaded.theme, Some(1), "{name}: {saved}");
+        assert_eq!(
+            loaded.theme.map(|at| theme::THEMES[at].0),
+            Some(theme::THEMES[1].0),
+            "{name}: {saved}"
+        );
         assert!(saved.contains("fire = 2.0"), "{name}: {saved}");
         if name == "theme-commented" {
             assert_eq!(
@@ -541,8 +544,6 @@ fn t_saves_the_theme_and_keeps_the_comments() {
 /// that the next start keeps this theme.
 #[test]
 fn a_failed_theme_save_shows_in_the_notice() {
-    use std::os::unix::fs::PermissionsExt;
-
     // Given:
     let path = config_file("theme-locked", Some("[speed]\nfire = 2.0\n"));
     let folder = path.parent().unwrap().to_path_buf();

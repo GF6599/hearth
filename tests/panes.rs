@@ -571,7 +571,7 @@ fn a_resize_keeps_each_split_in_the_middle() {
 #[test]
 fn panes_too_small_to_draw_never_panic() {
     let canvas = Rect::new(0, 0, 30, 12);
-    for &kind in hearth::scene::ALL {
+    for &kind in ALL {
         // Given:
         let mut app = App::new(kind, 7, Arc::new(Corpus::embedded()));
         send_keys(

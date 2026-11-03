@@ -71,8 +71,15 @@ fn a_second_clone_is_served_from_the_cache() {
     let second = Corpus::cloned(&address, &cache).unwrap();
 
     // Then:
-    assert_eq!(first.files().len(), 1);
-    assert_eq!(second.files()[0].path, "main.rs");
+    let paths = |corpus: &Corpus| -> Vec<String> {
+        corpus
+            .files()
+            .iter()
+            .map(|file| file.path.clone())
+            .collect()
+    };
+    assert_eq!(paths(&first), ["main.rs"]);
+    assert_eq!(paths(&second), ["main.rs"]);
     assert_eq!(second.files()[0].text, first.files()[0].text);
     let _ = fs::remove_dir_all(&cache);
 }

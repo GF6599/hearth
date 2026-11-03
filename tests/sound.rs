@@ -45,8 +45,8 @@ fn played(
     played
 }
 
-fn rendered(mixer: &mut Mixer, ticks: usize, cue: impl Fn(usize) -> bool) -> Vec<f32> {
-    played(mixer, ticks, Cue::Typing, cue)
+fn rendered(mixer: &mut Mixer, ticks: usize, when: impl Fn(usize) -> bool) -> Vec<f32> {
+    played(mixer, ticks, Cue::Typing, when)
         .iter()
         .map(|[left, _]| *left)
         .collect()
