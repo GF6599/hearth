@@ -73,8 +73,10 @@ const fn normal_step() -> usize {
         }
         step += 1;
     }
-    panic!("no rate runs one tick a tick");
+    RATES.len()
 }
+
+const _: () = assert!(normal_step() < RATES.len(), "no rate runs one tick a tick");
 
 /// What the config file fixes for a whole run, read by a scene when it is
 /// built. A speed stays apart, because `+` and `-` change it while a scene
