@@ -518,6 +518,9 @@ impl App {
     pub fn end_search(&mut self) {
         self.query = None;
         self.picker_top = 0;
+        if self.preview.is_none() {
+            self.build_preview();
+        }
     }
 
     /// The mark stays on its scene while that scene still matches, and
