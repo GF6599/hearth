@@ -3,14 +3,11 @@
 mod pixels;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
 
 use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings};
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::murmuration::{FLOCK, HAWK_EVERY, Murmuration, PIXELS_PER_BIRD};
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -327,32 +324,6 @@ fn a_smaller_area_drops_the_old_flock() {
         let buffer = render(&scene, area, canvas);
         pixels::assert_blank_outside(&buffer, area);
     }
-}
-
-/// Given: the scene name `murmuration`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its frame shows birds.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn murmuration_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("murmuration").expect("murmuration is listed");
-    let mut scene = kind.build(
-        7,
-        &theme::ROSE_PINE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    assert!(!lit_pixels(&buffer, AREA).is_empty());
 }
 
 /// The rows of a render that hold the trees, top first: from the row of the

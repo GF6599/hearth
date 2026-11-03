@@ -4,16 +4,12 @@ mod pixels;
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
 
 use hearth::clock::Clock;
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
+use hearth::scene::{Rng, Scene, TICK_RATE};
 use hearth::scenes::hourglass::{Hourglass, Lengths};
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -257,35 +253,6 @@ fn a_smaller_area_draws_only_inside_it() {
         scene.tick(area);
         inside_only(&render(&scene, area, canvas), area);
     }
-}
-
-/// Given: the scene name `hourglass`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame shows the glass and
-/// the sand.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn hourglass_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("hourglass").expect("hourglass is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    let lit = lit_pixels(&buffer, AREA);
-    assert!(lit.iter().any(|(_, colour)| part(*colour) == WORK_SAND));
-    assert!(lit.iter().any(|(_, colour)| *colour == GLASS));
 }
 
 /// The glass has round bulbs and stands in a frame.

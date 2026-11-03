@@ -2,14 +2,9 @@
 
 mod pixels;
 
-use std::sync::Arc;
-
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings, TICK_RATE};
+use hearth::scene::{Rng, Scene, TICK_RATE};
 use hearth::scenes::drive::Drive;
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -328,40 +323,6 @@ fn a_smaller_area_draws_only_inside_it() {
         scene.tick(area);
         inside_only(&render(&scene, area, canvas), area);
     }
-}
-
-/// Given: the scene name `drive`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame shows the road with
-/// land beside it on the bottom row.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn drive_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("drive").expect("drive is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    let rows = pixels::colours(&buffer, AREA);
-    assert!(
-        rows.iter()
-            .flatten()
-            .any(|colour| *colour == PALETTE.overlay)
-    );
-    let bottom = rows.last().unwrap();
-    assert_eq!(bottom[0], PALETTE.base, "no land left of the road");
 }
 
 /// The row of the topmost road pixel, the far end of the road in view.

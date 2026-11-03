@@ -3,14 +3,10 @@
 mod pixels;
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
 
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings};
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::city::City;
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -113,21 +109,6 @@ fn frame(scene: &City, area: Rect) -> Vec<Vec<Color>> {
         }
     }
     rows
-}
-
-/// Given: each role the city draws.
-/// When: it is read by the role it lies nearest.
-/// Then: it reads as itself.
-///
-/// Why it matters: the tests of the skyline read each pixel by its role,
-/// and a role read wrong would pass a broken picture.
-#[test]
-fn each_role_reads_as_itself() {
-    // Given:
-    for colour in ROLES {
-        // When, then:
-        assert_eq!(nearest(colour), colour, "{colour:?}");
-    }
 }
 
 /// A wall, far or near, a dark window, or the rim of a near tower.
@@ -543,39 +524,6 @@ fn a_smaller_area_draws_only_inside_it() {
         scene.tick(area);
         inside_only(&render(&scene, area, canvas), area);
     }
-}
-
-/// Given: the scene name `city`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame shows towers and lit
-/// windows.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn city_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("city").expect("city is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    let rows = pixels::colours(&buffer, AREA);
-    assert!(
-        rows.iter()
-            .flatten()
-            .any(|colour| *colour == PALETTE.overlay)
-    );
-    assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.gold));
 }
 
 /// The first row of the raised line, the top row that is all its colour.

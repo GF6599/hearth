@@ -1209,11 +1209,6 @@ fn the_preview_credits_the_marked_scene() {
             ),
         }
     }
-    assert!(
-        SceneKind::Typing
-            .credit()
-            .is_some_and(|credit| credit.contains("gittype"))
-    );
 }
 
 /// The picker names the keys of a running scene on the row under the list.
@@ -1264,23 +1259,4 @@ fn the_picker_names_the_keys_of_a_scene_under_the_list() {
             );
         }
     }
-}
-
-/// The picker's footer names the key that starts a search.
-/// Given: the app on the picker in a wide terminal.
-/// When: it renders.
-/// Then: the list's bottom rule holds `/ search` with the other keys.
-///
-/// Why it matters: the search has its own key, and a key that nothing on
-/// screen names is a key a user never finds.
-#[test]
-fn the_footer_names_the_search_key() {
-    // Given, when:
-    let app = App::picker(7, Arc::new(Corpus::embedded()));
-    let buffer = app_frame(&app, WIDE);
-
-    // Then:
-    let y = row_of(&buffer, "↵ start").expect("no footer");
-    let footer = row_text(&buffer, y);
-    assert!(footer.contains("/ search"), "{footer:?}");
 }

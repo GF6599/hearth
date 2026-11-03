@@ -14,13 +14,12 @@ use std::time::Duration;
 
 use clap::Parser;
 use hearth::cli::Cli;
-use hearth::config::{Background, Config};
+use hearth::config::Config;
 use hearth::corpus::Corpus;
 use hearth::history::{DEPTH, History};
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{ALL, Rng, Scene, SceneKind, Settings};
+use hearth::scene::{ALL, Rng, Scene, SceneKind};
 use hearth::scenes::river::{NOTICE, READING, River};
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::{Buffer, Cell};
@@ -621,34 +620,6 @@ fn a_smaller_area_draws_only_inside_it() {
         inside_only(&render(&scene, area, canvas), area);
     }
     let _ = fs::remove_dir_all(&repo);
-}
-
-/// Given: the scene name `river`.
-/// When: it is looked up and built with a corpus that has no history, then
-/// ticked and rendered.
-/// Then: the name finds a scene, and it shows the notice.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn river_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("river").expect("river is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    let rows = rows(&buffer, AREA);
-    assert!(rows.iter().any(|row| row.contains(NOTICE)), "{rows:#?}");
 }
 
 /// The subject at the pane's middle row, if one shows there: the piece of

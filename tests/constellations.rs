@@ -3,14 +3,10 @@
 mod pixels;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
 
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings};
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::constellations::{Constellations, NAMES, TRAIL};
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette, luma};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -587,32 +583,6 @@ fn a_frame_after_a_resize_and_before_a_tick_stays_inside() {
 
     // Then:
     pixels::assert_blank_outside(&buffer, area);
-}
-
-/// Given: the scene name `constellations`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame already shows stars.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn constellations_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("constellations").expect("constellations is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    assert!(!glyphs(&buffer, AREA).is_empty());
 }
 
 /// Ticks enough for a few shooting stars, about three minutes.

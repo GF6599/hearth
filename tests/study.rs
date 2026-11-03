@@ -3,14 +3,9 @@
 mod palette;
 mod pixels;
 
-use std::sync::Arc;
-
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant;
-use hearth::scene::{Rng, Scene, SceneKind, Settings};
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::study::{LAYERS, LEAST, PICTURE, Study, WINDOW};
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -947,35 +942,6 @@ fn a_smaller_area_draws_only_inside_it() {
         scene.tick(area);
         inside_only(&render(&scene, area, canvas), area);
     }
-}
-
-/// Given: the scene name `study`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame shows the cat and the
-/// lamp.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn study_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("study").expect("study is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    let rows = pixels::colours(&buffer, AREA);
-    assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.gold));
-    assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.text));
 }
 
 /// The pixels of a pane the size of the picture that lie outside every

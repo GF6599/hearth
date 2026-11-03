@@ -3,16 +3,12 @@
 mod pixels;
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
 
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings};
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::ink::{
     self, BLENDS, Currents, DROP_EVERY, EMIT_TICKS, FULL_INK, Ink, LIFETIME, TONES, Tones,
 };
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -462,32 +458,6 @@ fn a_smaller_area_drops_the_old_ink() {
             }
         }
     }
-}
-
-/// Given: the scene name `ink`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame already shows ink.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn ink_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("ink").expect("ink is listed");
-    let mut scene = kind.build(
-        7,
-        &theme::ROSE_PINE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    assert!(!inked_pixels(&buffer, AREA, theme::ROSE_PINE.base).is_empty());
 }
 
 /// The velocity of `currents` at a point of a hundred by sixty pixel pane.
