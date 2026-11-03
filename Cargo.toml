@@ -2,6 +2,7 @@
 name = "hearth"
 version = "0.1.5"
 edition = "2024"
+rust-version = "1.89"
 license = "MIT"
 description = "A terminal screensaver: a bonsai, matrix rain, fire, pipes, life and an aquarium in one app"
 
