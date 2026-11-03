@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod frames;
+
 mod pixels;
 
 use std::collections::{HashMap, HashSet};
@@ -18,6 +20,8 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
+
+use frames::{alone, app_frame, assert_same_inside, mark, pane_inner};
 
 use pixels::distance;
 
@@ -342,50 +346,6 @@ fn the_bottom_rule_holds_the_whole_hint_or_none() {
 
 const WIDE: Rect = Rect::new(0, 0, 120, 30);
 
-fn app_frame(app: &App, area: Rect) -> Buffer {
-    let mut buffer = Buffer::empty(area);
-    app.render(area, &mut buffer);
-    buffer
-}
-
-/// The inside of the top-most frame whose top rule is a plain run of
-/// `─`, which is the preview pane when there is one. The list's rule has
-/// its title cut in, the mark's braces have no rule, and a scene in the
-/// pane draws its own frames lower than the pane's top rule.
-fn pane_inner(buffer: &Buffer) -> Option<Rect> {
-    let area = buffer.area;
-    let symbol = |x: u16, y: u16| buffer[(x, y)].symbol();
-    let boxes = (0..area.height)
-        .flat_map(|y| (0..area.width).map(move |x| (x, y)))
-        .filter(|&(x, y)| symbol(x, y) == "┌")
-        .filter_map(|(x, y)| {
-            let right = (x + 1..area.width).find(|&r| symbol(r, y) != "─")?;
-            let bottom = (y + 1..area.height).find(|&b| symbol(x, b) != "│")?;
-            (right > x + 1 && symbol(right, y) == "┐" && symbol(x, bottom) == "└")
-                .then(|| Rect::new(x + 1, y + 1, right - x - 1, bottom - y - 1))
-        });
-    boxes.min_by_key(|inner| (inner.y, std::cmp::Reverse(inner.x)))
-}
-
-/// What `kind` draws in `inner` after `ticks` ticks when it runs alone.
-fn alone(kind: SceneKind, ticks: usize, inner: Rect) -> Buffer {
-    let mut app = App::new(kind, 7, Arc::new(Corpus::embedded()));
-    for _ in 0..ticks {
-        app.tick(inner);
-    }
-    let mut buffer = Buffer::empty(WIDE);
-    app.render(inner, &mut buffer);
-    buffer
-}
-
-fn assert_same_inside(shown: &Buffer, expected: &Buffer, inner: Rect, what: &str) {
-    for y in inner.top()..inner.bottom() {
-        for x in inner.left()..inner.right() {
-            assert_eq!(shown[(x, y)], expected[(x, y)], "{what} at ({x}, {y})");
-        }
-    }
-}
-
 /// Given: the picker in a wide terminal, ticked three times on noise.
 /// When: the mark moves to matrix, and later to typing, and the app ticks
 /// five times after each move.
@@ -405,7 +365,7 @@ fn the_pane_runs_the_marked_scene_from_the_start() {
 
     for kind in [SceneKind::Matrix, SceneKind::Typing] {
         // When:
-        select(&mut app, kind);
+        mark(&mut app, kind, WIDE);
         for _ in 0..5 {
             app.tick(WIDE);
         }
@@ -413,39 +373,8 @@ fn the_pane_runs_the_marked_scene_from_the_start() {
         // Then:
         let shown = app_frame(&app, WIDE);
         let inner = pane_inner(&shown).unwrap_or_else(|| panic!("no pane for {kind:?}"));
-        assert_same_inside(&shown, &alone(kind, 5, inner), inner, kind.name());
+        assert_same_inside(&shown, &alone(kind, 7, 5, inner, WIDE), inner, kind.name());
     }
-}
-
-/// Moves the mark down to `kind` in one pass of the list at most, so an
-/// app whose mark does not arrive fails the test and does not hang it.
-fn select(app: &mut App, kind: SceneKind) {
-    for _ in 0..ALL.len() {
-        if ALL[app_selected(app)] == kind {
-            return;
-        }
-        app.select_next();
-    }
-    panic!("the mark never reached {kind:?}");
-}
-
-/// The index of the marked row, read from the columns left of the pane,
-/// because a scene in the pane can draw a `[` of its own.
-fn app_selected(app: &App) -> usize {
-    let buffer = app_frame(app, WIDE);
-    let end = pane_inner(&buffer).map_or(WIDE.width, |inner| inner.x - 1);
-    let list = |y: u16| {
-        (0..end)
-            .map(|x| buffer[(x, y)].symbol())
-            .collect::<String>()
-    };
-    let marked = (0..WIDE.height).find(|&y| list(y).contains('[')).unwrap();
-    let row = list(marked);
-    let name = row
-        .split(|c: char| c.is_whitespace() || "[]│".contains(c))
-        .find(|word| !word.is_empty())
-        .unwrap();
-    ALL.iter().position(|kind| kind.name() == name).unwrap()
 }
 
 /// Given: a config that sets fire to 2×, and the picker marking fire.
@@ -464,7 +393,7 @@ fn the_pane_runs_the_scene_at_its_own_speed() {
         .unwrap();
     config.rates[fire] = Rate::from_times(2.0);
     let mut app = App::configured(None, 7, Arc::new(Corpus::embedded()), &config);
-    select(&mut app, SceneKind::Fire);
+    mark(&mut app, SceneKind::Fire, WIDE);
 
     // When:
     for _ in 0..5 {
@@ -474,7 +403,12 @@ fn the_pane_runs_the_scene_at_its_own_speed() {
     // Then:
     let shown = app_frame(&app, WIDE);
     let inner = pane_inner(&shown).unwrap();
-    assert_same_inside(&shown, &alone(SceneKind::Fire, 10, inner), inner, "fire");
+    assert_same_inside(
+        &shown,
+        &alone(SceneKind::Fire, 7, 10, inner, WIDE),
+        inner,
+        "fire",
+    );
 }
 
 /// Given: the picker in a terminal 60 columns wide, and one 120 wide.
@@ -1258,7 +1192,7 @@ fn the_preview_credits_the_marked_scene() {
 
     for &kind in ALL {
         // When:
-        select(&mut app, kind);
+        mark(&mut app, kind, WIDE);
 
         // Then:
         let shown = app_frame(&app, WIDE);

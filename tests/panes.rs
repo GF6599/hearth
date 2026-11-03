@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 mod events;
+mod frames;
 
 use std::sync::Arc;
 
@@ -11,6 +12,8 @@ use hearth::scene::{ALL, SceneKind};
 use hearth::theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
+
+use frames::{alone, assert_same_inside};
 
 use events::send_keys;
 
@@ -27,27 +30,6 @@ fn frame(app: &App) -> Buffer {
     let mut buffer = Buffer::empty(AREA);
     app.render(AREA, &mut buffer);
     buffer
-}
-
-/// What `kind` draws from `seed` in `pane` after `ticks` ticks when it
-/// runs alone.
-fn alone(kind: SceneKind, seed: u64, ticks: usize, pane: Rect) -> Buffer {
-    let mut app = App::new(kind, seed, Arc::new(Corpus::embedded()));
-    for _ in 0..ticks {
-        app.tick(pane);
-    }
-    let mut buffer = Buffer::empty(AREA);
-    app.render(pane, &mut buffer);
-    buffer
-}
-
-fn assert_same_inside(shown: &Buffer, expected: &Buffer, pane: Rect, what: &str) {
-    for position in pane.positions() {
-        assert_eq!(
-            shown[position], expected[position],
-            "{what} at {position:?}"
-        );
-    }
 }
 
 /// The same check for a focused pane, whose top-left and bottom-right
@@ -128,7 +110,12 @@ fn a_side_by_side_split_puts_the_picker_beside_the_scene() {
     // Then:
     let shown = frame(&app);
     assert_rule(&shown, Rect::new(19, 0, 1, 12), "│");
-    assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 3, LEFT), LEFT, "fire");
+    assert_same_inside(
+        &shown,
+        &alone(SceneKind::Fire, 7, 3, LEFT, AREA),
+        LEFT,
+        "fire",
+    );
     assert!(text_inside(&shown, RIGHT).contains("scenes"));
 }
 
@@ -153,7 +140,12 @@ fn a_stacked_split_puts_the_picker_below_the_scene() {
     // Then:
     let shown = frame(&app);
     assert_rule(&shown, Rect::new(0, 5, 40, 1), "─");
-    assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 3, TOP), TOP, "fire");
+    assert_same_inside(
+        &shown,
+        &alone(SceneKind::Fire, 7, 3, TOP, AREA),
+        TOP,
+        "fire",
+    );
     assert!(text_inside(&shown, Rect::new(0, 6, 40, 6)).contains("scenes"));
 }
 
@@ -179,10 +171,15 @@ fn enter_starts_the_next_scene_in_the_new_pane_only() {
 
     // Then:
     let shown = frame(&app);
-    assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 4, LEFT), LEFT, "fire");
+    assert_same_inside(
+        &shown,
+        &alone(SceneKind::Fire, 7, 4, LEFT, AREA),
+        LEFT,
+        "fire",
+    );
     assert_same_but_marks(
         &shown,
-        &alone(SceneKind::Fire.next(), 9, 4, RIGHT),
+        &alone(SceneKind::Fire.next(), 9, 4, RIGHT, AREA),
         RIGHT,
         "next",
     );
@@ -305,13 +302,13 @@ fn tab_changes_the_focused_pane_only() {
     let shown = frame(&app);
     assert_same_but_marks(
         &shown,
-        &alone(SceneKind::Fire.next(), 8, 4, LEFT),
+        &alone(SceneKind::Fire.next(), 8, 4, LEFT, AREA),
         LEFT,
         "left",
     );
     assert_same_inside(
         &shown,
-        &alone(SceneKind::Fire.next(), 9, 4, RIGHT),
+        &alone(SceneKind::Fire.next(), 9, 4, RIGHT, AREA),
         RIGHT,
         "right",
     );
@@ -392,7 +389,7 @@ fn x_gives_the_closed_pane_s_area_to_its_sibling() {
     // Then:
     assert_same_inside(
         &frame(&app),
-        &alone(SceneKind::Fire, 7, 3, AREA),
+        &alone(SceneKind::Fire, 7, 3, AREA, AREA),
         AREA,
         "fire",
     );
@@ -428,10 +425,15 @@ fn a_close_in_a_stack_changes_that_stack_only() {
     // Then:
     let shown = frame(&app);
     assert_eq!(focused(&shown, &[LEFT, RIGHT]), Some(RIGHT));
-    assert_same_inside(&shown, &alone(SceneKind::Fire, 7, 3, LEFT), LEFT, "fire");
+    assert_same_inside(
+        &shown,
+        &alone(SceneKind::Fire, 7, 3, LEFT, AREA),
+        LEFT,
+        "fire",
+    );
     assert_same_but_marks(
         &shown,
-        &alone(SceneKind::Fire.next(), 9, 3, RIGHT),
+        &alone(SceneKind::Fire.next(), 9, 3, RIGHT, AREA),
         RIGHT,
         "next",
     );
@@ -459,7 +461,7 @@ fn the_last_pane_does_not_close() {
     assert!(!app.should_quit);
     assert_same_inside(
         &frame(&app),
-        &alone(SceneKind::Fire, 7, 3, AREA),
+        &alone(SceneKind::Fire, 7, 3, AREA, AREA),
         AREA,
         "fire",
     );
@@ -486,7 +488,7 @@ fn esc_in_a_new_pane_s_picker_closes_the_pane() {
     assert!(!app.is_picking());
     assert_same_inside(
         &frame(&app),
-        &alone(SceneKind::Fire, 7, 3, AREA),
+        &alone(SceneKind::Fire, 7, 3, AREA, AREA),
         AREA,
         "fire",
     );
@@ -518,7 +520,7 @@ fn closing_the_first_pane_keeps_the_ones_after_it() {
     // Then:
     assert_same_inside(
         &frame(&app),
-        &alone(SceneKind::Fire.next(), 9, 3, AREA),
+        &alone(SceneKind::Fire.next(), 9, 3, AREA, AREA),
         AREA,
         "next",
     );

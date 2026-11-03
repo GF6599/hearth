@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod frames;
+
 mod pixels;
 
 use std::collections::HashSet;
@@ -22,6 +24,8 @@ use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Color;
+
+use frames::app_frame;
 use unicode_width::UnicodeWidthStr;
 
 const PROGRAM: &str = "fn main() {\n    println!(\"hi\");\n}\n";
@@ -1318,12 +1322,6 @@ fn typing_app(config: &Config, seed: u64, files: &[(&str, &str)]) -> App {
         .iter()
         .map(|&(path, text)| (path.to_string(), text.to_string()));
     cli.app(config, Arc::new(Corpus::from_files(files)))
-}
-
-fn app_frame(app: &App, area: Rect) -> Buffer {
-    let mut buffer = Buffer::empty(area);
-    app.render(area, &mut buffer);
-    buffer
 }
 
 /// The function the breadcrumb names, or an empty string with none.

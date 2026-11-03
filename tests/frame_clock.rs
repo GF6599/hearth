@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 mod events;
+mod frames;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +19,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
+use frames::app_frame;
+
 use events::send_keys;
 
 const AREA: Rect = Rect::new(0, 0, 40, 12);
@@ -26,12 +29,6 @@ const WIDE: Rect = Rect::new(0, 0, 120, 30);
 /// The ticks a changed speed stays on screen, as it did when the app drew
 /// one frame a tick.
 const NOTICE_TICKS: u32 = 16;
-
-fn app_frame(app: &App, area: Rect) -> Buffer {
-    let mut buffer = Buffer::empty(area);
-    app.render(area, &mut buffer);
-    buffer
-}
 
 fn row_text(buffer: &Buffer, y: u16) -> String {
     (buffer.area.x..buffer.area.right())

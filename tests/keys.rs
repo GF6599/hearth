@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 mod events;
+mod frames;
 
 use std::sync::Arc;
 
@@ -8,8 +9,9 @@ use crossterm::event::KeyCode;
 use hearth::app::App;
 use hearth::corpus::Corpus;
 use hearth::scene::{ALL, SceneKind};
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+
+use frames::{alone, app_frame, mark, marked, pane_inner};
 
 use events::{back_tab, key, send, tab, typed};
 
@@ -19,76 +21,14 @@ fn corpus() -> Arc<Corpus> {
     Arc::new(Corpus::embedded())
 }
 
-fn app_frame(app: &App, area: Rect) -> Buffer {
-    let mut buffer = Buffer::empty(area);
-    app.render(area, &mut buffer);
-    buffer
-}
-
 fn place(kind: SceneKind) -> usize {
     ALL.iter().position(|each| *each == kind).unwrap()
-}
-
-/// The inside of the top-most frame whose top rule is a plain run of
-/// `─`, which is the preview pane: the list's rule has its title cut in.
-fn pane_inner(buffer: &Buffer) -> Option<Rect> {
-    let area = buffer.area;
-    let symbol = |x: u16, y: u16| buffer[(x, y)].symbol();
-    (0..area.height)
-        .flat_map(|y| (0..area.width).map(move |x| (x, y)))
-        .filter(|&(x, y)| symbol(x, y) == "┌")
-        .filter_map(|(x, y)| {
-            let right = (x + 1..area.width).find(|&r| symbol(r, y) != "─")?;
-            let bottom = (y + 1..area.height).find(|&b| symbol(x, b) != "│")?;
-            (right > x + 1 && symbol(right, y) == "┐" && symbol(x, bottom) == "└")
-                .then(|| Rect::new(x + 1, y + 1, right - x - 1, bottom - y - 1))
-        })
-        .min_by_key(|inner| (inner.y, std::cmp::Reverse(inner.x)))
-}
-
-/// The name in the marked row of the list, read left of the preview pane,
-/// because a scene in the pane can draw a `[` of its own.
-fn marked(app: &App) -> Option<String> {
-    let buffer = app_frame(app, WIDE);
-    let end = pane_inner(&buffer).map_or(WIDE.width, |inner| inner.x - 1);
-    let list = |y: u16| {
-        (0..end)
-            .map(|x| buffer[(x, y)].symbol())
-            .collect::<String>()
-    };
-    let row = (0..WIDE.height).map(list).find(|row| row.contains('['))?;
-    let open = row.find('[')?;
-    let close = row[open..].find(']')? + open;
-    Some(row[open + 1..close].to_string())
-}
-
-/// Moves the mark down to `kind` in one pass of the list at most, so a mark
-/// that never arrives fails the test and does not hang it.
-fn mark(app: &mut App, kind: SceneKind) {
-    for _ in 0..ALL.len() {
-        if marked(app).as_deref() == Some(kind.name()) {
-            return;
-        }
-        app.select_next();
-    }
-    panic!("the mark never reached {kind:?}");
-}
-
-/// What `kind` draws in `inner` after `ticks` ticks when it runs alone.
-fn alone(kind: SceneKind, ticks: usize, inner: Rect) -> Buffer {
-    let mut app = App::new(kind, 7, corpus());
-    for _ in 0..ticks {
-        app.tick(inner);
-    }
-    let mut buffer = Buffer::empty(WIDE);
-    app.render(inner, &mut buffer);
-    buffer
 }
 
 fn assert_pane_runs(app: &App, kind: SceneKind) {
     let shown = app_frame(app, WIDE);
     let inner = pane_inner(&shown).unwrap_or_else(|| panic!("no pane for {kind:?}"));
-    let expected = alone(kind, 5, inner);
+    let expected = alone(kind, 7, 5, inner, WIDE);
     for y in inner.top()..inner.bottom() {
         for x in inner.left()..inner.right() {
             assert_eq!(
@@ -116,7 +56,7 @@ fn assert_pane_runs(app: &App, kind: SceneKind) {
 fn tab_in_the_picker_marks_the_next_scene() {
     // Given:
     let mut app = App::picker(7, corpus());
-    mark(&mut app, SceneKind::Hourglass);
+    mark(&mut app, SceneKind::Hourglass, WIDE);
 
     // When:
     send(&mut app, vec![tab()]);
@@ -126,15 +66,15 @@ fn tab_in_the_picker_marks_the_next_scene() {
 
     // Then:
     let next = ALL[place(SceneKind::Hourglass) + 1];
-    assert_eq!(marked(&app).as_deref(), Some(next.name()));
+    assert_eq!(marked(&app, WIDE).as_deref(), Some(next.name()));
     assert_pane_runs(&app, next);
 
     // When:
-    mark(&mut app, ALL[ALL.len() - 1]);
+    mark(&mut app, ALL[ALL.len() - 1], WIDE);
     send(&mut app, vec![tab()]);
 
     // Then:
-    assert_eq!(marked(&app).as_deref(), Some(ALL[0].name()));
+    assert_eq!(marked(&app, WIDE).as_deref(), Some(ALL[0].name()));
     assert!(app.is_picking());
 }
 
@@ -182,7 +122,7 @@ fn shift_tab_goes_back_one_scene() {
 fn shift_tab_in_the_picker_marks_the_scene_before() {
     // Given:
     let mut app = App::picker(7, corpus());
-    mark(&mut app, SceneKind::Study);
+    mark(&mut app, SceneKind::Study, WIDE);
 
     // When:
     send(&mut app, vec![back_tab()]);
@@ -192,7 +132,7 @@ fn shift_tab_in_the_picker_marks_the_scene_before() {
 
     // Then:
     let before = ALL[place(SceneKind::Study) - 1];
-    assert_eq!(marked(&app).as_deref(), Some(before.name()));
+    assert_eq!(marked(&app, WIDE).as_deref(), Some(before.name()));
     assert_pane_runs(&app, before);
 
     // When:
@@ -200,7 +140,10 @@ fn shift_tab_in_the_picker_marks_the_scene_before() {
     send(&mut first, vec![back_tab()]);
 
     // Then:
-    assert_eq!(marked(&first).as_deref(), Some(ALL[ALL.len() - 1].name()));
+    assert_eq!(
+        marked(&first, WIDE).as_deref(),
+        Some(ALL[ALL.len() - 1].name())
+    );
     assert!(first.is_picking());
 }
 
@@ -279,7 +222,7 @@ fn slash_and_letters_narrow_the_list_to_the_loose_matches() {
 
     // Then:
     assert_eq!(listed(&app), vec!["drive"]);
-    assert_eq!(marked(&app).as_deref(), Some("drive"));
+    assert_eq!(marked(&app, WIDE).as_deref(), Some("drive"));
     assert_pane_runs(&app, SceneKind::Drive);
     assert!(list_rows(&app).iter().any(|row| row.contains("/drv")));
     assert_eq!(list_corners(&app), corners);
@@ -301,7 +244,7 @@ fn slash_and_letters_narrow_the_list_to_the_loose_matches() {
         .collect();
     assert!(expected.len() >= 2, "{expected:?}");
     assert_eq!(listed(&app), expected);
-    assert_eq!(marked(&app).as_deref(), Some(expected[0]));
+    assert_eq!(marked(&app, WIDE).as_deref(), Some(expected[0]));
     assert_eq!(list_corners(&app), corners);
 }
 
@@ -389,7 +332,7 @@ fn letters_type_in_a_search_and_esc_leaves_it() {
 
     // Then:
     let all: Vec<&str> = ALL.iter().map(|kind| kind.name()).collect();
-    assert_eq!(marked(&app).as_deref(), Some(second.as_str()));
+    assert_eq!(marked(&app, WIDE).as_deref(), Some(second.as_str()));
     assert!(app.is_picking());
     assert!(!list_rows(&app).iter().any(|row| row.contains("/rain")));
     let shown = listed(&app);
@@ -425,7 +368,7 @@ fn esc_after_a_search_with_no_match_shows_the_marked_scene() {
     // Then:
     assert!(app.is_picking());
     assert!(!listed(&app).is_empty(), "the list is still empty");
-    assert!(marked(&app).is_some());
+    assert!(marked(&app, WIDE).is_some());
     let shown = app_frame(&app, WIDE);
     let inner = pane_inner(&shown).expect("no pane");
     assert!(
