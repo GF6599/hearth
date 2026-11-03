@@ -39,15 +39,13 @@ impl Column {
     fn new(rng: &mut Rng, table: &[char], height: u16) -> Self {
         let rows = i32::from(height);
         let shortest = shortest(rows);
-        let mut column = Self {
+        Self {
             head: rng.random_range(-rows..rows.max(1)),
             tail: rng.random_range(shortest..=rows.max(shortest)),
             ticks_per_row: rng.random_range(1..=SLOWEST),
             ticks_since_step: 0,
-            glyphs: Vec::with_capacity(usize::from(height)),
-        };
-        column.glyphs = (0..height).map(|_| pick(rng, table)).collect();
-        column
+            glyphs: (0..height).map(|_| pick(rng, table)).collect(),
+        }
     }
 
     /// Sends the column back above the top with a fresh pace, after a wait

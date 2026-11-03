@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use rand::RngExt;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-
 use ratatui::style::Color;
 
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, COVERAGE_STEPS, Canvas, falloff, stepped};

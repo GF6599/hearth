@@ -44,7 +44,7 @@ const SCROLL: Duration = Duration::from_millis(800);
 
 /// A tick types between half and one and a half times its share, so the
 /// rhythm is uneven the way a person's is.
-const JITTER: std::ops::Range<f64> = 0.5..1.5;
+const JITTER: Range<f64> = 0.5..1.5;
 
 /// Each side of the frame keeps this share of the area clear, so every
 /// snippet sits in the same frame and the padding does not move.

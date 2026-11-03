@@ -210,14 +210,14 @@ impl Config {
 
 /// Sets one speed in the file and keeps everything else in it, comments
 /// and key order included. A missing file or folder is created.
-pub fn save_speed(path: &Path, scene: SceneKind, speed: impl Into<Value>) -> io::Result<()> {
+pub fn save_speed(path: &Path, scene: SceneKind, speed: Value) -> io::Result<()> {
     let mut document = read_document(path)?;
     let table = document
         .entry("speed")
         .or_insert_with(|| Item::Table(Table::new()))
         .as_table_like_mut()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "speed is not a table"))?;
-    set_in_place(table, scene.name(), speed.into());
+    set_in_place(table, scene.name(), speed);
     replace(path, &document.to_string())
 }
 
