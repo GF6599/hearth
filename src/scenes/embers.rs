@@ -60,6 +60,8 @@ const FALL: usize = BAND;
 /// A log glows this many pixels in from each end, where the fire eats into
 /// it.
 const ENDS: usize = 2 * CELL_WIDTH;
+/// Shortest log laid: its glowing end and one pixel of wood past it.
+const SHORTEST_LOG: usize = ENDS + 2;
 
 /// The chance that a tick lets one spark go, outside a settle.
 const SPARK_ODDS: f64 = 0.2;
@@ -461,17 +463,24 @@ impl Embers {
         if self.rng.random_bool(0.5) {
             let a_start = tenth(0) + jitter(&mut self.rng);
             let (a_end, b_start) = (tenth(7) - jitter(&mut self.rng), tenth(3));
-            self.add_log(a_start, a_end, floor, floor, thickness);
+            self.add_log(a_start, a_end, floor, floor, thickness, false);
             let lifted = floor.saturating_sub(thickness);
-            self.add_log(b_start, tenth(10) - 1, lifted, floor, thickness);
+            self.add_log(b_start, tenth(10) - 1, lifted, floor, thickness, false);
         } else {
             let a_end = tenth(6) - jitter(&mut self.rng);
             let b_start = tenth(4) + jitter(&mut self.rng);
-            self.add_log(tenth(0), a_end, floor, floor, thickness);
-            self.add_log(b_start, tenth(10) - 1, floor, floor, thickness);
+            self.add_log(tenth(0), a_end, floor, floor, thickness, false);
+            self.add_log(b_start, tenth(10) - 1, floor, floor, thickness, false);
             let top = floor.saturating_sub(thickness);
             let tilt = self.rng.random_range(0..=BAND);
-            self.add_log(tenth(2), tenth(8), top, top.saturating_sub(tilt), thickness);
+            self.add_log(
+                tenth(2),
+                tenth(8),
+                top,
+                top.saturating_sub(tilt),
+                thickness,
+                false,
+            );
         }
     }
 
@@ -482,8 +491,17 @@ impl Embers {
     /// One log from column `start` to `end`, its bottom row going from
     /// `from` to `to`. A few cracks and part of the underside, where the
     /// coals are, glow from the start, and the rest catches as it burns.
-    fn add_log(&mut self, start: usize, end: usize, from: usize, to: usize, thickness: usize) {
-        if end <= start + ENDS {
+    /// A log shorter than `SHORTEST_LOG` is not laid.
+    fn add_log(
+        &mut self,
+        start: usize,
+        end: usize,
+        from: usize,
+        to: usize,
+        thickness: usize,
+        falling: bool,
+    ) {
+        if end + 1 < start + SHORTEST_LOG {
             return;
         }
         let length = end - start;
@@ -527,7 +545,7 @@ impl Embers {
             grain,
             burn,
             left: burn,
-            falling: false,
+            falling,
         });
     }
 
@@ -555,7 +573,9 @@ impl Embers {
                 });
             }
         }
-        let length = self.span * self.rng.random_range(5..=7) / 10;
+        let length = (self.span * self.rng.random_range(5..=7) / 10)
+            .max(SHORTEST_LOG)
+            .min(self.span);
         let start = self.left + self.rng.random_range(0..=self.span - length);
         let end = start + length - 1;
         let pile = (start..=end)
@@ -565,10 +585,7 @@ impl Embers {
         let from = pile.saturating_sub(DROP_HEIGHT);
         let to = from.saturating_sub(self.rng.random_range(0..=BAND));
         let thickness = self.thickness();
-        self.add_log(start, end, from, to, thickness);
-        if let Some(new) = self.logs.last_mut() {
-            new.falling = true;
-        }
+        self.add_log(start, end, from, to, thickness, true);
     }
 
     fn cool(&mut self) {
