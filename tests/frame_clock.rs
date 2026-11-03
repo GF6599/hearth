@@ -38,10 +38,16 @@ fn row_text(buffer: &Buffer, y: u16) -> String {
 
 /// Every rate `+` and `-` step through, slowest first.
 fn every_rate() -> Vec<Rate> {
-    Rate::all_times()
-        .split(", ")
-        .map(|times| Rate::from_times(times.parse().unwrap()).unwrap())
-        .collect()
+    let mut rate = Rate::NORMAL;
+    while rate.slower() != rate {
+        rate = rate.slower();
+    }
+    let mut rates = vec![rate];
+    while rate.faster() != rate {
+        rate = rate.faster();
+        rates.push(rate);
+    }
+    rates
 }
 
 fn at_rate(kind: SceneKind, rate: Rate) -> Config {
