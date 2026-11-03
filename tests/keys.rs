@@ -5,7 +5,7 @@ mod frames;
 
 use std::sync::Arc;
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use hearth::app::App;
 use hearth::corpus::Corpus;
 use hearth::scene::{ALL, SceneKind};
@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 
 use frames::{alone, app_frame, mark, marked, pane_inner};
 
-use events::{back_tab, key, send, tab, typed};
+use events::{back_tab, key, press, send, tab, typed};
 
 const WIDE: Rect = Rect::new(0, 0, 120, 30);
 
@@ -463,4 +463,45 @@ fn m_turns_the_sound_off_and_on() {
 
     // Then:
     assert!(app.sound_on());
+}
+
+/// A letter with Ctrl or Alt held does not type into a search.
+/// Given: the picker with a search for `ra`.
+/// When: Ctrl-i and Alt-i are pressed, and then a plain `i`.
+/// Then: the search reads `ra` after the two chords and `rai` after the
+/// plain letter.
+///
+/// Why it matters: a chord is a command in most terminals, and one that
+/// types its letter changes the search under the user.
+#[test]
+fn a_chord_does_not_type_into_a_search() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+    let mut keys = vec![key(KeyCode::Char('/'))];
+    keys.extend(typed("ra"));
+    send(&mut app, keys);
+
+    // When:
+    send(
+        &mut app,
+        vec![
+            press(KeyCode::Char('i'), KeyModifiers::CONTROL),
+            press(KeyCode::Char('i'), KeyModifiers::ALT),
+        ],
+    );
+    let after_chords = list_rows(&app);
+    send(&mut app, typed("i"));
+
+    // Then:
+    assert!(
+        after_chords
+            .iter()
+            .any(|row| row.contains("/ra ") || row.ends_with("/ra")),
+        "{after_chords:?}"
+    );
+    assert!(
+        !after_chords.iter().any(|row| row.contains("/rai")),
+        "{after_chords:?}"
+    );
+    assert!(list_rows(&app).iter().any(|row| row.contains("/rai")));
 }
