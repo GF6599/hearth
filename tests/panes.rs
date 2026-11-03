@@ -1,54 +1,23 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::time::Duration;
+mod events;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::sync::Arc;
+
+use crossterm::event::KeyCode;
 use hearth::app::App;
 use hearth::corpus::Corpus;
-use hearth::events::{EventSource, handle_events};
 use hearth::scene::{ALL, SceneKind};
 use hearth::theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 
+use events::send_keys;
+
 const AREA: Rect = Rect::new(0, 0, 40, 12);
 const LEFT: Rect = Rect::new(0, 0, 19, 12);
 const RIGHT: Rect = Rect::new(20, 0, 20, 12);
 const TOP: Rect = Rect::new(0, 0, 40, 5);
-
-struct QueuedEvents {
-    queued: VecDeque<Event>,
-}
-
-impl EventSource for QueuedEvents {
-    fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
-        Ok(!self.queued.is_empty())
-    }
-
-    fn read(&mut self) -> std::io::Result<Event> {
-        self.queued
-            .pop_front()
-            .ok_or_else(|| std::io::Error::other("polled ready with an empty queue"))
-    }
-}
-
-fn press(code: KeyCode) -> Event {
-    Event::Key(KeyEvent {
-        code,
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-        state: KeyEventState::NONE,
-    })
-}
-
-fn send(app: &mut App, keys: &[KeyCode]) {
-    let mut source = QueuedEvents {
-        queued: keys.iter().map(|code| press(*code)).collect(),
-    };
-    handle_events(app, &mut source, Duration::ZERO).unwrap();
-}
 
 fn fire() -> App {
     App::new(SceneKind::Fire, 7, Arc::new(Corpus::embedded()))
@@ -151,7 +120,7 @@ fn a_side_by_side_split_puts_the_picker_beside_the_scene() {
     let mut app = fire();
 
     // When:
-    send(&mut app, &[KeyCode::Char('v')]);
+    send_keys(&mut app, &[KeyCode::Char('v')]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -176,7 +145,7 @@ fn a_stacked_split_puts_the_picker_below_the_scene() {
     let mut app = fire();
 
     // When:
-    send(&mut app, &[KeyCode::Char('s')]);
+    send_keys(&mut app, &[KeyCode::Char('s')]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -200,10 +169,10 @@ fn a_stacked_split_puts_the_picker_below_the_scene() {
 fn enter_starts_the_next_scene_in_the_new_pane_only() {
     // Given:
     let mut app = fire();
-    send(&mut app, &[KeyCode::Char('v')]);
+    send_keys(&mut app, &[KeyCode::Char('v')]);
 
     // When:
-    send(&mut app, &[KeyCode::Enter]);
+    send_keys(&mut app, &[KeyCode::Enter]);
     for _ in 0..4 {
         app.tick(AREA);
     }
@@ -229,10 +198,10 @@ fn enter_starts_the_next_scene_in_the_new_pane_only() {
 fn the_rules_join_where_they_meet() {
     // Given:
     let mut app = fire();
-    send(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
+    send_keys(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
 
     // When:
-    send(&mut app, &[KeyCode::Char('s')]);
+    send_keys(&mut app, &[KeyCode::Char('s')]);
 
     // Then:
     let shown = frame(&app);
@@ -277,7 +246,7 @@ fn one_pane_shows_no_focus_marks() {
 fn h_j_k_l_and_the_arrows_move_the_focus() {
     // Given:
     let mut app = fire();
-    send(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
+    send_keys(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
     let two = [LEFT, RIGHT];
     assert_eq!(focused(&frame(&app), &two), Some(RIGHT));
 
@@ -289,11 +258,11 @@ fn h_j_k_l_and_the_arrows_move_the_focus() {
         (KeyCode::Left, LEFT),
         (KeyCode::Right, RIGHT),
     ] {
-        send(&mut app, &[key]);
+        send_keys(&mut app, &[key]);
         assert_eq!(focused(&frame(&app), &two), Some(pane), "after {key:?}");
     }
 
-    send(&mut app, &[KeyCode::Char('s'), KeyCode::Enter]);
+    send_keys(&mut app, &[KeyCode::Char('s'), KeyCode::Enter]);
     let three = [LEFT, RIGHT_TOP, RIGHT_BOTTOM];
     for (key, pane) in [
         (KeyCode::Char('k'), RIGHT_TOP),
@@ -304,7 +273,7 @@ fn h_j_k_l_and_the_arrows_move_the_focus() {
         (KeyCode::Char('h'), LEFT),
         (KeyCode::Char('l'), RIGHT_BOTTOM),
     ] {
-        send(&mut app, &[key]);
+        send_keys(&mut app, &[key]);
         assert_eq!(focused(&frame(&app), &three), Some(pane), "after {key:?}");
     }
 }
@@ -321,13 +290,13 @@ fn h_j_k_l_and_the_arrows_move_the_focus() {
 fn tab_changes_the_focused_pane_only() {
     // Given:
     let mut app = fire();
-    send(
+    send_keys(
         &mut app,
         &[KeyCode::Char('v'), KeyCode::Enter, KeyCode::Char('h')],
     );
 
     // When:
-    send(&mut app, &[KeyCode::Tab]);
+    send_keys(&mut app, &[KeyCode::Tab]);
     for _ in 0..4 {
         app.tick(AREA);
     }
@@ -360,13 +329,13 @@ fn tab_changes_the_focused_pane_only() {
 fn esc_opens_the_picker_in_the_focused_pane() {
     // Given:
     let mut app = fire();
-    send(
+    send_keys(
         &mut app,
         &[KeyCode::Char('v'), KeyCode::Enter, KeyCode::Char('h')],
     );
 
     // When:
-    send(&mut app, &[KeyCode::Esc]);
+    send_keys(&mut app, &[KeyCode::Esc]);
 
     // Then:
     let shown = frame(&app);
@@ -386,13 +355,13 @@ fn esc_opens_the_picker_in_the_focused_pane() {
 fn a_new_speed_shows_in_the_focused_pane() {
     // Given:
     let mut app = fire();
-    send(
+    send_keys(
         &mut app,
         &[KeyCode::Char('v'), KeyCode::Enter, KeyCode::Char('h')],
     );
 
     // When:
-    send(&mut app, &[KeyCode::Char('+')]);
+    send_keys(&mut app, &[KeyCode::Char('+')]);
 
     // Then:
     let shown = frame(&app);
@@ -412,10 +381,10 @@ fn a_new_speed_shows_in_the_focused_pane() {
 fn x_gives_the_closed_pane_s_area_to_its_sibling() {
     // Given:
     let mut app = fire();
-    send(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
+    send_keys(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
 
     // When:
-    send(&mut app, &[KeyCode::Char('x')]);
+    send_keys(&mut app, &[KeyCode::Char('x')]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -440,7 +409,7 @@ fn x_gives_the_closed_pane_s_area_to_its_sibling() {
 fn a_close_in_a_stack_changes_that_stack_only() {
     // Given:
     let mut app = fire();
-    send(
+    send_keys(
         &mut app,
         &[
             KeyCode::Char('v'),
@@ -451,7 +420,7 @@ fn a_close_in_a_stack_changes_that_stack_only() {
     );
 
     // When:
-    send(&mut app, &[KeyCode::Char('x')]);
+    send_keys(&mut app, &[KeyCode::Char('x')]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -481,7 +450,7 @@ fn the_last_pane_does_not_close() {
     let mut app = fire();
 
     // When:
-    send(&mut app, &[KeyCode::Char('x')]);
+    send_keys(&mut app, &[KeyCode::Char('x')]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -505,10 +474,10 @@ fn the_last_pane_does_not_close() {
 fn esc_in_a_new_pane_s_picker_closes_the_pane() {
     // Given:
     let mut app = fire();
-    send(&mut app, &[KeyCode::Char('v')]);
+    send_keys(&mut app, &[KeyCode::Char('v')]);
 
     // When:
-    send(&mut app, &[KeyCode::Esc]);
+    send_keys(&mut app, &[KeyCode::Esc]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -535,13 +504,13 @@ fn esc_in_a_new_pane_s_picker_closes_the_pane() {
 fn closing_the_first_pane_keeps_the_ones_after_it() {
     // Given:
     let mut app = fire();
-    send(
+    send_keys(
         &mut app,
         &[KeyCode::Char('v'), KeyCode::Enter, KeyCode::Char('h')],
     );
 
     // When:
-    send(&mut app, &[KeyCode::Char('x')]);
+    send_keys(&mut app, &[KeyCode::Char('x')]);
     for _ in 0..3 {
         app.tick(AREA);
     }
@@ -567,7 +536,7 @@ fn closing_the_first_pane_keeps_the_ones_after_it() {
 fn a_resize_keeps_each_split_in_the_middle() {
     // Given:
     let mut app = fire();
-    send(
+    send_keys(
         &mut app,
         &[
             KeyCode::Char('v'),
@@ -603,7 +572,7 @@ fn panes_too_small_to_draw_never_panic() {
     for &kind in hearth::scene::ALL {
         // Given:
         let mut app = App::new(kind, 7, Arc::new(Corpus::embedded()));
-        send(
+        send_keys(
             &mut app,
             &[
                 KeyCode::Char('v'),
@@ -650,24 +619,24 @@ fn panes_too_small_to_draw_never_panic() {
 fn a_new_typing_speed_reaches_every_typing_pane() {
     // Given:
     let mut app = App::new(SceneKind::Typing, 7, Arc::new(Corpus::embedded()));
-    send(&mut app, &[KeyCode::Char('v')]);
+    send_keys(&mut app, &[KeyCode::Char('v')]);
     let typing = ALL
         .iter()
         .position(|kind| *kind == SceneKind::Typing)
         .unwrap();
-    send(&mut app, &vec![KeyCode::Char('k'); ALL.len()]);
-    send(&mut app, &vec![KeyCode::Char('j'); typing]);
-    send(&mut app, &[KeyCode::Enter]);
+    send_keys(&mut app, &vec![KeyCode::Char('k'); ALL.len()]);
+    send_keys(&mut app, &vec![KeyCode::Char('j'); typing]);
+    send_keys(&mut app, &[KeyCode::Enter]);
 
     // When:
-    send(&mut app, &[KeyCode::Char('+')]);
+    send_keys(&mut app, &[KeyCode::Char('+')]);
     for _ in 0..20 {
         app.tick(AREA);
     }
 
     // Then:
     let mut faster = App::new(SceneKind::Typing, 7, Arc::new(Corpus::embedded()));
-    send(&mut faster, &[KeyCode::Char('+')]);
+    send_keys(&mut faster, &[KeyCode::Char('+')]);
     for _ in 0..20 {
         faster.tick(LEFT);
     }

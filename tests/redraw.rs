@@ -1,54 +1,23 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::time::Duration;
+mod events;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::sync::Arc;
+
 use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::events::{EventSource, handle_events};
 use hearth::scene::{ALL, FRAMES_PER_TICK, Rate, SceneKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+
+use crossterm::event::Event;
+use events::{letter, send};
 
 const AREA: Rect = Rect::new(0, 0, 60, 20);
 
 /// The frames the speed notice stays on screen.
 const NOTICE_FRAMES: usize = 16 * FRAMES_PER_TICK as usize;
-
-struct QueuedEvents {
-    queued: VecDeque<Event>,
-}
-
-impl EventSource for QueuedEvents {
-    fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
-        Ok(!self.queued.is_empty())
-    }
-
-    fn read(&mut self) -> std::io::Result<Event> {
-        self.queued
-            .pop_front()
-            .ok_or_else(|| std::io::Error::other("polled ready with an empty queue"))
-    }
-}
-
-fn send(app: &mut App, events: Vec<Event>) {
-    let mut source = QueuedEvents {
-        queued: events.into(),
-    };
-    handle_events(app, &mut source, Duration::ZERO).unwrap();
-}
-
-fn key(c: char) -> Event {
-    Event::Key(KeyEvent {
-        code: KeyCode::Char(c),
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-        state: KeyEventState::NONE,
-    })
-}
 
 fn picture(app: &App, area: Rect) -> Buffer {
     let mut buffer = Buffer::empty(area);
@@ -186,7 +155,7 @@ fn a_key_and_a_resize_ask_for_a_draw() {
     run(&mut app, AREA, 1);
 
     // When, then:
-    send(&mut app, vec![key('t')]);
+    send(&mut app, vec![letter('t')]);
     assert!(app.take_redraw(), "a key asked for no draw");
     send(&mut app, vec![Event::Resize(80, 24)]);
     assert!(app.take_redraw(), "a resize asked for no draw");
@@ -224,7 +193,7 @@ fn the_notice_asks_for_a_draw_when_it_ends() {
     // Given:
     let mut app = at_one(SceneKind::Fire);
     run(&mut app, AREA, 2);
-    send(&mut app, vec![key('+')]);
+    send(&mut app, vec![letter('+')]);
 
     // When:
     let asked = run(&mut app, AREA, NOTICE_FRAMES + 8);

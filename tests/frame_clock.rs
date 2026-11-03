@@ -1,14 +1,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::VecDeque;
+mod events;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use crossterm::event::KeyCode;
 use hearth::app::App;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
-use hearth::events::{EventSource, handle_events};
 use hearth::mark;
 use hearth::pane::advance;
 use hearth::scene::{ALL, FRAMES_PER_TICK, QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
@@ -18,45 +18,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
+use events::send_keys;
+
 const AREA: Rect = Rect::new(0, 0, 40, 12);
 const WIDE: Rect = Rect::new(0, 0, 120, 30);
 
 /// The ticks a changed speed stays on screen, as it did when the app drew
 /// one frame a tick.
 const NOTICE_TICKS: u32 = 16;
-
-struct QueuedEvents {
-    queued: VecDeque<Event>,
-}
-
-impl EventSource for QueuedEvents {
-    fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
-        Ok(!self.queued.is_empty())
-    }
-
-    fn read(&mut self) -> std::io::Result<Event> {
-        self.queued
-            .pop_front()
-            .ok_or_else(|| std::io::Error::other("polled ready with an empty queue"))
-    }
-}
-
-fn send(app: &mut App, keys: &[KeyCode]) {
-    let mut source = QueuedEvents {
-        queued: keys
-            .iter()
-            .map(|code| {
-                Event::Key(KeyEvent {
-                    code: *code,
-                    modifiers: KeyModifiers::NONE,
-                    kind: KeyEventKind::Press,
-                    state: KeyEventState::NONE,
-                })
-            })
-            .collect(),
-    };
-    handle_events(app, &mut source, Duration::ZERO).unwrap();
-}
 
 fn app_frame(app: &App, area: Rect) -> Buffer {
     let mut buffer = Buffer::empty(area);
@@ -221,7 +190,7 @@ fn typing_ticks_once_a_tick() {
 fn the_notice_lasts_as_long_as_before() {
     // Given:
     let mut app = App::new(SceneKind::Fire, 7, Arc::new(Corpus::embedded()));
-    send(&mut app, &[KeyCode::Char('+')]);
+    send_keys(&mut app, &[KeyCode::Char('+')]);
     let header = |app: &App| row_text(&app_frame(app, AREA), 0);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
 

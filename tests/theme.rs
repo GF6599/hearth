@@ -1,53 +1,21 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::time::Duration;
+mod events;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::sync::Arc;
+
+use crossterm::event::KeyCode;
 use hearth::app::App;
 use hearth::corpus::Corpus;
-use hearth::events::{EventSource, handle_events};
 use hearth::scene::SceneKind;
 use hearth::theme::{self, Palette};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use events::send_keys;
+
 const AREA: Rect = Rect::new(0, 0, 100, 30);
-
-struct QueuedEvents {
-    queued: VecDeque<Event>,
-}
-
-impl EventSource for QueuedEvents {
-    fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
-        Ok(!self.queued.is_empty())
-    }
-
-    fn read(&mut self) -> std::io::Result<Event> {
-        self.queued
-            .pop_front()
-            .ok_or_else(|| std::io::Error::other("polled ready with an empty queue"))
-    }
-}
-
-fn send(app: &mut App, keys: &[KeyCode]) {
-    let mut source = QueuedEvents {
-        queued: keys
-            .iter()
-            .map(|code| {
-                Event::Key(KeyEvent {
-                    code: *code,
-                    modifiers: KeyModifiers::NONE,
-                    kind: KeyEventKind::Press,
-                    state: KeyEventState::NONE,
-                })
-            })
-            .collect(),
-    };
-    handle_events(app, &mut source, Duration::ZERO).unwrap();
-}
 
 fn frame(app: &mut App, ticks: usize) -> Buffer {
     for _ in 0..ticks {
@@ -113,7 +81,7 @@ fn row(buffer: &Buffer, y: u16) -> String {
 fn t_moves_every_pane_to_the_next_theme() {
     // Given:
     let mut app = App::new(SceneKind::Fire, 7, Arc::new(Corpus::embedded()));
-    send(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
+    send_keys(&mut app, &[KeyCode::Char('v'), KeyCode::Enter]);
     frame(&mut app, 5);
 
     for pair in theme::THEMES
@@ -126,7 +94,7 @@ fn t_moves_every_pane_to_the_next_theme() {
         let ((before, from), (after, to)) = (pair[0], pair[1]);
 
         // When:
-        send(&mut app, &[KeyCode::Char('t')]);
+        send_keys(&mut app, &[KeyCode::Char('t')]);
 
         // Then:
         let shown = frame(&mut app, 10);
@@ -154,7 +122,7 @@ fn t_wraps_from_the_last_theme_to_the_first() {
 
     // When:
     let presses = vec![KeyCode::Char('t'); theme::THEMES.len()];
-    send(&mut cycled, &presses);
+    send_keys(&mut cycled, &presses);
 
     // Then:
     assert_eq!(frame(&mut cycled, 20), frame(&mut still, 20));
@@ -172,11 +140,11 @@ fn t_wraps_from_the_last_theme_to_the_first() {
 fn t_in_the_picker_moves_the_list_and_the_preview_to_the_next_theme() {
     // Given:
     let mut app = App::picker(7, Arc::new(Corpus::embedded()));
-    send(&mut app, &[KeyCode::Char('j'), KeyCode::Char('j')]);
+    send_keys(&mut app, &[KeyCode::Char('j'), KeyCode::Char('j')]);
     frame(&mut app, 5);
 
     // When:
-    send(&mut app, &[KeyCode::Char('t')]);
+    send_keys(&mut app, &[KeyCode::Char('t')]);
 
     // Then:
     assert!(app.is_picking());
@@ -200,7 +168,7 @@ fn t_names_the_new_theme_in_the_notice() {
     let mut app = App::new(SceneKind::Fire, 7, Arc::new(Corpus::embedded()));
 
     // When:
-    send(&mut app, &[KeyCode::Char('t')]);
+    send_keys(&mut app, &[KeyCode::Char('t')]);
 
     // Then:
     let (name, _) = theme::THEMES[1];

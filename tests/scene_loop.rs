@@ -1,14 +1,15 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::VecDeque;
+mod events;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
 use hearth::app::App;
 use hearth::config::Config;
 use hearth::corpus::Corpus;
-use hearth::events::{EventSource, handle_events};
+use hearth::events::handle_events;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::{FINDING, Speed};
 use hearth::theme;
@@ -17,50 +18,11 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use crossterm::event::Event;
+use events::{QueuedEvents, letter, press, release, send, tab};
+
 const WIDTH: u16 = 24;
 const HEIGHT: u16 = 6;
-
-struct QueuedEvents {
-    queued: VecDeque<Event>,
-}
-
-impl QueuedEvents {
-    fn new(events: Vec<Event>) -> Self {
-        Self {
-            queued: events.into(),
-        }
-    }
-}
-
-impl EventSource for QueuedEvents {
-    fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
-        Ok(!self.queued.is_empty())
-    }
-
-    fn read(&mut self) -> std::io::Result<Event> {
-        self.queued
-            .pop_front()
-            .ok_or_else(|| std::io::Error::other("polled ready with an empty queue"))
-    }
-}
-
-fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
-    Event::Key(KeyEvent {
-        code,
-        modifiers,
-        kind: KeyEventKind::Press,
-        state: KeyEventState::NONE,
-    })
-}
-
-fn key(c: char) -> Event {
-    press(KeyCode::Char(c), KeyModifiers::NONE)
-}
-
-fn send(app: &mut App, events: Vec<Event>) {
-    let mut source = QueuedEvents::new(events);
-    handle_events(app, &mut source, Duration::ZERO).unwrap();
-}
 
 fn frame(app: &App, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -152,7 +114,7 @@ fn r_restarts_the_scene_with_a_new_seed() {
     let first_frame_of_seed_7 = frame(&ticked(7, 1), WIDTH, HEIGHT);
 
     // When:
-    send(&mut restarted, vec![key('r')]);
+    send(&mut restarted, vec![letter('r')]);
     restarted.tick(Rect::new(0, 0, WIDTH, HEIGHT));
 
     // Then:
@@ -193,7 +155,7 @@ fn tab_moves_to_the_next_scene() {
 #[test]
 fn q_quits() {
     let mut app = ticked(7, 1);
-    send(&mut app, vec![key('q')]);
+    send(&mut app, vec![letter('q')]);
     assert!(app.should_quit);
 }
 
@@ -265,10 +227,10 @@ fn the_picker_selection_stays_inside_the_list() {
         &mut app,
         vec![
             press(KeyCode::Down, KeyModifiers::NONE),
-            key('j'),
+            letter('j'),
             press(KeyCode::Up, KeyModifiers::NONE),
-            key('k'),
-            key('k'),
+            letter('k'),
+            letter('k'),
         ],
     );
 
@@ -285,7 +247,7 @@ fn the_picker_selection_stays_inside_the_list() {
 #[test]
 fn the_picker_quits_on_q() {
     let mut app = App::picker(7, corpus());
-    send(&mut app, vec![key('q')]);
+    send(&mut app, vec![letter('q')]);
     assert!(app.should_quit);
 }
 
@@ -294,15 +256,7 @@ fn the_picker_quits_on_q() {
 #[test]
 fn a_key_release_is_ignored() {
     let mut app = ticked(7, 1);
-    send(
-        &mut app,
-        vec![Event::Key(KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Release,
-            state: KeyEventState::NONE,
-        })],
-    );
+    send(&mut app, vec![release(KeyCode::Char('q'))]);
     assert!(!app.should_quit);
 }
 
@@ -334,13 +288,13 @@ fn an_unbounded_burst_does_not_starve_the_redraw() {
     let flood: Vec<Event> = (0..10_000)
         .map(|_| press(KeyCode::Tab, KeyModifiers::NONE))
         .collect();
-    let mut source = QueuedEvents::new(flood);
 
     // When:
+    let mut source = QueuedEvents::new(flood);
     handle_events(&mut app, &mut source, Duration::ZERO).unwrap();
 
     // Then:
-    assert!(!source.queued.is_empty());
+    assert!(source.left() > 0);
 }
 
 fn header(app: &App) -> String {
@@ -366,20 +320,16 @@ fn plus_and_minus_change_the_typing_speed() {
     let mut app = App::new(SceneKind::Typing, 7, corpus());
 
     // When, then:
-    send(&mut app, vec![key('+')]);
+    send(&mut app, vec![letter('+')]);
     assert!(header(&app).contains(&shown(faster)), "{}", header(&app));
-    send(&mut app, vec![key('+')]);
+    send(&mut app, vec![letter('+')]);
     assert!(header(&app).contains(&shown(faster.faster())));
-    send(&mut app, vec![key('r'), key('-')]);
+    send(&mut app, vec![letter('r'), letter('-')]);
     assert!(header(&app).contains(&shown(faster)), "{}", header(&app));
     for _ in 0..34 {
         app.tick(Rect::new(0, 0, 60, HEIGHT));
     }
     assert!(!header(&app).contains("cps"), "{}", header(&app));
-}
-
-fn tab() -> Event {
-    press(KeyCode::Tab, KeyModifiers::NONE)
 }
 
 /// Given: the fire scene with `+` pressed twice, and a second fire scene on
@@ -394,7 +344,7 @@ fn plus_twice_runs_a_scene_at_twice_its_pace() {
     // Given:
     let area = Rect::new(0, 0, WIDTH, HEIGHT);
     let mut doubled = App::new(SceneKind::Fire, 7, corpus());
-    send(&mut doubled, vec![key('+'), key('+')]);
+    send(&mut doubled, vec![letter('+'), letter('+')]);
     let mut plain = App::new(SceneKind::Fire, 7, corpus());
 
     // When:
@@ -433,14 +383,14 @@ fn tabs(from: SceneKind, to: SceneKind) -> Vec<Event> {
 fn each_scene_keeps_its_own_speed() {
     // Given:
     let mut app = App::new(SceneKind::Fire, 7, corpus());
-    send(&mut app, vec![key('+'), key('+')]);
+    send(&mut app, vec![letter('+'), letter('+')]);
 
     // When, then:
-    send(&mut app, vec![tab(), key('+')]);
+    send(&mut app, vec![tab(), letter('+')]);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
-    let mut keys = vec![key('r')];
+    let mut keys = vec![letter('r')];
     keys.extend(tabs(SceneKind::Fire.next(), SceneKind::Typing));
-    keys.push(key('+'));
+    keys.push(letter('+'));
     send(&mut app, keys);
     assert!(
         header(&app).contains(&shown(Speed::DEFAULT.faster())),
@@ -448,16 +398,16 @@ fn each_scene_keeps_its_own_speed() {
         header(&app)
     );
     let mut keys = tabs(SceneKind::Typing, SceneKind::Fire);
-    keys.push(key('-'));
+    keys.push(letter('-'));
     send(&mut app, keys);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
     send(
         &mut app,
         vec![
             press(KeyCode::Esc, KeyModifiers::NONE),
-            key('j'),
+            letter('j'),
             press(KeyCode::Enter, KeyModifiers::NONE),
-            key('-'),
+            letter('-'),
         ],
     );
     assert!(header(&app).contains("1×"), "{}", header(&app));
@@ -479,10 +429,10 @@ fn a_restart_keeps_the_typing_speed() {
     let area = Rect::new(0, 0, width, HEIGHT);
     let faster = Speed::DEFAULT.faster();
     let mut app = App::new(SceneKind::Typing, 7, corpus());
-    send(&mut app, vec![key('+')]);
+    send(&mut app, vec![letter('+')]);
 
     // When:
-    send(&mut app, vec![key('r')]);
+    send(&mut app, vec![letter('r')]);
     let mut kept = App::configured(Some(SceneKind::Typing), 8, corpus(), &typing_at(faster));
     let mut dropped = App::new(SceneKind::Typing, 8, corpus());
     for each in [&mut app, &mut kept, &mut dropped] {

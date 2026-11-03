@@ -1,54 +1,19 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::time::Duration;
+mod events;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use std::sync::Arc;
+
+use crossterm::event::KeyCode;
 use hearth::app::App;
 use hearth::corpus::Corpus;
-use hearth::events::{EventSource, handle_events};
 use hearth::scene::{ALL, SceneKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
+use events::{back_tab, key, send, tab, typed};
+
 const WIDE: Rect = Rect::new(0, 0, 120, 30);
-
-struct QueuedEvents {
-    queued: VecDeque<Event>,
-}
-
-impl EventSource for QueuedEvents {
-    fn poll(&mut self, _timeout: Duration) -> std::io::Result<bool> {
-        Ok(!self.queued.is_empty())
-    }
-
-    fn read(&mut self) -> std::io::Result<Event> {
-        self.queued
-            .pop_front()
-            .ok_or_else(|| std::io::Error::other("polled ready with an empty queue"))
-    }
-}
-
-fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
-    Event::Key(KeyEvent {
-        code,
-        modifiers,
-        kind: KeyEventKind::Press,
-        state: KeyEventState::NONE,
-    })
-}
-
-fn tab() -> Event {
-    press(KeyCode::Tab, KeyModifiers::NONE)
-}
-
-fn send(app: &mut App, events: Vec<Event>) {
-    let mut source = QueuedEvents {
-        queued: events.into(),
-    };
-    handle_events(app, &mut source, Duration::ZERO).unwrap();
-}
 
 fn corpus() -> Arc<Corpus> {
     Arc::new(Corpus::embedded())
@@ -173,10 +138,6 @@ fn tab_in_the_picker_marks_the_next_scene() {
     assert!(app.is_picking());
 }
 
-fn back_tab() -> Event {
-    press(KeyCode::BackTab, KeyModifiers::SHIFT)
-}
-
 /// Shift-Tab goes back one scene, round from the first to the last.
 /// Given: the second scene, ticked once, and then the first scene.
 /// When: Shift-Tab is pressed and the app ticks ten times.
@@ -241,16 +202,6 @@ fn shift_tab_in_the_picker_marks_the_scene_before() {
     // Then:
     assert_eq!(marked(&first).as_deref(), Some(ALL[ALL.len() - 1].name()));
     assert!(first.is_picking());
-}
-
-fn typed(text: &str) -> Vec<Event> {
-    text.chars()
-        .map(|c| press(KeyCode::Char(c), KeyModifiers::NONE))
-        .collect()
-}
-
-fn key(code: KeyCode) -> Event {
-    press(code, KeyModifiers::NONE)
 }
 
 /// The rows of the list frame, left of the preview pane.
