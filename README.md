@@ -42,7 +42,7 @@ brew install gf6599/tap/hearth
 
 Each [release](https://github.com/GF6599/hearth/releases) also carries archives for macOS and Linux, on Intel and ARM.
 
-From a clone, with a Rust toolchain, 1.85 or later, because the crate uses the 2024 edition:
+From a clone, with the Rust toolchain that `rust-version` in `Cargo.toml` names, or a later one:
 
 ```sh
 cargo install --path .
