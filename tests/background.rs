@@ -79,6 +79,10 @@ fn frame(args: &[&str], config: &Config) -> Buffer {
         app.tick(AREA);
         thread::sleep(Duration::from_millis(5));
     }
+    assert!(
+        !shows_text(&render(&app), FINDING),
+        "the typing scene found no function"
+    );
     for _ in 0..40 {
         app.tick(AREA);
     }
