@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use hearth::app::App;
 use hearth::corpus::Corpus;
+use hearth::mark;
 use hearth::scene::{ALL, SceneKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -81,4 +82,17 @@ pub fn mark(app: &mut App, kind: SceneKind, area: Rect) {
         app.select_next();
     }
     panic!("the mark never reached {kind:?}");
+}
+
+/// Rows that show every scene with its summary: two a scene, the mark and
+/// the row under it, the frame's two rules, and two to spare.
+pub fn tall() -> u16 {
+    u16::try_from(ALL.len() * 2 + mark::ART.len() + 1 + 2 + 2).unwrap()
+}
+
+/// The Tab presses from one scene to another, read from the order of `ALL`,
+/// which wraps from the last scene to the first.
+pub fn tabs(from: SceneKind, to: SceneKind) -> usize {
+    let place = |kind| ALL.iter().position(|each| *each == kind).unwrap();
+    (place(to) + ALL.len() - place(from)) % ALL.len()
 }

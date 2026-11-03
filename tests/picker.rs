@@ -229,7 +229,7 @@ fn the_app_lists_every_scene_with_its_summary() {
     let app = App::picker(7, Arc::new(Corpus::embedded()));
 
     // When:
-    let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+    let tall = frames::tall();
     let mut terminal = Terminal::new(TestBackend::new(100, tall)).unwrap();
     terminal
         .draw(|f| app.render(f.area(), f.buffer_mut()))
@@ -1047,7 +1047,7 @@ fn a_thumb_on_the_right_rule_shows_where_the_list_is() {
 #[test]
 fn a_list_that_shows_every_scene_has_no_thumb() {
     // Given:
-    let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+    let tall = frames::tall();
     let app = App::picker(7, Arc::new(Corpus::embedded()));
 
     // When:

@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod frames;
 mod palette;
 
 use std::fs;
@@ -11,7 +12,6 @@ use hearth::app::App;
 use hearth::cli::Cli;
 use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
-use hearth::mark;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
 use hearth::sound::Volume;
@@ -74,19 +74,13 @@ fn a_speed_in_the_file_is_the_speed_a_scene_starts_at() {
     app.next_scene();
     app.slower();
     assert!(header(&app).contains("¾×"), "{}", header(&app));
-    for _ in 1..tabs(SceneKind::Fire, SceneKind::Typing) {
+    for _ in 1..frames::tabs(SceneKind::Fire, SceneKind::Typing) {
         app.next_scene();
     }
     app.faster();
     let typing: Speed = "80".parse().unwrap();
     let shown = format!("{} cps", typing.faster());
     assert!(header(&app).contains(&shown), "{}", header(&app));
-}
-
-/// The Tab presses from one scene to another, read from the order of `ALL`.
-fn tabs(from: SceneKind, to: SceneKind) -> usize {
-    let place = |kind| ALL.iter().position(|each| *each == kind).unwrap();
-    place(to) - place(from)
 }
 
 /// Given: a path where no file exists.
@@ -274,7 +268,7 @@ fn plus_saves_the_speed_and_keeps_the_comments() {
 
     // When:
     app.faster();
-    for _ in 0..tabs(SceneKind::Fire, SceneKind::Typing) {
+    for _ in 0..frames::tabs(SceneKind::Fire, SceneKind::Typing) {
         app.next_scene();
     }
     app.faster();
@@ -396,7 +390,7 @@ fn the_picker_shows_each_scene_at_its_saved_speed() {
     let app = app(&["hearth"], &config);
 
     // When:
-    let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+    let tall = frames::tall();
     let area = Rect::new(0, 0, 100, tall);
     let mut buffer = Buffer::empty(area);
     app.render(area, &mut buffer);
@@ -607,7 +601,7 @@ fn the_picker_shows_the_hourglass_lengths_from_the_file() {
         let app = app(&["hearth"], &config);
 
         // When:
-        let tall = u16::try_from(ALL.len() * 2 + mark::ART.len() + 5).unwrap();
+        let tall = frames::tall();
         let area = Rect::new(0, 0, 100, tall);
         let mut buffer = Buffer::empty(area);
         app.render(area, &mut buffer);

@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 mod events;
+mod frames;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -368,17 +369,6 @@ fn plus_twice_runs_a_scene_at_twice_its_pace() {
 /// default, fire shows `1.5×` after its own 2×, and the scene after fire
 /// shows `1×` after its own `1.5×`.
 ///
-/// Why it matters: one shared speed carries the last scene's change into
-/// the next scene, and a speed that a restart, Tab or the picker resets is
-/// lost each time the user moves.
-/// The Tab presses from one scene to another, read from the order of `ALL`,
-/// which wraps from the last scene to the first.
-fn tabs(from: SceneKind, to: SceneKind) -> Vec<Event> {
-    let place = |kind| ALL.iter().position(|each| *each == kind).unwrap();
-    let count = (place(to) + ALL.len() - place(from)) % ALL.len();
-    (0..count).map(|_| tab()).collect()
-}
-
 #[test]
 fn each_scene_keeps_its_own_speed() {
     // Given:
@@ -389,7 +379,7 @@ fn each_scene_keeps_its_own_speed() {
     send(&mut app, vec![tab(), letter('+')]);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
     let mut keys = vec![letter('r')];
-    keys.extend(tabs(SceneKind::Fire.next(), SceneKind::Typing));
+    keys.extend((0..frames::tabs(SceneKind::Fire.next(), SceneKind::Typing)).map(|_| tab()));
     keys.push(letter('+'));
     send(&mut app, keys);
     assert!(
@@ -397,7 +387,9 @@ fn each_scene_keeps_its_own_speed() {
         "{}",
         header(&app)
     );
-    let mut keys = tabs(SceneKind::Typing, SceneKind::Fire);
+    let mut keys = (0..frames::tabs(SceneKind::Typing, SceneKind::Fire))
+        .map(|_| tab())
+        .collect::<Vec<_>>();
     keys.push(letter('-'));
     send(&mut app, keys);
     assert!(header(&app).contains("1.5×"), "{}", header(&app));
