@@ -45,8 +45,6 @@ const INSIDE: f32 = 0.01;
 
 /// Ticks from one pass of the hawk to the next, about 30 to 60 seconds.
 pub const HAWK_EVERY: RangeInclusive<u32> = 480..=960;
-/// No bird comes this close to the hawk, in pixels.
-pub const HAWK_CLEARANCE: f32 = 6.0;
 /// Slower than a fleeing bird, so a bird that flees always gains on it.
 const HAWK_SPEED: f32 = 1.2;
 /// A bird this close to the hawk flees, and the hawk starts and ends its

@@ -9,9 +9,7 @@ use hearth::config::Background;
 use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene, SceneKind, Settings};
-use hearth::scenes::murmuration::{
-    FLOCK, HAWK_CLEARANCE, HAWK_EVERY, Murmuration, PIXELS_PER_BIRD,
-};
+use hearth::scenes::murmuration::{FLOCK, HAWK_EVERY, Murmuration, PIXELS_PER_BIRD};
 use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -643,6 +641,8 @@ fn a_hawk_crosses_the_sky_now_and_then() {
     }
     assert!(passes >= 2, "{passes} passes in {ticks} ticks");
 }
+
+const HAWK_CLEARANCE: f32 = 6.0;
 
 /// Given: the scene on a hundred by thirty area.
 /// When: it ticks through two passes of the hawk.
