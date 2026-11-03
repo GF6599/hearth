@@ -4,7 +4,7 @@ version = "0.1.5"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
-description = "A terminal screensaver: a bonsai, matrix rain, fire, pipes, life and an aquarium in one app"
+description = "A terminal screensaver with a picker of scenes"
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
@@ -36,8 +36,8 @@ unsafe_code = "forbid"
 missing_debug_implementations = "warn"
 
 [lints.clippy]
-# Tests opt out per module with `#![allow(clippy::expect_used, ...)]` at the
-# top of their `#[cfg(test)] mod tests` block.
+# Each file under tests/ opts out on its first line with
+# `#![allow(clippy::expect_used, ...)]`.
 unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"

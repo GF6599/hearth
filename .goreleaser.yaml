@@ -55,7 +55,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: https://github.com/GF6599/hearth
-    description: A terminal screensaver of fire, embers, a flock, a bonsai and more
+    description: A terminal screensaver with a picker of scenes
     license: MIT
     # Homebrew quarantines what a cask downloads, and macOS reports a quarantined
     # binary that nobody notarized as damaged rather than running it. Notarizing
