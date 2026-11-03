@@ -1,29 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod repo;
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 use hearth::corpus::{Corpus, SIZE_CAP};
 
-/// A fresh directory under the system temp dir, emptied first.
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("hearth-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn git(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
-        .args(args)
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?} failed in {repo:?}");
-}
+use repo::{git, scratch};
 
 /// A repository with one tracked text file, one tracked binary file, one
 /// tracked file over the size cap, one tracked symlink to a file outside

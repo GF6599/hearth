@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 mod pixels;
+mod repo;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -26,39 +27,10 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use repo::{git, scratch};
+
 const AREA: Rect = Rect::new(0, 0, 100, 40);
 const PALETTE: &Palette = &theme::ROSE_PINE;
-
-/// A fresh directory under the system temp dir, emptied first.
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("hearth-river-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-/// Runs git in `repo` with a fixed author and no hooks or signing from the
-/// machine's own config, and answers what it printed.
-fn git(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args([
-            "-c",
-            "user.name=test",
-            "-c",
-            "user.email=test@example.com",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-        ])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?} failed in {repo:?}");
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
 
 fn commit(repo: &Path, file: &str, subject: &str) {
     fs::write(repo.join(file), subject).unwrap();

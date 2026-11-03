@@ -1,5 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod repo;
+
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -8,27 +10,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-fn repository(name: &str, file: &str, text: &str) -> PathBuf {
-    let repo = std::env::temp_dir().join(format!("hearth-cli-{}-{name}", std::process::id()));
-    let _ = fs::remove_dir_all(&repo);
-    fs::create_dir_all(&repo).unwrap();
-    fs::write(repo.join(file), text).unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &["add", file],
-        &["commit", "-q", "-m", "init"],
-    ] {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
-            .args(args)
-            .status()
-            .unwrap();
-        assert!(status.success());
-    }
-    repo
-}
+use repo::repository;
 
 /// A folder for `XDG_CONFIG_HOME` that holds `config` as hearth's file, or
 /// no file at all, so a run never reads the config of the machine it runs on.
@@ -98,7 +80,7 @@ fn a_bad_config_file_stops_startup_and_names_the_key() {
 /// Then: it refuses that repository, so the file chose it.
 #[test]
 fn the_config_file_chooses_the_repository() {
-    let repo = repository("configured", "README.md", "# Title\n");
+    let repo = repository("configured", &[("README.md", "# Title\n")]);
     let config = format!("repo = {:?}\n", repo.display().to_string());
     let (code, stderr) = run(&["typing"], &config_home("configured", Some(&config)));
     let _ = fs::remove_dir_all(&repo);
@@ -117,12 +99,15 @@ fn the_config_file_chooses_the_repository() {
 #[test]
 fn a_repository_with_no_function_is_refused_at_startup() {
     // Given, when:
-    let (code, stderr) = run_typing(&repository("prose", "README.md", "# Title\n\nSome text.\n"));
+    let (code, stderr) = run_typing(&repository(
+        "prose",
+        &[("README.md", "# Title\n\nSome text.\n")],
+    ));
 
     // Then:
     assert_eq!(code, 1);
     assert!(stderr.contains("no function"), "{stderr}");
-    let (_, stderr) = run_typing(&repository("code", "main.rs", "fn main() {}\n"));
+    let (_, stderr) = run_typing(&repository("code", &[("main.rs", "fn main() {}\n")]));
     assert!(!stderr.contains("no function"), "{stderr}");
 }
 
