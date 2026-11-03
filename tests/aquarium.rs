@@ -92,7 +92,7 @@ fn a_bubble_rises_one_row_per_tick_and_pops_at_the_surface() {
         );
 
         // Then:
-        let bubbles = cells_with(&render(&tank, area), &[BUBBLE]);
+        let bubbles = cells_with(&render(&tank, area), &[&BUBBLE.to_string()]);
         assert_eq!(bubbles.len(), 1, "after {ticks} ticks: {bubbles:?}");
         assert_eq!(
             bubbles[0].0,
@@ -107,7 +107,7 @@ fn a_bubble_rises_one_row_per_tick_and_pops_at_the_surface() {
         area,
         6,
     );
-    assert!(cells_with(&render(&tank, area), &[BUBBLE]).is_empty());
+    assert!(cells_with(&render(&tank, area), &[&BUBBLE.to_string()]).is_empty());
 }
 
 /// Given: a three-row fish offered to a tank with two rows of water under

@@ -6,7 +6,7 @@ use ratatui::style::Color;
 use crate::scene::{Rng, Scene};
 use crate::theme::Palette;
 
-pub const BUBBLE: &str = "o";
+pub const BUBBLE: char = 'o';
 const WATERLINE: char = '~';
 
 /// The row the waterline sits on. Water is every row below it.
@@ -358,11 +358,10 @@ impl Scene for Aquarium {
         }
 
         for bubble in &self.bubbles {
-            let glyph = BUBBLE.chars().next().unwrap_or('o');
             put(
                 i32::from(bubble.x),
                 i32::from(bubble.y),
-                glyph,
+                BUBBLE,
                 self.palette.foam,
             );
         }
