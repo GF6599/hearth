@@ -422,7 +422,7 @@ fn the_flames_draw_in_octant_glyphs() {
 /// Then: it draws without a panic, the bottom row is at the hottest band,
 /// and no cell outside the area is touched.
 #[test]
-fn a_smaller_area_drops_the_old_buffer() {
+fn a_smaller_area_draws_only_inside_it() {
     // Given:
     let canvas = Rect::new(0, 0, 10, 10);
     let mut fires = Banded::new(7);

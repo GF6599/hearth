@@ -342,8 +342,8 @@ fn colour_at(buffer: &Buffer, needle: &str) -> Color {
 /// When: the scene has typed it.
 /// Then: each takes its colour from the Rust grammar.
 ///
-/// Why it matters: colour by line, as before, paints a trailing comment
-/// in the code colour and a string in the comment colour.
+/// Why it matters: colour by line paints a trailing comment in the code
+/// colour and a string in the comment colour.
 #[test]
 fn rust_is_highlighted_by_its_grammar() {
     // Given:
@@ -380,7 +380,7 @@ fn the_grammar_follows_the_extension() {
 /// Then: every snippet comes from the Rust file.
 ///
 /// Why it matters: a file with no grammar has no function to start from,
-/// and typing it from the top is the behaviour this scene replaced.
+/// and typing it from the top shows prose or data, not code.
 #[test]
 fn a_file_with_no_function_is_skipped() {
     let area = Rect::new(0, 0, 40, 6);

@@ -186,7 +186,7 @@ fn typing_ticks_once_a_tick() {
 /// Why it matters: the notice shows for about one second. A countdown in
 /// frames that kept its old count would cut it to a quarter of a second.
 #[test]
-fn the_notice_lasts_as_long_as_before() {
+fn the_notice_lasts_sixteen_ticks() {
     // Given:
     let mut app = App::new(SceneKind::Fire, 7, Arc::new(Corpus::embedded()));
     send_keys(&mut app, &[KeyCode::Char('+')]);
@@ -221,9 +221,8 @@ fn title(buffer: &Buffer) -> Vec<Color> {
 /// of the frame one period before, and in other colours than the frames a
 /// quarter and a half of a period before.
 ///
-/// Why it matters: the title glows at the pace of ticks, so it keeps the
-/// pace it had when the app drew one frame a tick. A glow that counted
-/// frames as ticks would pulse four times as fast.
+/// Why it matters: the title glows at the pace of ticks. A glow that
+/// counted frames as ticks would pulse four times as fast.
 #[test]
 fn the_title_glows_at_the_pace_of_ticks() {
     // Given:

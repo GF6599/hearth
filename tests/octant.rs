@@ -273,11 +273,11 @@ fn the_base_stays_behind_one_ink() {
 /// base and the ink where they are nearer the ink, with the base behind.
 /// The second shows the ink in its three ink pixels and foam in the rest.
 ///
-/// Why it matters: a gradient puts three or more colours in a cell. The
-/// rule before gave every colour past the two most common to the
-/// foreground, so a gradient drew a band of the foreground colour through
-/// colours nearer the background. Each pixel in the nearer colour keeps
-/// the shade even across the cell.
+/// Why it matters: a gradient puts three or more colours in a cell. A
+/// rule that gives every colour past the two most common to the
+/// foreground draws a band of the foreground colour through colours
+/// nearer the background. Each pixel in the nearer colour keeps the shade
+/// even across the cell.
 #[test]
 fn a_cell_of_more_colours_takes_the_pair_nearest_its_pixels() {
     // Given:
@@ -311,8 +311,8 @@ fn a_cell_of_more_colours_takes_the_pair_nearest_its_pixels() {
 /// the base is behind.
 ///
 /// Why it matters: with the terminal's own background the base clears.
-/// The rule before put the two most common colours in the cell, so the
-/// base pixel took the ink and hid the terminal. The base lies far from
+/// A rule that puts the two most common colours in the cell gives the
+/// base pixel the ink and hides the terminal. The base lies far from
 /// both other colours, so the pair nearest the pixels holds it.
 #[test]
 fn a_cell_keeps_the_base_behind_in_its_pair() {
