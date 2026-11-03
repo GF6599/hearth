@@ -141,13 +141,13 @@ impl Meteor {
         };
         let (head, tail) = (flown.min(self.run), (flown - TRAIL as f32).max(0.0));
         let length = head - tail;
-        Some(Stroke {
-            path: vec![at(tail), at(head)],
+        Some(Stroke::new(
+            vec![at(tail), at(head)],
             colour,
-            strength: Box::new(move |along| {
+            Box::new(move |along| {
                 (1.0 - (flown - tail - along * length) / TRAIL as f32).clamp(0.0, 1.0)
             }),
-        })
+        ))
     }
 
     /// Whether the end of its trail has passed the end of its run once it
@@ -407,6 +407,8 @@ fn centre(star: Position) -> (f32, f32) {
 /// from its start, from 0 to 1.
 struct Stroke {
     path: Vec<(f32, f32)>,
+    lengths: Vec<f32>,
+    total: f32,
     colour: Color,
     strength: Box<dyn Fn(f32) -> f32>,
 }
@@ -422,6 +424,21 @@ impl std::fmt::Debug for Stroke {
 }
 
 impl Stroke {
+    fn new(path: Vec<(f32, f32)>, colour: Color, strength: Box<dyn Fn(f32) -> f32>) -> Self {
+        let lengths: Vec<f32> = path
+            .windows(2)
+            .map(|leg| (leg[1].0 - leg[0].0).hypot(leg[1].1 - leg[0].1))
+            .collect();
+        let total = lengths.iter().sum();
+        Self {
+            path,
+            lengths,
+            total,
+            colour,
+            strength,
+        }
+    }
+
     /// The pixels the stroke can touch: left, top, right and bottom.
     fn bounds(&self) -> [f32; 4] {
         let reach = LINE_WIDTH / 2.0 + 1.0;
@@ -442,18 +459,15 @@ impl Stroke {
     /// legs of the path meet, the nearer leg counts once, so a joint is no
     /// brighter than the legs.
     fn share(&self, point: (f32, f32)) -> f32 {
-        let lengths: Vec<f32> = self
-            .path
-            .windows(2)
-            .map(|leg| (leg[1].0 - leg[0].0).hypot(leg[1].1 - leg[0].1))
-            .collect();
-        let total: f32 = lengths.iter().sum();
         let mut start = 0.0;
         let mut nearest = (f32::MAX, 0.0);
-        for (leg, length) in self.path.windows(2).zip(&lengths) {
+        for (leg, length) in self.path.windows(2).zip(&self.lengths) {
             let (along, off) = octant::nearest(point, leg[0], leg[1]);
             if off < nearest.0 {
-                nearest = (off, (start + along * length) / total.max(f32::MIN_POSITIVE));
+                nearest = (
+                    off,
+                    (start + along * length) / self.total.max(f32::MIN_POSITIVE),
+                );
             }
             start += length;
         }
@@ -493,11 +507,7 @@ impl Figure {
             }
         }
         let strength = self.strength(progress);
-        Stroke {
-            path,
-            colour: self.colour,
-            strength: Box::new(move |_| strength),
-        }
+        Stroke::new(path, self.colour, Box::new(move |_| strength))
     }
 
     /// How strongly the figure shows, from 1 while it draws and holds down
