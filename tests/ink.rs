@@ -694,7 +694,7 @@ fn a_cloud_glides_between_two_ticks() {
 #[test]
 fn over_the_terminal_background_no_ink_mixes_with_the_water() {
     // Given:
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let mixes = pixels::base_mixes(palette.base, &ink::accents(palette), 1..200);
     let mut scene = Ink::new(Rng::seed_from_u64(7), palette);
     for tick in 0..500 {

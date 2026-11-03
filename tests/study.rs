@@ -1086,7 +1086,7 @@ fn the_lamp_glows_on_the_wall_and_fades_from_the_bulb() {
 #[test]
 fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
     // Given:
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     assert!(palette.see_through);
     let mut scene = Study::new(Rng::seed_from_u64(7), palette);
     let drawn = [

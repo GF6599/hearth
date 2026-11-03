@@ -231,7 +231,7 @@ fn a_light_theme_ends_the_ramp_at_gold() {
 #[test]
 fn a_see_through_base_keeps_the_top_of_the_fire_hard() {
     // Given:
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
 
     // When, then:
     for heat in 0..MAX_HEAT / FULL as u16 {

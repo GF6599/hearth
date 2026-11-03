@@ -485,7 +485,7 @@ fn a_pipe_down_is_lighter_on_one_side() {
 fn a_pipe_down_keeps_its_edges_hard_on_a_see_through_base() {
     // Given, when:
     let area = Rect::new(0, 0, 10, 6);
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let scene = Pipes::trace(
         Rng::seed_from_u64(7),
         palette,

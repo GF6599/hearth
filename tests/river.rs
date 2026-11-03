@@ -1244,7 +1244,7 @@ fn the_banks_slope_softly_into_the_bed() {
 fn over_the_terminal_background_nothing_mixes_with_the_base() {
     // Given:
     let repo = branched("flat");
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let drawn = [palette.gold, palette.pine, palette.foam];
     let mixes = pixels::base_mixes(palette.base, &drawn, 1..200);
     let mut scene = landed_in(Corpus::default().with_history_root(repo.clone()), palette);

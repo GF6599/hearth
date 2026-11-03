@@ -1178,7 +1178,7 @@ fn a_lit_window_warms_the_wall_beside_it() {
 /// it shows as a dark smear over the user's own background.
 #[test]
 fn over_the_terminal_background_nothing_mixes_with_the_base() {
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let drawn = [
         palette.overlay,
         palette.pine,

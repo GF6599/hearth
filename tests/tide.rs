@@ -733,7 +733,7 @@ fn the_waterline_glides_between_two_ticks() {
 #[test]
 fn over_the_terminal_background_nothing_mixes_with_the_base() {
     // Given:
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let drawn = [
         palette.pine,
         palette.foam,

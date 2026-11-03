@@ -249,7 +249,7 @@ fn noise_drifts_a_few_pixels_a_small_step_each_tick() {
 #[test]
 fn noise_keeps_its_edges_hard_on_a_see_through_base() {
     // Given:
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let mut scene = Noise::new(Rng::seed_from_u64(7), palette);
 
     // When:

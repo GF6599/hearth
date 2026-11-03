@@ -293,7 +293,7 @@ fn a_live_cell_turns_from_the_young_colour_to_the_settled_colour() {
 fn a_fade_keeps_its_edge_hard_on_a_see_through_base() {
     // Given:
     let area = Rect::new(0, 0, 5, 3);
-    let palette = &theme::FLAT_THEMES[0];
+    let palette = &theme::FLAT_THEMES[theme::position("rose-pine").unwrap()];
     let mut scene = Life::from_pattern(Rng::seed_from_u64(7), palette, LONE);
     let live = pixel(&scene, area, (2, 2));
 
