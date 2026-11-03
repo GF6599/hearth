@@ -4,6 +4,7 @@
 //! main ─► loop { draw → handle_events → frame }
 //!              │
 //!              ├── cli       Command-line arguments
+//!              ├── clock     The time since a scene began
 //!              ├── config    The preferences kept between runs
 //!              ├── dither    The ordered dither the scenes share
 //!              ├── splitmix  The hash the scenes share for fixed noise

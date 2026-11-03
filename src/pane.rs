@@ -127,16 +127,16 @@ impl Panes {
     /// The new pane goes after the focused one and takes the focus, as in
     /// i3.
     pub fn split(&mut self, split: Split, pane: Pane) {
-        let new = self.panes.len();
+        let added = self.panes.len();
         self.panes.push(pane);
         if let Some(leaf) = self.tree.leaf_mut(self.focus) {
             *leaf = Node::Split(
                 split,
                 Box::new(Node::Leaf(self.focus)),
-                Box::new(Node::Leaf(new)),
+                Box::new(Node::Leaf(added)),
             );
         }
-        self.focus = new;
+        self.focus = added;
     }
 
     /// The sibling of the focused pane takes the area of their split and
