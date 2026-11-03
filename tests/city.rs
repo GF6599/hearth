@@ -629,9 +629,11 @@ fn places(city: &[(usize, usize, Color)]) -> Vec<(usize, usize)> {
     city.iter().map(|(x, y, _)| (*x, *y)).collect()
 }
 
+type Cells = BTreeSet<(usize, usize)>;
+
 /// Cells with a lit window, and cells with a lit lamp, above the shore and
 /// off the train's rows.
-fn lit_cells(rows: &[Vec<Color>]) -> (BTreeSet<(usize, usize)>, BTreeSet<(usize, usize)>) {
+fn lit_cells(rows: &[Vec<Color>]) -> (Cells, Cells) {
     let (rail, shore) = (rail(rows), ground(rows) + 1);
     let (mut windows, mut lamps) = (BTreeSet::new(), BTreeSet::new());
     for (y, row) in rows[..shore].iter().enumerate() {
