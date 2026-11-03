@@ -1,12 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::matrix::{self, Matrix};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::Color;
 use unicode_width::UnicodeWidthChar;
 
 fn scene(seed: u64) -> Matrix {
@@ -146,15 +147,9 @@ fn nothing_is_written_outside_a_narrow_area() {
             for (position, cell) in cells(&buffer) {
                 if area.contains(position) {
                     drew |= cell.symbol() != " ";
-                } else {
-                    assert_eq!(cell.symbol(), " ", "glyph outside {area:?} at {position:?}");
-                    assert_eq!(
-                        cell.fg,
-                        Color::Reset,
-                        "colour outside {area:?} at {position:?}"
-                    );
                 }
             }
+            pixels::assert_blank_outside(&buffer, area);
         }
         assert_eq!(drew, area.area() > 0, "drew={drew} on {area:?}");
     }

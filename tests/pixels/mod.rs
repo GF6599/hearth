@@ -216,3 +216,26 @@ fn corner(position: Position, area: Rect) -> (usize, usize) {
         usize::from(position.y - area.y) * CELL_HEIGHT,
     )
 }
+
+/// The progress between two ticks that a glide test draws at.
+pub const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
+
+/// The colour of each pixel of `area`, two across and four down to a cell,
+/// row by row.
+pub fn colours(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
+    grid(buffer, area, |_, cell| {
+        shown(cell).unwrap_or([cell.bg; PIXELS])
+    })
+}
+
+pub fn assert_blank_outside(buffer: &Buffer, area: Rect) {
+    for position in buffer.area.positions() {
+        if !area.contains(position) {
+            assert_eq!(
+                buffer[position],
+                Cell::default(),
+                "outside {area:?} at {position:?}"
+            );
+        }
+    }
+}

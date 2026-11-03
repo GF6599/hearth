@@ -600,9 +600,6 @@ fn the_glow_pulses_in_pixels_a_quarter_of_a_cell_tall() {
     assert!(fine, "each half of a cell glows in one shade");
 }
 
-/// The shares of a tick at which a test draws a frame between two ticks.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
-
 /// The cells that hold a spark, at `progress` from the last tick towards
 /// the next.
 fn sparks_at(scene: &mut Embers, progress: f64) -> Vec<(u16, u16)> {
@@ -631,7 +628,7 @@ fn a_spark_climbs_into_the_next_cell_between_two_ticks() {
 
     for _ in 0..400 {
         // When:
-        let frames: Vec<Vec<(u16, u16)>> = BETWEEN
+        let frames: Vec<Vec<(u16, u16)>> = pixels::BETWEEN
             .iter()
             .map(|progress| sparks_at(&mut scene, *progress))
             .collect();

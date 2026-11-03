@@ -437,12 +437,7 @@ fn a_smaller_area_draws_only_inside_it() {
     let canvas = Rect::new(0, 0, 40, 12);
     let mut scene = ticked(7, AREA, 40);
     let inside_only = |buffer: &Buffer, area: Rect| {
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(buffer, area);
     };
 
     // When, then:
@@ -1080,9 +1075,6 @@ fn the_planets_move_evenly_after_a_week() {
 /// A pane wide enough that Mercury moves about four pixels a tick, so a
 /// frame between two ticks has room to show it between them.
 const GLIDE_AREA: Rect = Rect::new(0, 0, 400, 120);
-/// The shares of a tick that the frames between two ticks show.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
-
 /// How far along `heading` a planet's disc lies: the mean place of the lit
 /// pixels near `from` and more than a pixel and a half to either side of
 /// the line along `heading`, each weighed by how much lighter than the sky
@@ -1148,7 +1140,7 @@ fn each_planet_glides_along_its_orbit_between_ticks() {
         bodies.push(scene.moon());
 
         // When:
-        let glides: Vec<Frame> = BETWEEN
+        let glides: Vec<Frame> = pixels::BETWEEN
             .iter()
             .map(|&progress| {
                 scene.set_progress(progress);

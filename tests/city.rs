@@ -29,23 +29,12 @@ const FEW_SECONDS: u32 = 50;
 const NIGHT_AND_A_HALF: u32 = 4500;
 /// Ticks enough for a few trains to cross.
 const TRAINS: u32 = 4000;
-/// The progress between two ticks that a glide test draws at.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
 const PALETTE: &Palette = &theme::ROSE_PINE;
 
 fn render(scene: &City, area: Rect, canvas: Rect) -> Buffer {
     let mut buffer = Buffer::empty(canvas);
     scene.render(area, &mut buffer);
     buffer
-}
-
-/// The colour of each pixel of the area, two across and four down to a
-/// cell, row by row.
-/// A cell with another glyph shows its background.
-fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    pixels::grid(buffer, area, |_, cell| {
-        pixels::shown(cell).unwrap_or([cell.bg; pixels::PIXELS])
-    })
 }
 
 /// The steps of coverage the canvas tells apart: it samples four by four
@@ -105,7 +94,7 @@ fn nearest(colour: Color) -> Color {
 /// its glow, reads as the moon from half way on and as the sky below. Any
 /// other colour reads as the role it lies nearest.
 fn frame(scene: &City, area: Rect) -> Vec<Vec<Color>> {
-    let mut rows = pixels(&render(scene, area, area), area);
+    let mut rows = pixels::colours(&render(scene, area, area), area);
     let mut known: HashMap<Color, Color> = HashMap::new();
     for (y, row) in rows.iter_mut().enumerate() {
         let (sky, moon) = (scene.sky(y), moonlight(scene, y));
@@ -539,13 +528,7 @@ fn a_smaller_area_draws_only_inside_it() {
         scene.tick(AREA);
     }
     let inside_only = |buffer: &Buffer, area: Rect| {
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-                assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(buffer, area);
     };
 
     // When, then:
@@ -586,7 +569,7 @@ fn city_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    let rows = pixels(&buffer, AREA);
+    let rows = pixels::colours(&buffer, AREA);
     assert!(
         rows.iter()
             .flatten()
@@ -995,7 +978,7 @@ fn the_train_glides_between_ticks() {
         if let Some((Some(before), between)) = &last
             && let Some(after) = now
         {
-            for (progress, ends) in BETWEEN.iter().zip(between) {
+            for (progress, ends) in pixels::BETWEEN.iter().zip(between) {
                 let (left, right) = ends.expect("a train between ticks");
                 let strictly = *progress >= 0.5;
                 for (end, before, after) in [(left, before.0, after.0), (right, before.1, after.1)]
@@ -1016,7 +999,7 @@ fn the_train_glides_between_ticks() {
                 }
             }
         }
-        let between = BETWEEN
+        let between = pixels::BETWEEN
             .iter()
             .map(|progress| {
                 scene.set_progress(*progress);
@@ -1057,7 +1040,7 @@ fn the_sky_lightens_toward_the_horizon() {
 
         // When:
         scene.tick(AREA);
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
         // Then:
         let sky: Vec<Color> = rows[..rows.len() / 5].iter().map(|row| most(row)).collect();
@@ -1087,7 +1070,7 @@ fn the_moon_has_a_soft_rim_and_a_glow() {
 
     // When:
     scene.tick(AREA);
-    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+    let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
     // Then:
     let soft: usize = rows
@@ -1153,7 +1136,7 @@ fn each_near_tower_is_lit_from_the_side_of_the_moon() {
 
         // When:
         scene.tick(AREA);
-        let raw = pixels(&render(&scene, AREA, AREA), AREA);
+        let raw = pixels::colours(&render(&scene, AREA, AREA), AREA);
         let rows = frame(&scene, AREA);
 
         // Then:
@@ -1206,7 +1189,7 @@ fn a_lit_window_warms_the_wall_beside_it() {
 
         // When:
         scene.tick(AREA);
-        let raw = pixels(&render(&scene, AREA, AREA), AREA);
+        let raw = pixels::colours(&render(&scene, AREA, AREA), AREA);
         let rows = frame(&scene, AREA);
 
         // Then:
@@ -1271,7 +1254,7 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
         for tick in 0..FEW_SECONDS {
             // When:
             scene.tick(AREA);
-            let rows = pixels(&render(&scene, AREA, AREA), AREA);
+            let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
             // Then:
             for (y, row) in rows.iter().enumerate() {

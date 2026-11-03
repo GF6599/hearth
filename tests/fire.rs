@@ -439,12 +439,7 @@ fn a_smaller_area_drops_the_old_buffer() {
     ] {
         fires.tick(area);
         for buffer in fires.renders(area, canvas) {
-            for position in canvas.positions() {
-                if !area.contains(position) {
-                    assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                    assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
-                }
-            }
+            pixels::assert_blank_outside(&buffer, area);
         }
         if let Some(bottom) = fires.bands(area, canvas).last() {
             assert!(bottom.iter().all(|&band| band >= HOTTEST), "{bottom:?}");

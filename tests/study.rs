@@ -36,21 +36,12 @@ const DOWN: usize = octant::CELL_HEIGHT;
 /// and half a cell down, so a letter is as wide as it is tall.
 const LETTER: usize = 2;
 
-/// The colour of each pixel of the area, two across and four down to a
-/// cell, row by row, as the glyph and its two colours draw them.
-/// A cell with another glyph shows its background.
-fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    pixels::grid(buffer, area, |_, cell| {
-        pixels::shown(cell).unwrap_or([cell.bg; pixels::PIXELS])
-    })
-}
-
 /// The pixels of a pane as drawn. A cell holds two colours, so where the
 /// rain or the steam meets two colours of the room a pixel can show
 /// another's colour. A cell of the room alone draws each pixel as it is.
 fn view(scene: &Study, width: u16, height: u16) -> Vec<Vec<Color>> {
     let area = Rect::new(0, 0, width, height);
-    pixels(&render(scene, area, area), area)
+    pixels::colours(&render(scene, area, area), area)
 }
 
 /// Scenes from seed 7, one for each colour of a palette, each with its
@@ -426,9 +417,6 @@ fn the_rain_runs_down_a_quarter_of_a_cell_at_a_time() {
     );
 }
 
-/// The shares of a tick at which a test draws a frame between two ticks.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
-
 /// A scene from seed 7 with `colour` in light and every other colour in
 /// dark, so each pixel of that colour shows as it is.
 fn lit_scene(colour: Color) -> Study {
@@ -502,7 +490,7 @@ fn the_rain_runs_on_between_two_ticks() {
 
     for _ in 0..400 {
         // When:
-        let frames: Vec<Vec<(usize, usize)>> = BETWEEN
+        let frames: Vec<Vec<(usize, usize)>> = pixels::BETWEEN
             .iter()
             .map(|progress| heads(&glass, &lit_at(&mut scene, *progress)))
             .collect();
@@ -553,7 +541,7 @@ fn a_drop_that_starts_again_draws_no_streak_between_ticks() {
         let on_tick = lit_at(&mut scene, 0.0);
 
         // When:
-        for progress in BETWEEN {
+        for progress in pixels::BETWEEN {
             let frame = lit_at(&mut scene, progress);
 
             // Then:
@@ -594,7 +582,7 @@ fn the_steam_rises_between_two_ticks() {
 
     for _ in 0..RUN {
         // When:
-        let frames: Vec<Vec<bool>> = BETWEEN
+        let frames: Vec<Vec<bool>> = pixels::BETWEEN
             .iter()
             .map(|progress| steam(&lit_at(&mut scene, *progress)))
             .collect();
@@ -944,13 +932,7 @@ fn a_smaller_area_draws_only_inside_it() {
     let canvas = Rect::new(0, 0, 40, 12);
     let mut scene = scene();
     let inside_only = |buffer: &Buffer, area: Rect| {
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-                assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(buffer, area);
     };
 
     // When, then:
@@ -991,7 +973,7 @@ fn study_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    let rows = pixels(&buffer, AREA);
+    let rows = pixels::colours(&buffer, AREA);
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.gold));
     assert!(rows.iter().flatten().any(|colour| *colour == PALETTE.text));
 }

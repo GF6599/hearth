@@ -254,13 +254,7 @@ fn the_cursor_never_leaves_the_area() {
         let cursors = cursors(&buffer);
         assert_eq!(cursors.len(), 1, "tick {tick}: {cursors:?}");
         assert!(area.contains(cursors[0]), "tick {tick}: {cursors:?}");
-        for position in canvas.positions().filter(|p| !area.contains(*p)) {
-            assert_eq!(
-                buffer[position].symbol(),
-                " ",
-                "tick {tick} at {position:?}"
-            );
-        }
+        pixels::assert_blank_outside(&buffer, area);
     }
 }
 
@@ -768,14 +762,7 @@ fn every_width_keeps_the_frame_inside_the_area() {
             let area = Rect::new(3, 2, width, height);
             let canvas = Rect::new(0, 0, width + 6, height + 4);
             let buffer = render(&half, area, canvas);
-            for position in canvas.positions().filter(|p| !area.contains(*p)) {
-                assert_eq!(
-                    buffer[position].symbol(),
-                    " ",
-                    "{width}x{height} at {position:?}"
-                );
-                assert_eq!(buffer[position].bg, Color::Reset);
-            }
+            pixels::assert_blank_outside(&buffer, area);
             let frame = frame(&buffer);
             assert!(area.contains(Position::new(frame.right() - 1, frame.bottom() - 1)));
             for y in frame.y + 1..frame.bottom() - 1 {
@@ -843,13 +830,7 @@ fn a_tiny_area_draws_nothing_outside_it() {
             let area = Rect::new(3, 2, width, height);
             let canvas = Rect::new(0, 0, width + 6, height + 4);
             let buffer = render(&half, area, canvas);
-            for position in canvas.positions().filter(|p| !area.contains(*p)) {
-                assert_eq!(
-                    buffer[position],
-                    Buffer::empty(canvas)[(0, 0)],
-                    "{width}x{height}"
-                );
-            }
+            pixels::assert_blank_outside(&buffer, area);
         }
     }
 }

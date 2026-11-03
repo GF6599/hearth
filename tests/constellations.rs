@@ -562,12 +562,7 @@ fn a_smaller_area_draws_only_inside_it() {
     ] {
         scene.tick(area);
         let buffer = render(&scene, area, canvas);
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(&buffer, area);
     }
 }
 
@@ -591,11 +586,7 @@ fn a_frame_after_a_resize_and_before_a_tick_stays_inside() {
     let buffer = render(&scene, area, canvas);
 
     // Then:
-    for position in canvas.positions() {
-        if !area.contains(position) {
-            assert_eq!(buffer[position].symbol(), " ", "star at {position:?}");
-        }
-    }
+    pixels::assert_blank_outside(&buffer, area);
 }
 
 /// Given: the scene name `constellations`.
@@ -856,14 +847,11 @@ fn a_shooting_star_fades_from_its_head_back() {
     );
 }
 
-/// The shares of a tick that the frames between two ticks show.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
-
 /// The frame on a tick, the frames between it and the next tick, and the
 /// frame on the next tick, each read by `read`. The scene ticks once.
 fn glide<T>(scene: &mut Constellations, read: impl Fn(&Buffer) -> T) -> Vec<T> {
     let mut frames = vec![read(&render(scene, AREA, AREA))];
-    for progress in BETWEEN {
+    for progress in pixels::BETWEEN {
         scene.set_progress(progress);
         frames.push(read(&render(scene, AREA, AREA)));
     }

@@ -74,15 +74,6 @@ fn render(scene: &Drive, area: Rect, canvas: Rect) -> Buffer {
     buffer
 }
 
-/// The colour of each pixel of the area, two across and four down to a
-/// cell, row by row.
-/// A cell with another glyph shows its background.
-fn pixels(buffer: &Buffer, area: Rect) -> Vec<Vec<Color>> {
-    pixels::grid(buffer, area, |_, cell| {
-        pixels::shown(cell).unwrap_or([cell.bg; pixels::PIXELS])
-    })
-}
-
 /// The left and right ends of the road in each pixel row that has road, from
 /// the top: the first and last pixel that is not land or a post, in the
 /// colours of `palette`. The land, the posts and their soft edges lie on
@@ -132,7 +123,7 @@ fn the_road_edges_step_every_quarter_of_a_cell() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA), PALETTE);
+        let rows = road(&pixels::colours(&render(&scene, AREA, AREA), AREA), PALETTE);
 
         // Then:
         sampled += 1;
@@ -171,7 +162,7 @@ fn the_road_narrows_toward_the_horizon() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA), APART);
+        let rows = road(&pixels::colours(&render(&scene, AREA, AREA), AREA), APART);
 
         // Then:
         let (_, bottom_left, bottom_right) = *rows.last().expect("road");
@@ -211,7 +202,7 @@ fn the_road_bends_with_the_track_both_ways() {
         if tick % 10 != 0 {
             continue;
         }
-        let rows = road(&pixels(&render(&scene, AREA, AREA), AREA), APART);
+        let rows = road(&pixels::colours(&render(&scene, AREA, AREA), AREA), APART);
 
         // Then:
         let centres: Vec<f32> = rows
@@ -249,7 +240,7 @@ fn the_road_bends_with_the_track_both_ways() {
 /// The rows where the colour at the road's centre changes, the ends of the
 /// stripes, in the lower half of the road.
 fn stripe_ends(scene: &Drive) -> Vec<usize> {
-    let rows = pixels(&render(scene, AREA, AREA), AREA);
+    let rows = pixels::colours(&render(scene, AREA, AREA), AREA);
     let road = road(&rows, PALETTE);
     let lower = &road[road.len() / 2..];
     let centre: Vec<(usize, Color)> = lower
@@ -322,13 +313,7 @@ fn a_smaller_area_draws_only_inside_it() {
         scene.tick(AREA);
     }
     let inside_only = |buffer: &Buffer, area: Rect| {
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-                assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(buffer, area);
     };
 
     // When, then:
@@ -369,7 +354,7 @@ fn drive_is_a_scene_by_name() {
     // Then:
     let mut buffer = Buffer::empty(AREA);
     scene.render(AREA, &mut buffer);
-    let rows = pixels(&buffer, AREA);
+    let rows = pixels::colours(&buffer, AREA);
     assert!(
         rows.iter()
             .flatten()
@@ -408,7 +393,7 @@ fn the_moon_and_stars_stay_above_the_road_and_slide_against_a_curve() {
         if tick % 3 != 0 {
             continue;
         }
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
         let top = road_top(&rows);
 
         // Then:
@@ -471,7 +456,7 @@ fn the_road_rises_and_falls_over_hills() {
     for tick in 0..RUN {
         // When:
         scene.tick(AREA);
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
         // Then:
         let top = road_top(&rows);
@@ -520,7 +505,7 @@ fn the_car_keeps_its_lane_and_leans_into_a_curve() {
         if tick % 5 != 0 {
             continue;
         }
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
         // Then:
         let car: Vec<(usize, usize)> = rows
@@ -613,7 +598,7 @@ fn the_posts_grow_as_they_come_near_and_move_outward() {
         if tick % 7 != 0 {
             continue;
         }
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
         // Then:
         let road = road(&rows, PALETTE);
@@ -767,7 +752,7 @@ fn slower_cars_ahead_come_near_and_drop_behind_in_the_other_lane() {
     for tick in 0..RUN * 2 {
         // When:
         scene.tick(AREA);
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
         let cars = cars_ahead(&rows);
 
         // Then:
@@ -871,13 +856,13 @@ fn the_land_beside_the_road_holds_still() {
     let mut scene = Drive::new(Rng::seed_from_u64(7), PALETTE);
     let land = |colour: Color| [PALETTE.base, PALETTE.surface, PALETTE.pine].contains(&colour);
     scene.tick(AREA);
-    let mut before = pixels(&render(&scene, AREA, AREA), AREA);
+    let mut before = pixels::colours(&render(&scene, AREA, AREA), AREA);
     let (mut changed, mut compared) = (0_usize, 0_usize);
 
     for _ in 0..RUN {
         // When:
         scene.tick(AREA);
-        let after = pixels(&render(&scene, AREA, AREA), AREA);
+        let after = pixels::colours(&render(&scene, AREA, AREA), AREA);
         for &(y, left, right) in &road(&after, PALETTE) {
             for x in (0..left).chain(right + 1..after[y].len()) {
                 let (was, now) = (before[y][x], after[y][x]);
@@ -915,7 +900,7 @@ fn a_car_ahead_shows_within_five_seconds() {
         // When:
         for _ in 0..ticks {
             scene.tick(AREA);
-            let rows = pixels(&render(&scene, AREA, AREA), AREA);
+            let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
             seen |= !cars_ahead(&rows).is_empty();
         }
 
@@ -941,7 +926,7 @@ fn a_car_ahead_is_wider_than_a_cell_for_most_of_its_approach() {
     for _ in 0..RUN * 2 {
         // When:
         scene.tick(AREA);
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
         let widest = cars_ahead(&rows).iter().map(|car| car.3 - car.2 + 1).max();
 
         // Then:
@@ -956,9 +941,6 @@ fn a_car_ahead_is_wider_than_a_cell_for_most_of_its_approach() {
         "a car ahead was wider than a cell in {wide} of {shown} frames"
     );
 }
-
-/// The progress between two ticks that a glide test draws at.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
 
 /// The stripes glide toward the car between ticks.
 /// Given: the scene at a hundred by thirty, and a second scene from the
@@ -1014,7 +996,7 @@ fn the_stripes_glide_between_ticks() {
                 );
             }
         }
-        let between = BETWEEN
+        let between = pixels::BETWEEN
             .iter()
             .map(|progress| {
                 scene.set_progress(*progress);
@@ -1109,7 +1091,7 @@ fn the_moon_and_the_cars_ahead_glide_between_ticks() {
     /// nearest.
     type Frame = (Option<f32>, usize, Option<usize>);
     let read = |scene: &Drive| -> Frame {
-        let rows = pixels(&render(scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(scene, AREA, AREA), AREA);
         let cars = cars_ahead(&rows);
         (moon(&rows), cars.len(), cars.iter().map(|car| car.1).max())
     };
@@ -1132,7 +1114,7 @@ fn the_moon_and_the_cars_ahead_glide_between_ticks() {
             {
                 moon_moved += 1;
                 let (low, high) = (before.min(after) - 0.1, before.max(after) + 0.1);
-                for (progress, (moon, _, _)) in BETWEEN.iter().zip(&between) {
+                for (progress, (moon, _, _)) in pixels::BETWEEN.iter().zip(&between) {
                     assert!(
                         moon.is_none_or(|moon| (low..=high).contains(&moon)),
                         "tick {tick}: the moon at {moon:?} at progress {progress}, from {before} to {after}"
@@ -1149,7 +1131,7 @@ fn the_moon_and_the_cars_ahead_glide_between_ticks() {
                 && cars_before == now.1
             {
                 car_moved += 1;
-                for (progress, (_, _, car)) in BETWEEN.iter().zip(&between) {
+                for (progress, (_, _, car)) in pixels::BETWEEN.iter().zip(&between) {
                     assert!(
                         car.is_some_and(|car| car <= after),
                         "tick {tick}: the car at {car:?} at progress {progress}, from {before} to {after}"
@@ -1158,7 +1140,7 @@ fn the_moon_and_the_cars_ahead_glide_between_ticks() {
                 car_early += usize::from(between.iter().any(|(_, _, car)| *car != Some(before)));
             }
         }
-        let between = BETWEEN
+        let between = pixels::BETWEEN
             .iter()
             .map(|progress| {
                 scene.set_progress(*progress);
@@ -1193,7 +1175,7 @@ fn the_sky_lightens_toward_the_horizon() {
     scene.tick(AREA);
 
     // When:
-    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+    let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
     // Then:
     let sky: Vec<Color> = rows[..road_top(&rows) / CELL_HEIGHT * CELL_HEIGHT]
@@ -1201,13 +1183,9 @@ fn the_sky_lightens_toward_the_horizon() {
         .map(|row| sky_of(row))
         .collect();
     assert_eq!(sky.first(), Some(&PALETTE.base), "{sky:?}");
-    let lightness = |colour: Color| match colour {
-        Color::Rgb(r, g, b) => 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b),
-        _ => 0,
-    };
     assert!(
         sky.windows(2)
-            .all(|pair| lightness(pair[0]) <= lightness(pair[1])),
+            .all(|pair| theme::luma(pair[0]) <= theme::luma(pair[1])),
         "{sky:?}"
     );
     let shades: Vec<Color> = sky.iter().fold(Vec::new(), |mut shades, colour| {
@@ -1241,7 +1219,7 @@ fn the_moon_has_a_soft_edge_and_a_halo() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
         if moon(&rows).is_none() {
             continue;
         }
@@ -1304,7 +1282,7 @@ fn the_road_edges_mix_into_the_land() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
         // Then:
         let soft = rows.iter().flatten().any(|colour| {
@@ -1331,7 +1309,7 @@ fn the_car_is_drawn_a_pixel_row_at_a_time() {
     scene.tick(AREA);
 
     // When:
-    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+    let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
     // Then:
     let car: Vec<Vec<usize>> = rows
@@ -1362,7 +1340,7 @@ fn the_taillights_glow_on_the_road() {
     scene.tick(AREA);
 
     // When:
-    let rows = pixels(&render(&scene, AREA, AREA), AREA);
+    let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
     // Then:
     let mut lights = 0;
@@ -1409,7 +1387,7 @@ fn the_top_of_a_post_mixes_into_the_land() {
         if tick % 25 != 0 {
             continue;
         }
-        let rows = pixels(&render(&scene, AREA, AREA), AREA);
+        let rows = pixels::colours(&render(&scene, AREA, AREA), AREA);
 
         // Then:
         let road = road(&rows, PALETTE);

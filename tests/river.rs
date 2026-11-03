@@ -605,12 +605,7 @@ fn a_smaller_area_draws_only_inside_it() {
     let mut scene = river(&repo);
     scene.tick(AREA);
     let inside_only = |buffer: &Buffer, area: Rect| {
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(buffer, area);
     };
 
     // When, then:

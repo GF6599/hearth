@@ -680,12 +680,7 @@ fn a_smaller_area_draws_only_inside_it() {
     ] {
         scene.tick(area);
         let buffer = render(&scene, area, canvas);
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(&buffer, area);
     }
 }
 

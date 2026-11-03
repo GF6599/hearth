@@ -1,12 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::bonsai::{Bonsai, HOLD_TICKS, POT_HEIGHT};
 use hearth::theme;
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 
 const TREE_GLYPHS: &[&str] = &["/", "\\", "|", "~", "&", "_"];
 
@@ -119,12 +120,7 @@ fn nothing_is_written_outside_a_small_area() {
         for _ in 0..100 {
             scene.tick(area);
             let buffer = render(&scene, area, canvas);
-            for position in canvas.positions() {
-                if !area.contains(position) {
-                    assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                    assert_eq!(buffer[position].fg, Color::Reset, "colour outside {area:?}");
-                }
-            }
+            pixels::assert_blank_outside(&buffer, area);
         }
     }
 }

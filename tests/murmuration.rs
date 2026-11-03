@@ -56,10 +56,10 @@ fn share_on(colour: Color, from: Color, to: Color) -> Option<f32> {
 /// sky by an eighth of the way to subtle, the faintest a bird draws in.
 fn lit_by_a_bird(colour: Color) -> bool {
     let (sky, faint) = (
-        luma(theme::ROSE_PINE.overlay),
-        luma(theme::ROSE_PINE.subtle),
+        theme::luma(theme::ROSE_PINE.overlay),
+        theme::luma(theme::ROSE_PINE.subtle),
     );
-    luma(colour) * 8 >= sky * 8 + (faint - sky)
+    theme::luma(colour) * 8 >= sky * 8 + (faint - sky)
 }
 
 /// Every pixel of the sky a bird lights, in pixels from the top left of
@@ -69,7 +69,7 @@ fn lit_pixels(buffer: &Buffer, area: Rect) -> BTreeMap<(usize, usize), u32> {
     pixels::showing(buffer, area, lit_by_a_bird)
         .into_iter()
         .filter(|((_, y), _)| *y < sky)
-        .map(|(place, colour)| (place, luma(colour)))
+        .map(|(place, colour)| (place, theme::luma(colour)))
         .collect()
 }
 
@@ -229,7 +229,7 @@ fn a_cell_with_more_birds_is_brighter() {
     for position in AREA.positions().filter(|position| position.y < first_tree) {
         let shown = pixels::shown(&buffer[position])
             .unwrap_or_else(|| panic!("{:?} at {position:?}", buffer[position].symbol()));
-        let lightest = u64::from(shown.into_iter().map(luma).max().unwrap_or(0));
+        let lightest = u64::from(shown.into_iter().map(theme::luma).max().unwrap_or(0));
         let sum = match birds.get(&(usize::from(position.x), usize::from(position.y))) {
             None => continue,
             Some(1 | 2) => &mut faint,
@@ -325,12 +325,7 @@ fn a_smaller_area_drops_the_old_flock() {
         scene.tick(area);
         assert_inside(&scene, area, &format!("{area:?}"));
         let buffer = render(&scene, area, canvas);
-        for position in canvas.positions() {
-            if !area.contains(position) {
-                assert_eq!(buffer[position].symbol(), " ", "glyph outside {area:?}");
-                assert_eq!(buffer[position].bg, Color::Reset, "colour outside {area:?}");
-            }
-        }
+        pixels::assert_blank_outside(&buffer, area);
     }
 }
 
@@ -431,12 +426,13 @@ fn the_sky_lightens_smoothly_toward_the_trees() {
         rows.push(Color::Rgb(r, g, b));
     }
     assert!(
-        rows.windows(2).all(|pair| luma(pair[0]) <= luma(pair[1])),
+        rows.windows(2)
+            .all(|pair| theme::luma(pair[0]) <= theme::luma(pair[1])),
         "{rows:?}"
     );
     assert_eq!(rows.first(), Some(&palette.base), "{rows:?}");
     assert_eq!(rows.last(), Some(&palette.overlay), "{rows:?}");
-    let shades: BTreeSet<u32> = rows.iter().map(|colour| luma(*colour)).collect();
+    let shades: BTreeSet<u32> = rows.iter().map(|colour| theme::luma(*colour)).collect();
     assert!(shades.len() > 3, "{} shades", shades.len());
 }
 
@@ -546,14 +542,6 @@ fn the_flock_stays_above_the_trees() {
     }
 }
 
-/// Perceived brightness, with the weights of ITU-R BT.601.
-fn luma(colour: Color) -> u32 {
-    match colour {
-        Color::Rgb(r, g, b) => 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b),
-        other => panic!("{other:?} is not a palette colour"),
-    }
-}
-
 /// Given: the scene in each theme.
 /// When: it ticks once and renders.
 /// Then: the top row of pixels of the sky is the darkest of base, surface
@@ -572,8 +560,16 @@ fn every_theme_lights_the_sky_low_over_the_trees() {
 
         // Then:
         let roles = [palette.base, palette.surface, palette.overlay];
-        let darkest = roles.iter().copied().min_by_key(|c| luma(*c)).unwrap();
-        let lightest = roles.iter().copied().max_by_key(|c| luma(*c)).unwrap();
+        let darkest = roles
+            .iter()
+            .copied()
+            .min_by_key(|c| theme::luma(*c))
+            .unwrap();
+        let lightest = roles
+            .iter()
+            .copied()
+            .max_by_key(|c| theme::luma(*c))
+            .unwrap();
         let low = usize::from(tree_rows(&buffer, palette)[0]) * CELL_HEIGHT - 1;
         let grid = pixels::grid(&buffer, AREA, |_, cell| {
             pixels::shown(cell).unwrap_or([Color::Reset; pixels::PIXELS])
@@ -796,8 +792,6 @@ fn the_hawk_mixes_into_the_sky_at_its_edges() {
     assert!(shares.len() >= 3, "the hawk shows {shares:?}");
 }
 
-/// The shares of a tick that the frames between two ticks show.
-const BETWEEN: [f64; 3] = [0.25, 0.5, 0.75];
 /// No other bird comes this close to a bird that a test follows alone, in
 /// pixels, on either tick. A bird moves less than two pixels a tick, so
 /// the two never share a pixel between the ticks.
@@ -850,7 +844,7 @@ fn each_bird_glides_between_ticks() {
         let before: Vec<(f32, f32)> = scene.birds().collect();
 
         // When:
-        let frames: Vec<BTreeMap<(usize, usize), u32>> = BETWEEN
+        let frames: Vec<BTreeMap<(usize, usize), u32>> = pixels::BETWEEN
             .iter()
             .map(|&progress| {
                 scene.set_progress(progress);
@@ -875,7 +869,7 @@ fn each_bird_glides_between_ticks() {
                         && (near.1.0 - to.0).hypot(near.1.1 - to.1) > ALONE)
             })
         };
-        for (progress, shown) in BETWEEN.iter().zip(&frames) {
+        for (progress, shown) in pixels::BETWEEN.iter().zip(&frames) {
             for pixel in shown.keys() {
                 assert!(
                     cell_of(*pixel).any(|place| spans.iter().any(|span| within(place, *span))),
@@ -954,7 +948,7 @@ fn the_hawk_glides_between_ticks() {
 
         // When:
         let mut frames = vec![render(&scene, AREA, AREA)];
-        for progress in BETWEEN {
+        for progress in pixels::BETWEEN {
             scene.set_progress(progress);
             frames.push(render(&scene, AREA, AREA));
         }
