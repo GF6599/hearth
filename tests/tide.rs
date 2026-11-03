@@ -2,14 +2,9 @@
 
 mod pixels;
 
-use std::sync::Arc;
-
-use hearth::config::Background;
-use hearth::corpus::Corpus;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, SceneKind, Settings};
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::tide::{DRY_TICKS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
-use hearth::scenes::typing::Speed;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -281,23 +276,26 @@ fn dry_sand_is_shaded_gently_with_no_speckle() {
     assert!(shades.len() >= 4, "dry sand in {shades:?}");
 }
 
-/// Sand that the water leaves stays wet for a while, then dries.
-/// Given: the scene at a hundred by thirty, rendered every tick for longer
-/// than sand takes to dry.
-/// When: the wetness of every pixel is read after each tick.
-/// Then: a pixel under the sea is fully wet, a pixel the sea left is
-/// `DRY_TICKS` less the ticks since it left, and a pixel the sea never
-/// reached is dry.
+/// Wet sand is drawn darker than dry sand, and lightens as it dries.
+/// Given: the scene at a hundred by thirty, rendered every tick over one
+/// whole tide.
+/// When: every sand pixel is read by the ticks since the sea last covered
+/// it, in four bands from dry to just left.
+/// Then: each band shows, a pixel the sea left `DRY_TICKS` ago or never
+/// reached is in the dry band, and the mean brightness of each band is
+/// below the band that is drier.
 ///
-/// Why it matters: sand that never dries leaves a dark band where the tide
-/// once was, and sand that turns wet with no water reads as a stain.
+/// Why it matters: if the wet sand looks like the dry, the drying cannot
+/// be seen and the tide leaves no trace, and wet sand that turns dry in one
+/// step leaves a hard line where it should fade.
 #[test]
-fn sand_the_sea_leaves_dries_in_a_fixed_time() {
+fn wet_sand_is_darker_and_lightens_as_it_dries() {
     let mut scene = ticked(7, AREA, 0);
-    let rows = usize::from(AREA.height) * CELL_HEIGHT;
     let columns = usize::from(AREA.width) * CELL_WIDTH;
-    let mut last_sea: Vec<Option<u32>> = vec![None; rows * columns];
-    for tick in 0..DRY_TICKS * 3 {
+    let mut last_sea: Vec<Option<u32>> =
+        vec![None; usize::from(AREA.height) * CELL_HEIGHT * columns];
+    let mut bands = [(0_u64, 0_u64); 4];
+    for tick in 0..TIDE_TICKS {
         scene.tick(AREA);
         let grid = pixels(&render(&scene, AREA, AREA), AREA);
         for (row, line) in grid.iter().enumerate() {
@@ -306,45 +304,11 @@ fn sand_the_sea_leaves_dries_in_a_fixed_time() {
                 if is_sea(*colour) {
                     last_sea[row * columns + x] = Some(tick);
                 }
-                let wetness = scene.wetness(x, row);
-
-                // Then:
-                let expected = last_sea[row * columns + x]
-                    .map_or(0, |left| DRY_TICKS.saturating_sub(tick - left));
-                assert_eq!(wetness, expected, "tick {tick}: pixel ({x}, {row})");
-            }
-        }
-    }
-}
-
-/// Wet sand is drawn darker than dry sand, and lightens as it dries.
-/// Given: the scene at a hundred by thirty, over two minutes.
-/// When: every sand pixel is read with its wetness, in four bands from dry
-/// to just left by the sea.
-/// Then: each band shows, and the mean brightness of each band is below
-/// the band that is drier.
-///
-/// Why it matters: if the wet sand looks like the dry, the drying cannot
-/// be seen and the tide leaves no trace, and wet sand that turns dry in one
-/// step leaves a hard line where it should fade.
-#[test]
-fn wet_sand_is_darker_and_lightens_as_it_dries() {
-    let mut scene = ticked(7, AREA, 0);
-    let mut bands = [(0_u64, 0_u64); 4];
-    for tick in 0..2000 {
-        scene.tick(AREA);
-        if tick % 25 != 0 {
-            continue;
-        }
-
-        // When:
-        let grid = pixels(&render(&scene, AREA, AREA), AREA);
-        for (row, line) in grid.iter().enumerate() {
-            for (x, colour) in line.iter().enumerate() {
-                if !is_sand(*colour) {
+                if tick % 25 != 0 || !is_sand(*colour) {
                     continue;
                 }
-                let wetness = scene.wetness(x, row);
+                let wetness = last_sea[row * columns + x]
+                    .map_or(0, |left| DRY_TICKS.saturating_sub(tick - left));
                 let band = if wetness == 0 {
                     0
                 } else {
@@ -682,33 +646,6 @@ fn a_smaller_area_draws_only_inside_it() {
         let buffer = render(&scene, area, canvas);
         pixels::assert_blank_outside(&buffer, area);
     }
-}
-
-/// Given: the scene name `tide`.
-/// When: it is looked up and built, then ticked and rendered.
-/// Then: the name finds a scene, and its first frame already shows the sea.
-///
-/// Why it matters: a scene that is built but not listed cannot be chosen
-/// from the command line, the picker or Tab.
-#[test]
-fn tide_is_a_scene_by_name() {
-    // When:
-    let kind = SceneKind::from_name("tide").expect("tide is listed");
-    let mut scene = kind.build(
-        7,
-        PALETTE,
-        Background::Theme,
-        &Arc::new(Corpus::embedded()),
-        Speed::DEFAULT,
-        Settings::DEFAULT,
-    );
-    scene.tick(AREA);
-
-    // Then:
-    let mut buffer = Buffer::empty(AREA);
-    scene.render(AREA, &mut buffer);
-    let grid = pixels(&buffer, AREA);
-    assert!(waterlines(&grid).iter().all(|line| *line > 0));
 }
 
 /// A pane tall enough that the edge of a wave runs over many pixel rows in

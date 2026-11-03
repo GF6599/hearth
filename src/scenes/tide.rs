@@ -206,6 +206,16 @@ fn wet_tones(palette: &Palette, dry: Color, wet: Color, most: f32) -> [Color; WE
 }
 
 impl Tide {
+    /// Ticks until the sand at pixel (x, row) is dry, from the top left. A
+    /// pixel under the sea reads `DRY_TICKS`.
+    fn wetness(&self, x: usize, row: usize) -> u32 {
+        if x < self.columns && row < self.rows {
+            self.wetness[row * self.columns + x]
+        } else {
+            0
+        }
+    }
+
     pub fn new(mut rng: Rng, palette: &'static Palette) -> Self {
         Self {
             palette,
@@ -225,16 +235,6 @@ impl Tide {
             sand: Vec::new(),
             shades: Shades::new(palette),
             rng,
-        }
-    }
-
-    /// Ticks until the sand at pixel (x, row) is dry, from the top left. A
-    /// pixel under the sea reads `DRY_TICKS`.
-    pub fn wetness(&self, x: usize, row: usize) -> u32 {
-        if x < self.columns && row < self.rows {
-            self.wetness[row * self.columns + x]
-        } else {
-            0
         }
     }
 
