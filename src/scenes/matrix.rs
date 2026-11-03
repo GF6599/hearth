@@ -30,10 +30,15 @@ struct Column {
     glyphs: Vec<char>,
 }
 
+/// Fewest rows a column's trail can be, so a short pane still shows a streak.
+fn shortest(rows: i32) -> i32 {
+    (rows / 3).max(2)
+}
+
 impl Column {
     fn new(rng: &mut Rng, table: &[char], height: u16) -> Self {
         let rows = i32::from(height);
-        let shortest = (rows / 3).max(2);
+        let shortest = shortest(rows);
         let mut column = Self {
             head: rng.random_range(-rows..rows.max(1)),
             tail: rng.random_range(shortest..=rows.max(shortest)),
@@ -49,7 +54,7 @@ impl Column {
     /// of up to one screen height, so restarts do not line up.
     fn restart(&mut self, rng: &mut Rng, height: u16) {
         let rows = i32::from(height);
-        let shortest = (rows / 3).max(2);
+        let shortest = shortest(rows);
         self.head = -rng.random_range(1..=rows.max(1));
         self.tail = rng.random_range(shortest..=rows.max(shortest));
         self.ticks_per_row = rng.random_range(1..=SLOWEST);
