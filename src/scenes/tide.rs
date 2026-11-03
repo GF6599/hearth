@@ -182,18 +182,10 @@ fn step(shade: usize, shades: usize) -> f32 {
     shade as f32 / (shades - 1) as f32
 }
 
-/// The colour at `at` along `stops`, as `octant::ramp` places it, each
-/// step blended as the canvas blends it.
 fn ramp(palette: &Palette, stops: &[Color], at: f32) -> Color {
-    let last = stops.len() - 1;
-    let place = at.clamp(0.0, 1.0) * last as f32;
-    let below = (place as usize).min(last - 1);
-    octant::blend(
-        palette,
-        stops[below],
-        stops[below + 1],
-        place - below as f32,
-    )
+    octant::ramp_with(stops, at, |from, to, share| {
+        octant::blend(palette, from, to, share)
+    })
 }
 
 /// `dry` at each step of wetness, mixed toward `wet` by up to `most` as the

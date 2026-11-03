@@ -350,6 +350,10 @@ fn blend_on(base: Color, see_through: bool, under: Color, over: Color, share: f3
 /// mix. A place past either end takes that end's stop, and no stops give
 /// `Color::Reset`.
 pub fn ramp(stops: &[Color], at: f32) -> Color {
+    ramp_with(stops, at, mix)
+}
+
+pub fn ramp_with(stops: &[Color], at: f32, blend: impl Fn(Color, Color, f32) -> Color) -> Color {
     let Some(last) = stops.len().checked_sub(1) else {
         return Color::Reset;
     };
@@ -358,7 +362,7 @@ pub fn ramp(stops: &[Color], at: f32) -> Color {
     }
     let place = at.clamp(0.0, 1.0) * last as f32;
     let below = (place as usize).min(last - 1);
-    mix(stops[below], stops[below + 1], place - below as f32)
+    blend(stops[below], stops[below + 1], place - below as f32)
 }
 
 /// What can lie on a pixel, ordered from the lowest layer to the highest.
