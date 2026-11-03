@@ -282,8 +282,14 @@ fn replace(path: &Path, text: &str) -> io::Result<()> {
     let folder = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(folder)?;
     let temp = folder.join(format!(".config.toml.{}.tmp", std::process::id()));
-    // `create_new` refuses any file already at that name, a symlink
-    // included, so a link planted there cannot send the write elsewhere.
+    // A crash between the open and the rename leaves a temp file, and a
+    // process id comes back after a reboot. `remove_file` takes a symlink
+    // away and not its target. `create_new` then refuses any file put there
+    // since, a symlink included, so a link cannot send the write elsewhere.
+    match fs::remove_file(&temp) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
