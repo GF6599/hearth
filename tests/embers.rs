@@ -929,3 +929,46 @@ fn over_the_terminal_background_the_air_stays_clear() {
         }
     }
 }
+
+/// Pixels of the pile above the coal band that are not the base: logs,
+/// their glow and the air it lights, in a scene of `Toned::new(seed,
+/// &[vec![base]])`.
+fn pile(fire: &Toned, area: Rect) -> usize {
+    let set = &fire.sets(area)[0];
+    let coal_band = 2;
+    set[..set.len() - BELOW_LOGS - coal_band]
+        .iter()
+        .flatten()
+        .filter(|pixel| **pixel == Some(false))
+        .count()
+}
+
+/// Given: the scene on a five by twenty-four area, where the fire spans
+/// ten pixels, for seeds 1 and 2.
+/// When: it runs past six of the longest burns, sampling the pile every
+/// forty ticks.
+/// Then: the pile is never empty.
+///
+/// Why it matters: a log drawn too short for the pane is never laid, and a
+/// pile that loses a log each burn goes out after a few.
+#[test]
+fn a_narrow_fire_never_goes_out() {
+    const NARROW: Rect = Rect::new(0, 0, 5, 24);
+    for seed in [1, 2] {
+        // Given:
+        let mut fire = Toned::new(seed, &[vec![theme::ROSE_PINE.base]]);
+        fire.tick(NARROW);
+
+        // When:
+        for tick in 0..6 * *BURN_TICKS.end() {
+            fire.tick(NARROW);
+            if tick % 40 == 0 {
+                // Then:
+                assert!(
+                    pile(&fire, NARROW) > 0,
+                    "seed {seed}: no pile at tick {tick}"
+                );
+            }
+        }
+    }
+}
