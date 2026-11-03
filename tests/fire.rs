@@ -198,14 +198,13 @@ fn the_ramp_shades_through_the_seven_stops() {
 /// the flames, which reads as the coldest part and not the hottest.
 #[test]
 fn a_light_theme_ends_the_ramp_at_gold() {
-    for light in [
-        &theme::ROSE_PINE_DAWN,
-        &theme::CATPPUCCIN_LATTE,
-        &theme::TOKYO_NIGHT_DAY,
-        &theme::KANAGAWA_LOTUS,
-        &theme::DRACULA_ALUCARD,
-        &theme::SOLARIZED_LIGHT,
-    ] {
+    let light_themes: Vec<&Palette> = theme::THEMES
+        .iter()
+        .map(|(_, palette)| *palette)
+        .filter(|palette| palette.is_light())
+        .collect();
+    assert!(!light_themes.is_empty(), "no theme is light");
+    for light in light_themes {
         assert_shades(
             light,
             &[

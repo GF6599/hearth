@@ -427,25 +427,11 @@ fn the_picker_shows_each_scene_at_its_saved_speed() {
 #[test]
 fn a_theme_in_the_file_colours_every_scene_and_the_picker() {
     let area = Rect::new(0, 0, 100, 30);
-    for name in [
-        "rose-pine-moon",
-        "rose-pine-dawn",
-        "catppuccin-mocha",
-        "catppuccin-latte",
-        "tokyo-night",
-        "tokyo-night-day",
-        "kanagawa-wave",
-        "kanagawa-lotus",
-        "dracula",
-        "dracula-alucard",
-        "solarized-dark",
-        "solarized-light",
-    ] {
+    for &(name, palette) in &theme::THEMES[1..] {
         // Given:
         let text = format!("theme = \"{name}\"\n");
         let path = config_file(&format!("theme-{name}"), Some(&text));
         let config = Config::load(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let (_, palette) = theme::THEMES[theme::position(name).unwrap()];
         let own = colours(palette);
         let foreign: Vec<Color> = colours(&theme::ROSE_PINE)
             .into_iter()
