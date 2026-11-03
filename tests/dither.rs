@@ -5,7 +5,7 @@ use hearth::dither::{self, SHADES};
 /// The pixels of one tile that `sixteenths` light, from the upper left.
 fn lit(sixteenths: usize, left: usize, top: usize) -> Vec<bool> {
     (0..16)
-        .map(|at| dither::lights(sixteenths, left + at % 4, top + at / 4))
+        .map(|at| dither::rank(left + at % 4, top + at / 4) < sixteenths)
         .collect()
 }
 

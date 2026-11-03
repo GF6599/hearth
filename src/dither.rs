@@ -12,8 +12,3 @@ pub const SHADES: usize = 16;
 pub fn rank(x: usize, row: usize) -> usize {
     BAYER[row % 4][x % 4]
 }
-
-/// Whether `sixteenths` of a tile light the pixel at (x, row).
-pub fn lights(sixteenths: usize, x: usize, row: usize) -> bool {
-    rank(x, row) < sixteenths
-}
