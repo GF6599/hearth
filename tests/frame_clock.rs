@@ -26,9 +26,6 @@ use events::send_keys;
 const AREA: Rect = Rect::new(0, 0, 40, 12);
 const WIDE: Rect = Rect::new(0, 0, 120, 30);
 
-/// The ticks a changed speed stays on screen, as it did when the app drew
-/// one frame a tick.
-
 fn row_text(buffer: &Buffer, y: u16) -> String {
     (buffer.area.x..buffer.area.right())
         .map(|x| buffer[(x, y)].symbol().to_string())
