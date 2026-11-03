@@ -73,7 +73,9 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up => app.select_previous(),
             KeyCode::Tab => app.select_next_wrapped(),
             KeyCode::BackTab => app.select_previous_wrapped(),
-            KeyCode::Char(letter) => app.type_in_search(letter),
+            KeyCode::Char(letter) if key.modifiers.difference(KeyModifiers::SHIFT).is_empty() => {
+                app.type_in_search(letter);
+            }
             _ => {}
         }
     } else if app.is_picking() {
