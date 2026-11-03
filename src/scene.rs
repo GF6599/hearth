@@ -65,6 +65,17 @@ const RATES: &[(u32, &str)] = &[
 
 pub const QUARTERS_PER_TICK: u32 = 4;
 
+const fn normal_step() -> usize {
+    let mut step = 0;
+    while step < RATES.len() {
+        if RATES[step].0 == QUARTERS_PER_TICK {
+            return step;
+        }
+        step += 1;
+    }
+    panic!("no rate runs one tick a tick");
+}
+
 /// What the config file fixes for a whole run, read by a scene when it is
 /// built. A speed stays apart, because `+` and `-` change it while a scene
 /// runs.
@@ -87,7 +98,7 @@ impl Settings {
 pub struct Rate(usize);
 
 impl Rate {
-    pub const NORMAL: Rate = Rate(3);
+    pub const NORMAL: Rate = Rate(normal_step());
 
     pub fn faster(self) -> Rate {
         Rate((self.0 + 1).min(RATES.len() - 1))
