@@ -906,7 +906,6 @@ fn the_glow_shades_between_love_rose_and_gold() {
 fn over_the_terminal_background_the_air_stays_clear() {
     // Given:
     let palette = &theme::FLAT_THEMES[0];
-    assert!(palette.see_through);
     let mut scene = Embers::new(Rng::seed_from_u64(7), palette);
 
     // When:

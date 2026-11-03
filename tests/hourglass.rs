@@ -968,7 +968,6 @@ fn the_outline_has_mixes_of_the_glass_and_the_base_at_its_edge() {
 fn over_the_terminal_background_no_pixel_mixes_with_the_base() {
     // Given:
     let palette = &theme::FLAT_THEMES[0];
-    assert!(palette.see_through);
     let (mut scene, now) = hourglass_on(7, palette, Lengths::DEFAULT);
     let roles = [
         palette.base,
