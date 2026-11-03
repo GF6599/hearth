@@ -4,7 +4,8 @@
 set -eu
 binary=$1
 target=$2
-twice=$(otool -L "$binary" | tail -n +2 | awk '{print $1}' | sort | uniq -d)
+links=$(otool -L "$binary")
+twice=$(printf '%s\n' "$links" | tail -n +2 | awk '{print $1}' | sort | uniq -d)
 if [ -n "$twice" ]; then
     echo "$binary links $twice more than once" >&2
     exit 1
