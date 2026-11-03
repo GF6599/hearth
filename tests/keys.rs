@@ -448,6 +448,41 @@ fn letters_type_in_a_search_and_esc_leaves_it() {
     );
 }
 
+/// Esc after a search that matched nothing brings the marked scene back
+/// into the pane.
+/// Given: the picker, a search for `zz`, which matches no scene.
+/// When: Esc is pressed and the app ticks.
+/// Then: the whole list shows, a scene is marked, and the pane runs it.
+///
+/// Why it matters: a search with no match empties the pane, and a pane
+/// that stays empty after the search is over reads as a hang.
+#[test]
+fn esc_after_a_search_with_no_match_shows_the_marked_scene() {
+    // Given:
+    let mut app = App::picker(7, corpus());
+    let mut keys = vec![key(KeyCode::Char('/'))];
+    keys.extend(typed("zz"));
+    send(&mut app, keys);
+    assert!(listed(&app).is_empty(), "{:?}", listed(&app));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Esc)]);
+    for _ in 0..5 {
+        app.tick(WIDE);
+    }
+
+    // Then:
+    assert!(app.is_picking());
+    assert!(!listed(&app).is_empty(), "the list is still empty");
+    assert!(marked(&app).is_some());
+    let shown = app_frame(&app, WIDE);
+    let inner = pane_inner(&shown).expect("no pane");
+    assert!(
+        inner.positions().any(|at| shown[at].symbol() != " "),
+        "the pane is empty after Esc"
+    );
+}
+
 /// Enter in a search starts the marked match and ends the search.
 /// Given: the picker with `/` pressed and `drv` typed.
 /// When: Enter is pressed, the app ticks ten times, and Esc opens the
