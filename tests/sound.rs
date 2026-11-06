@@ -17,7 +17,7 @@ const RATE: u32 = 48_000;
 const AREA: Rect = Rect::new(0, 0, 80, 20);
 /// The recordings that loop while their scene runs, as the typing stops and
 /// starts with its keys.
-const SCENE_RECORDINGS: [Cue; 2] = [Cue::Fire, Cue::River];
+const SCENE_RECORDINGS: [Cue; 3] = [Cue::Fire, Cue::River, Cue::Tide];
 
 /// Samples per channel in one tick.
 fn tick_samples() -> usize {
@@ -221,17 +221,18 @@ fn each_scene_recording_plays_in_stereo() {
     }
 }
 
-/// Each scene recording loops with no drop in its level.
+/// Each scene recording loops near the level of the others with no drop.
 /// Given: a mixer for each recording that plays while its scene runs.
 /// When: its cue comes on every tick for a minute, which plays the recording
 /// through more than once.
-/// Then: after the fade in, no two milliseconds are quieter than -70 dB.
+/// Then: after the fade in, the minute plays from -37 to -29 dB, and no two
+/// milliseconds are quieter than -70 dB.
 ///
-/// Why it matters: a fire and a stream go on with no break. An MP3 starts
-/// and ends with padding, and a loop that kept it would drop out at each
-/// turn.
+/// Why it matters: a focus move fades one recording into the next, and a
+/// jump in level startles. A fire and the water go on with no break, and an
+/// MP3 starts and ends with padding that a loop must not keep.
 #[test]
-fn each_scene_recording_never_drops_out() {
+fn each_scene_recording_loops_near_one_level_with_no_drop() {
     for cue in SCENE_RECORDINGS {
         // Given:
         let mut mixer = Mixer::new(RATE);
@@ -240,6 +241,8 @@ fn each_scene_recording_never_drops_out() {
         let frames = played(&mut mixer, ticks(60.0), cue, |_| true);
 
         // Then:
+        let level = decibels(frames[seconds(0.5)..].as_flattened());
+        assert!((-37.0..=-29.0).contains(&level), "{cue:?}: {level} dB");
         let left: Vec<f32> = frames[seconds(0.5)..]
             .iter()
             .map(|[left, _]| *left)
@@ -252,26 +255,30 @@ fn each_scene_recording_never_drops_out() {
     }
 }
 
-/// The river cue and the fire cue play their own recordings.
-/// Given: two mixers.
-/// When: one gets the river cue and the other the fire cue on every tick for
-/// three seconds.
-/// Then: their frames differ.
+/// Each scene cue plays its own recording.
+/// Given: a mixer for each recording that plays while its scene runs.
+/// When: its cue comes on every tick for three seconds.
+/// Then: the frames of each cue differ from the frames of every other cue.
 ///
 /// Why it matters: a cue wired to the wrong recording passes every level
 /// check, and the river would crackle.
 #[test]
-fn the_river_and_the_fire_play_different_recordings() {
-    // Given:
-    let mut river = Mixer::new(RATE);
-    let mut fire = Mixer::new(RATE);
-
+fn each_scene_cue_plays_its_own_recording() {
     // When:
-    let water = played(&mut river, ticks(3.0), Cue::River, |_| true);
-    let flames = played(&mut fire, ticks(3.0), Cue::Fire, |_| true);
+    let sounds = SCENE_RECORDINGS.map(|cue| {
+        let frames = played(&mut Mixer::new(RATE), ticks(3.0), cue, |_| true);
+        (cue, frames)
+    });
 
     // Then:
-    assert_ne!(water, flames);
+    for (index, (cue, frames)) in sounds.iter().enumerate() {
+        for (other, other_frames) in &sounds[index + 1..] {
+            assert!(
+                frames != other_frames,
+                "{cue:?} plays the same as {other:?}"
+            );
+        }
+    }
 }
 
 /// Given: two mixers.

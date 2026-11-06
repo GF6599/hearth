@@ -5,6 +5,7 @@ mod pixels;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::tide::{DRY_TICKS, HIGH_TIDE, LOW_TIDE, SWASH, TIDE_TICKS, Tide};
+use hearth::sound::Cue;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::Buffer;
@@ -765,4 +766,40 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
             }
         }
     }
+}
+
+fn cues_of_one_tick(scene: &mut Tide, area: Rect) -> Vec<Cue> {
+    scene.tick(area);
+    let mut cues = Vec::new();
+    scene.drain_cues(&mut cues);
+    cues
+}
+
+/// A tide sends its cue on each tick while it has cells to draw in.
+/// Given: a tide in a pane.
+/// When: it ticks in the pane, then in a pane with no cells.
+/// Then: each tick in the pane sends one tide cue, and a tick with no cells
+/// sends none.
+///
+/// Why it matters: the recording holds only a moment past its last cue, so
+/// a tick with no cue is heard as a gap, and a sea that nobody can see must
+/// not be heard.
+#[test]
+fn a_tide_in_a_pane_sends_one_cue_each_tick() {
+    // Given:
+    let mut tide = ticked(7, AREA, 0);
+
+    for _ in 0..3 {
+        // When:
+        let cues = cues_of_one_tick(&mut tide, AREA);
+
+        // Then:
+        assert_eq!(cues, [Cue::Tide]);
+    }
+
+    // When:
+    let cues = cues_of_one_tick(&mut tide, Rect::new(0, 0, 0, 10));
+
+    // Then:
+    assert_eq!(cues, []);
 }
