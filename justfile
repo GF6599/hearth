@@ -25,6 +25,7 @@ sounds:
     mkdir -p sounds
     ffmpeg -y -loglevel error -ss 1 -t 24 -i https://cdn.freesound.org/previews/588/588650_6529953-hq.mp3 -c copy -map_metadata -1 sounds/typing.mp3
     curl -sfL https://cdn.freesound.org/previews/734/734248_2391840-hq.mp3 | ffmpeg -y -loglevel error -ss 146 -t 45 -i pipe: -c copy -map_metadata -1 -f mp3 sounds/fire.mp3
+    ffmpeg -y -loglevel error -ss 14 -t 45 -i https://cdn.freesound.org/previews/459/459412_627541-hq.mp3 -c copy -map_metadata -1 sounds/river.mp3
 
 # Lint with the same denial level CI uses
 [group('dev')]
