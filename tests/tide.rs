@@ -794,7 +794,7 @@ fn a_tide_in_a_pane_sends_one_cue_each_tick() {
         let cues = cues_of_one_tick(&mut tide, AREA);
 
         // Then:
-        assert_eq!(cues, [Cue::Tide]);
+        assert!(matches!(cues[..], [Cue::Tide { .. }]), "{cues:?}");
     }
 
     // When:
@@ -802,4 +802,57 @@ fn a_tide_in_a_pane_sends_one_cue_each_tick() {
 
     // Then:
     assert_eq!(cues, []);
+}
+
+/// The swell rises as a wave runs up the sand and falls as it draws back.
+/// Given: a tide in a pane, for seeds 1, 7 and 42.
+/// When: it runs for about five waves.
+/// Then: the swell stays from 0 to 1 and goes from near 0 to past the weakest
+/// wave, and at each top of the swell the mean waterline is higher than at
+/// the bottom that follows it.
+///
+/// Why it matters: the sound must follow the water on the screen, and a
+/// swell out of step with the waves reads as a sound from another beach.
+#[test]
+fn the_swell_follows_the_water_on_the_sand() {
+    for seed in [1, 7, 42] {
+        // Given:
+        let mut scene = ticked(seed, AREA, 0);
+
+        // When:
+        let mut swells = Vec::new();
+        let mut water = Vec::new();
+        for _ in 0..700 {
+            let cues = cues_of_one_tick(&mut scene, AREA);
+            let [Cue::Tide { swell }] = cues[..] else {
+                panic!("{cues:?}");
+            };
+            swells.push(swell);
+            water.push(mean(&waterlines(&pixels(
+                &render(&scene, AREA, AREA),
+                AREA,
+            ))));
+        }
+
+        // Then:
+        assert!(swells.iter().all(|swell| (0.0..=1.0).contains(swell)));
+        let highest = swells.iter().copied().fold(0.0, f32::max);
+        let lowest = swells.iter().copied().fold(1.0, f32::min);
+        assert!(lowest <= 0.05 && highest >= 0.5, "{lowest} to {highest}");
+        let tops: Vec<usize> = (1..swells.len() - 1)
+            .filter(|&tick| swells[tick - 1] < swells[tick] && swells[tick] >= swells[tick + 1])
+            .collect();
+        assert!(tops.len() >= 3, "{} tops of the swell", tops.len());
+        for pair in tops.windows(2) {
+            let bottom = (pair[0]..pair[1])
+                .min_by(|a, b| swells[*a].total_cmp(&swells[*b]))
+                .unwrap();
+            assert!(
+                water[pair[0]] > water[bottom],
+                "seed {seed}: {} at the top, {} at the bottom",
+                water[pair[0]],
+                water[bottom]
+            );
+        }
+    }
 }

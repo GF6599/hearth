@@ -17,7 +17,7 @@ const RATE: u32 = 48_000;
 const AREA: Rect = Rect::new(0, 0, 80, 20);
 /// The recordings that loop while their scene runs, as the typing stops and
 /// starts with its keys.
-const SCENE_RECORDINGS: [Cue; 3] = [Cue::Fire, Cue::River, Cue::Tide];
+const SCENE_RECORDINGS: [Cue; 3] = [Cue::Fire, Cue::River, Cue::Tide { swell: 1.0 }];
 
 /// Samples per channel in one tick.
 fn tick_samples() -> usize {
@@ -306,6 +306,69 @@ fn the_fire_plays_on_at_its_slowest_speed() {
     // Then:
     let differ = steady.iter().zip(&slow).filter(|(a, b)| a != b).count();
     assert_eq!(differ, 0, "{differ} frames differ");
+}
+
+/// Renders `ticks` ticks of the tide, with the swell of each tick from
+/// `swell`.
+fn tide_played(mixer: &mut Mixer, ticks: usize, swell: impl Fn(usize) -> f32) -> Vec<f32> {
+    let mut played = Vec::with_capacity(ticks * tick_samples() * 2);
+    let mut frames = vec![0.0; tick_samples() * 2];
+    for tick in 0..ticks {
+        mixer.play(Cue::Tide { swell: swell(tick) });
+        mixer.render(&mut frames);
+        played.extend_from_slice(&frames);
+    }
+    played
+}
+
+/// The tide is louder at the top of a run up than at the bottom of a draw
+/// back.
+/// Given: two mixers.
+/// When: one plays the tide at the swell of the top of a run up and the other
+/// at the swell of the bottom of a draw back, for three seconds.
+/// Then: after the fade in, the first plays at least 3 dB louder.
+///
+/// Why it matters: the sound must rise and fall with the water on the
+/// screen, and a smaller change is lost under the waves in the recording.
+#[test]
+fn the_tide_swell_changes_how_loud_it_plays() {
+    // When:
+    let top = tide_played(&mut Mixer::new(RATE), ticks(3.0), |_| 1.0);
+    let bottom = tide_played(&mut Mixer::new(RATE), ticks(3.0), |_| 0.0);
+
+    // Then:
+    let rise = decibels(&top[seconds(1.0)..]) - decibels(&bottom[seconds(1.0)..]);
+    assert!(rise >= 3.0, "{rise} dB");
+}
+
+/// A jump in the swell reaches the tide's level as a glide.
+/// Given: two mixers that play the tide at the bottom of a draw back.
+/// When: one stays there, and the other jumps to the top of a run up after
+/// one second.
+/// Then: over the next 5 ms the two stay within 1 dB, and from half a second
+/// after the jump the second is at least 3 dB louder.
+///
+/// Why it matters: the swell changes only on a tick, and a gain that jumps
+/// on each tick is heard as a click many times a second.
+#[test]
+fn the_tide_swell_glides_between_ticks() {
+    // Given:
+    let jump = ticks(1.0);
+    let steady = tide_played(&mut Mixer::new(RATE), ticks(2.0), |_| 0.0);
+
+    // When:
+    let jumped = tide_played(&mut Mixer::new(RATE), ticks(2.0), |tick| {
+        if tick < jump { 0.0 } else { 1.0 }
+    });
+
+    // Then:
+    let at_jump = jump * tick_samples() * 2;
+    let glide = at_jump..at_jump + seconds(0.005) * 2;
+    let start = decibels(&jumped[glide.clone()]) - decibels(&steady[glide]);
+    assert!(start.abs() <= 1.0, "{start} dB over the first 5 ms");
+    let settled = at_jump + seconds(0.5) * 2;
+    let rise = decibels(&jumped[settled..]) - decibels(&steady[settled..]);
+    assert!(rise >= 3.0, "{rise} dB after the glide");
 }
 
 /// A scene recording stops at once when the mixer is turned off.
