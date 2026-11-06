@@ -15,6 +15,9 @@ use ratatui::layout::Rect;
 
 const RATE: u32 = 48_000;
 const AREA: Rect = Rect::new(0, 0, 80, 20);
+/// The recordings that loop while their scene runs, as the typing stops and
+/// starts with its keys.
+const SCENE_RECORDINGS: [Cue; 2] = [Cue::Fire, Cue::River];
 
 /// Samples per channel in one tick.
 fn tick_samples() -> usize {
@@ -179,68 +182,96 @@ fn a_mixer_that_is_off_is_silent_and_forgets_its_cues() {
     assert_eq!(loudest(&on), 0.0);
 }
 
-/// Given: a mixer.
-/// When: the fire cue comes on every tick for three seconds.
-/// Then: after the fade in, the fire plays from -45 to -25 dB with no
-/// sample past full scale, and its left and right channels differ by more
-/// than -60 dB.
+/// Each scene recording plays in stereo at about the level of the others.
+/// Given: a mixer for each recording that plays while its scene runs.
+/// When: its cue comes on every tick for three seconds.
+/// Then: after the fade in, it plays from -45 to -25 dB with no sample past
+/// full scale, and its left and right channels differ by more than -60 dB.
 ///
-/// Why it matters: the fire is a binaural recording, and copied to one
-/// channel it loses the room it was recorded in.
+/// Why it matters: each of these is a stereo recording, and copied to one
+/// channel it loses the place it was recorded in.
 #[test]
-fn the_fire_plays_its_recording_in_stereo() {
-    // Given:
-    let mut mixer = Mixer::new(RATE);
+fn each_scene_recording_plays_in_stereo() {
+    for cue in SCENE_RECORDINGS {
+        // Given:
+        let mut mixer = Mixer::new(RATE);
 
-    // When:
-    let frames = played(&mut mixer, ticks(3.0), Cue::Fire, |_| true);
+        // When:
+        let frames = played(&mut mixer, ticks(3.0), cue, |_| true);
 
-    // Then:
-    let heard = &frames[seconds(0.5)..];
-    let both: Vec<f32> = heard.iter().flatten().copied().collect();
-    let level = decibels(&both);
-    assert!((-45.0..=-25.0).contains(&level), "{level} dB");
-    assert!(
-        loudest(&both) <= 1.0,
-        "{} is past full scale",
-        loudest(&both)
-    );
-    let side: Vec<f32> = heard
-        .iter()
-        .map(|[left, right]| (left - right) / 2.0)
-        .collect();
-    assert!(
-        decibels(&side) > -60.0,
-        "{} dB between the channels",
-        decibels(&side)
-    );
+        // Then:
+        let heard = &frames[seconds(0.5)..];
+        let both: Vec<f32> = heard.iter().flatten().copied().collect();
+        let level = decibels(&both);
+        assert!((-45.0..=-25.0).contains(&level), "{cue:?}: {level} dB");
+        assert!(
+            loudest(&both) <= 1.0,
+            "{cue:?}: {} is past full scale",
+            loudest(&both)
+        );
+        let side: Vec<f32> = heard
+            .iter()
+            .map(|[left, right]| (left - right) / 2.0)
+            .collect();
+        assert!(
+            decibels(&side) > -60.0,
+            "{cue:?}: {} dB between the channels",
+            decibels(&side)
+        );
+    }
 }
 
-/// Given: a mixer.
-/// When: the fire cue comes on every tick for a minute, which plays the
-/// recording through more than once.
+/// Each scene recording loops with no drop in its level.
+/// Given: a mixer for each recording that plays while its scene runs.
+/// When: its cue comes on every tick for a minute, which plays the recording
+/// through more than once.
 /// Then: after the fade in, no two milliseconds are quieter than -70 dB.
 ///
-/// Why it matters: a fire crackles on with no break. An MP3 starts and
-/// ends with padding, and a loop that kept it would drop out at each turn.
+/// Why it matters: a fire and a stream go on with no break. An MP3 starts
+/// and ends with padding, and a loop that kept it would drop out at each
+/// turn.
 #[test]
-fn the_fire_never_drops_out() {
+fn each_scene_recording_never_drops_out() {
+    for cue in SCENE_RECORDINGS {
+        // Given:
+        let mut mixer = Mixer::new(RATE);
+
+        // When:
+        let frames = played(&mut mixer, ticks(60.0), cue, |_| true);
+
+        // Then:
+        let left: Vec<f32> = frames[seconds(0.5)..]
+            .iter()
+            .map(|[left, _]| *left)
+            .collect();
+        let quietest = left
+            .chunks_exact(seconds(0.002))
+            .map(decibels)
+            .fold(f64::INFINITY, f64::min);
+        assert!(quietest >= -70.0, "{cue:?}: {quietest} dB");
+    }
+}
+
+/// The river cue and the fire cue play their own recordings.
+/// Given: two mixers.
+/// When: one gets the river cue and the other the fire cue on every tick for
+/// three seconds.
+/// Then: their frames differ.
+///
+/// Why it matters: a cue wired to the wrong recording passes every level
+/// check, and the river would crackle.
+#[test]
+fn the_river_and_the_fire_play_different_recordings() {
     // Given:
-    let mut mixer = Mixer::new(RATE);
+    let mut river = Mixer::new(RATE);
+    let mut fire = Mixer::new(RATE);
 
     // When:
-    let frames = played(&mut mixer, ticks(60.0), Cue::Fire, |_| true);
+    let water = played(&mut river, ticks(3.0), Cue::River, |_| true);
+    let flames = played(&mut fire, ticks(3.0), Cue::Fire, |_| true);
 
     // Then:
-    let left: Vec<f32> = frames[seconds(0.5)..]
-        .iter()
-        .map(|[left, _]| *left)
-        .collect();
-    let quietest = left
-        .chunks_exact(seconds(0.002))
-        .map(decibels)
-        .fold(f64::INFINITY, f64::min);
-    assert!(quietest >= -70.0, "{quietest} dB");
+    assert_ne!(water, flames);
 }
 
 /// Given: two mixers.
@@ -270,23 +301,26 @@ fn the_fire_plays_on_at_its_slowest_speed() {
     assert_eq!(differ, 0, "{differ} frames differ");
 }
 
-/// Given: a mixer that plays the fire.
+/// A scene recording stops at once when the mixer is turned off.
+/// Given: a mixer that plays a scene's recording.
 /// When: it is turned off.
 /// Then: the next tick is silent.
 ///
 /// Why it matters: `m` must stop the sound at once, not after its fade.
 #[test]
-fn turning_the_mixer_off_silences_the_fire_at_once() {
-    // Given:
-    let mut mixer = Mixer::new(RATE);
-    played(&mut mixer, ticks(1.0), Cue::Fire, |_| true);
+fn turning_the_mixer_off_silences_a_scene_recording_at_once() {
+    for cue in SCENE_RECORDINGS {
+        // Given:
+        let mut mixer = Mixer::new(RATE);
+        played(&mut mixer, ticks(1.0), cue, |_| true);
 
-    // When:
-    mixer.set_on(false);
-    let after = played(&mut mixer, 1, Cue::Fire, |_| false);
+        // When:
+        mixer.set_on(false);
+        let after = played(&mut mixer, 1, cue, |_| false);
 
-    // Then:
-    assert_eq!(loudest(after.as_flattened()), 0.0);
+        // Then:
+        assert_eq!(loudest(after.as_flattened()), 0.0, "{cue:?}");
+    }
 }
 
 /// Given: a mixer at full volume and a mixer at 50%.
@@ -312,8 +346,9 @@ fn half_volume_plays_the_same_cues_six_db_lower() {
     assert!((-6.2..=-5.8).contains(&drop), "{drop} dB");
 }
 
+/// A volume of 0% silences every recording.
 /// Given: a mixer at 0% volume.
-/// When: the typing cue and the fire cue come on every tick for three
+/// When: the typing cue and each scene's cue come on every tick for three
 /// seconds.
 /// Then: every frame is silent.
 ///
@@ -330,7 +365,9 @@ fn zero_volume_is_silent() {
     let mut heard = 0.0_f32;
     for _ in 0..ticks(3.0) {
         mixer.play(Cue::Typing);
-        mixer.play(Cue::Fire);
+        for cue in SCENE_RECORDINGS {
+            mixer.play(cue);
+        }
         mixer.render(&mut frames);
         heard = heard.max(loudest(&frames));
     }

@@ -20,6 +20,7 @@ use hearth::history::{DEPTH, History};
 use hearth::octant::{self, CELL_HEIGHT, CELL_WIDTH};
 use hearth::scene::{ALL, Rng, Scene, SceneKind};
 use hearth::scenes::river::{NOTICE, READING, River};
+use hearth::sound::Cue;
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
 use ratatui::buffer::{Buffer, Cell};
@@ -529,6 +530,65 @@ fn a_directory_outside_a_repository_shows_the_notice() {
     assert!(history.commits().is_empty());
     let rows = rows(&buffer, AREA);
     assert!(rows.iter().any(|row| row.contains(NOTICE)), "{rows:#?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn cues_of_one_tick(scene: &mut River, area: Rect) -> Vec<Cue> {
+    scene.tick(area);
+    let mut cues = Vec::new();
+    scene.drain_cues(&mut cues);
+    cues
+}
+
+/// A river sends its cue on each tick while it has cells to draw in.
+/// Given: a river that has landed a history of commits.
+/// When: it ticks in a pane, then in a pane with no cells.
+/// Then: each tick in the pane sends one river cue, and a tick with no
+/// cells sends none.
+///
+/// Why it matters: the recording holds only a moment past its last cue, so
+/// a tick with no cue is heard as a gap, and a river that nobody can see
+/// must not be heard.
+#[test]
+fn a_river_in_a_pane_sends_one_cue_each_tick() {
+    // Given:
+    let dir = linear("cue", 3);
+    let mut scene = river(&dir);
+
+    for _ in 0..3 {
+        // When:
+        let cues = cues_of_one_tick(&mut scene, AREA);
+
+        // Then:
+        assert_eq!(cues, [Cue::River]);
+    }
+
+    // When:
+    let cues = cues_of_one_tick(&mut scene, Rect::new(0, 0, 0, 10));
+
+    // Then:
+    assert_eq!(cues, []);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A river with nothing to show sends no cue.
+/// Given: a river whose read has landed on a directory with no history.
+/// When: it ticks.
+/// Then: it sends no cue.
+///
+/// Why it matters: the pane shows a notice in place of the water, and the
+/// sound follows what is on the screen.
+#[test]
+fn a_river_with_no_history_is_silent() {
+    // Given:
+    let dir = scratch("silent");
+    let mut scene = river(&dir);
+
+    // When:
+    let cues = cues_of_one_tick(&mut scene, AREA);
+
+    // Then:
+    assert_eq!(cues, []);
     let _ = fs::remove_dir_all(&dir);
 }
 
