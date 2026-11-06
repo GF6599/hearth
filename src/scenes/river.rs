@@ -11,6 +11,7 @@ use crate::corpus::Corpus;
 use crate::history::{Commit, History};
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{self, Rng, Scene};
+use crate::sound::Cue;
 use crate::splitmix;
 use crate::theme::Palette;
 
@@ -198,6 +199,7 @@ pub struct River {
     salt: u64,
     /// Where the wander of each bank starts, as an angle.
     banks: [f64; 2],
+    cues: Vec<Cue>,
 }
 
 impl River {
@@ -234,6 +236,7 @@ impl River {
                 rng.random_range(0.0..std::f64::consts::TAU),
                 rng.random_range(0.0..std::f64::consts::TAU),
             ],
+            cues: Vec::new(),
         }
     }
 
@@ -382,7 +385,7 @@ fn ease(t: f64) -> f64 {
 }
 
 impl Scene for River {
-    fn tick(&mut self, _area: Rect) {
+    fn tick(&mut self, area: Rect) {
         if let Some(reading) = &self.reading {
             match reading.try_recv() {
                 Ok(history) => self.land(history),
@@ -392,6 +395,13 @@ impl Scene for River {
             return;
         }
         self.ticks += 1;
+        if !self.rows.is_empty() && !area.is_empty() {
+            self.cues.push(Cue::River);
+        }
+    }
+
+    fn drain_cues(&mut self, out: &mut Vec<Cue>) {
+        out.append(&mut self.cues);
     }
 
     fn set_progress(&mut self, progress: f64) -> bool {

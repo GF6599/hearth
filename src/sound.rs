@@ -9,6 +9,7 @@ pub enum Cue {
     /// The scene typed at least one key.
     Typing,
     Fire,
+    River,
 }
 
 /// Seconds the sound keeps playing after its last cue, longer than the
@@ -101,6 +102,11 @@ fn fire() -> &'static Recording {
     FIRE.get_or_init(|| Recording::decode(include_bytes!("../sounds/fire.mp3")))
 }
 
+fn river() -> &'static Recording {
+    static RIVER: OnceLock<Recording> = OnceLock::new();
+    RIVER.get_or_init(|| Recording::decode(include_bytes!("../sounds/river.mp3")))
+}
+
 /// A recording that loops while its cue keeps coming, and fades out when
 /// the cue stops. It keeps its place while silent, so it goes on where it
 /// left off.
@@ -167,6 +173,7 @@ impl Bed {
 pub struct Mixer {
     typing: Bed,
     fire: Bed,
+    river: Bed,
     on: bool,
     gain: f32,
 }
@@ -178,6 +185,7 @@ impl Mixer {
         Self {
             typing: Bed::new(typing(), rate as f32),
             fire: Bed::new(fire(), rate as f32),
+            river: Bed::new(river(), rate as f32),
             on: true,
             gain: Volume::FULL.gain(),
         }
@@ -192,6 +200,7 @@ impl Mixer {
         match cue {
             Cue::Typing => self.typing.cue(),
             Cue::Fire => self.fire.cue(),
+            Cue::River => self.river.cue(),
         }
     }
 
@@ -200,6 +209,7 @@ impl Mixer {
         if !on {
             self.typing.silence();
             self.fire.silence();
+            self.river.silence();
         }
     }
 
@@ -215,11 +225,8 @@ impl Mixer {
     }
 
     pub fn frame(&mut self) -> [f32; 2] {
-        let (typing, fire) = (self.typing.frame(), self.fire.frame());
-        [
-            (typing[0] + fire[0]) * self.gain,
-            (typing[1] + fire[1]) * self.gain,
-        ]
+        let beds = [self.typing.frame(), self.fire.frame(), self.river.frame()];
+        [0, 1].map(|channel| beds.iter().map(|bed| bed[channel]).sum::<f32>() * self.gain)
     }
 }
 
