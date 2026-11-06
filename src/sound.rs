@@ -10,7 +10,11 @@ pub enum Cue {
     Typing,
     Fire,
     River,
-    Tide,
+    /// How far the wave on screen has run up the sand, from 0 at the bottom
+    /// of a draw back to 1 at the top of the strongest run up.
+    Tide {
+        swell: f32,
+    },
 }
 
 /// Seconds the sound keeps playing after its last cue, longer than the
@@ -24,6 +28,14 @@ const FADE_OUT: f32 = 0.4;
 /// recorded close to the sand, and its cut copies the stream with no
 /// re-encode.
 const TIDE_GAIN: f32 = 0.2;
+/// The gains of the tide at the bottom of a draw back and at the top of the
+/// strongest run up. A wave's mean swell is about one half, so the tide
+/// stays near its level.
+const SWELL_QUIET: f32 = 0.5;
+const SWELL_LOUD: f32 = 1.25;
+/// Seconds over which the gain follows the swell, so its step on each tick
+/// is not heard.
+const SWELL_GLIDE: f32 = 0.1;
 
 /// How loud hearth plays, on top of the system volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +197,30 @@ impl Bed {
     }
 }
 
+/// The gain of a recording that follows a value from a scene, and glides to
+/// it because the value changes only on a tick.
+#[derive(Debug)]
+struct Swell {
+    now: f32,
+    target: f32,
+    glide: f32,
+}
+
+impl Swell {
+    fn new(rate: f32) -> Self {
+        Self {
+            now: 0.0,
+            target: 0.0,
+            glide: 1.0 / (SWELL_GLIDE * rate),
+        }
+    }
+
+    fn gain(&mut self) -> f32 {
+        self.now += (self.target - self.now) * self.glide;
+        SWELL_QUIET + (SWELL_LOUD - SWELL_QUIET) * self.now
+    }
+}
+
 /// Turns cues into stereo frames at one rate. It holds no device, so a
 /// test renders it offline.
 #[derive(Debug)]
@@ -193,6 +229,7 @@ pub struct Mixer {
     fire: Bed,
     river: Bed,
     tide: Bed,
+    swell: Swell,
     on: bool,
     gain: f32,
 }
@@ -206,6 +243,7 @@ impl Mixer {
             fire: Bed::new(fire(), rate as f32),
             river: Bed::new(river(), rate as f32),
             tide: Bed::new(tide(), rate as f32),
+            swell: Swell::new(rate as f32),
             on: true,
             gain: Volume::FULL.gain(),
         }
@@ -221,7 +259,10 @@ impl Mixer {
             Cue::Typing => self.typing.cue(),
             Cue::Fire => self.fire.cue(),
             Cue::River => self.river.cue(),
-            Cue::Tide => self.tide.cue(),
+            Cue::Tide { swell } => {
+                self.tide.cue();
+                self.swell.target = swell;
+            }
         }
     }
 
@@ -247,11 +288,12 @@ impl Mixer {
     }
 
     pub fn frame(&mut self) -> [f32; 2] {
+        let swell = self.swell.gain();
         let beds = [
             self.typing.frame(),
             self.fire.frame(),
             self.river.frame(),
-            self.tide.frame(),
+            self.tide.frame().map(|sample| sample * swell),
         ];
         [0, 1].map(|channel| beds.iter().map(|bed| bed[channel]).sum::<f32>() * self.gain)
     }

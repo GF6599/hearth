@@ -199,6 +199,17 @@ fn wet_tones(palette: &Palette, dry: Color, wet: Color, most: f32) -> [Color; WE
     })
 }
 
+/// How far up the sand a wave is at `waves`, from 0 at the bottom of a draw
+/// back to 1 at the top of its run up.
+fn run(waves: f32) -> f32 {
+    let phase = waves.rem_euclid(1.0);
+    if phase < RUN_UP {
+        (phase / RUN_UP * FRAC_PI_2).sin()
+    } else {
+        ((phase - RUN_UP) / (1.0 - RUN_UP) * FRAC_PI_2).cos()
+    }
+}
+
 impl Tide {
     /// Ticks until the sand at pixel (x, row) is dry, from the top left. A
     /// pixel under the sea reads `DRY_TICKS`.
@@ -239,18 +250,24 @@ impl Tide {
         LOW_TIDE + (HIGH_TIDE - LOW_TIDE) * (1.0 - (TAU * turn).cos()) / 2.0
     }
 
+    fn strength(&self, waves: f32) -> f32 {
+        self.strengths[(waves.floor() as i64).rem_euclid(SET as i64) as usize]
+    }
+
+    /// How far the wave at the mean lag of the beach has run up the sand, as
+    /// a share of the strongest run up. One sound stands for the whole shore.
+    fn swell(&self, time: f32) -> f32 {
+        let waves = time / self.wave_ticks - LAG / 2.0;
+        run(waves) * self.strength(waves)
+    }
+
     /// How far the water reaches up pixel column `x` at `time` ticks, as a
     /// share of the height.
     fn reach(&self, x: f32, time: f32) -> f32 {
         let lag = LAG * (1.0 + (TAU * (x / self.lag_length + self.lag_phase)).sin()) / 2.0;
         let waves = time / self.wave_ticks - lag;
-        let phase = waves.rem_euclid(1.0);
-        let run = if phase < RUN_UP {
-            (phase / RUN_UP * FRAC_PI_2).sin()
-        } else {
-            ((phase - RUN_UP) / (1.0 - RUN_UP) * FRAC_PI_2).cos()
-        };
-        let strength = self.strengths[(waves.floor() as i64).rem_euclid(SET as i64) as usize];
+        let run = run(waves);
+        let strength = self.strength(waves);
         let drift = time * RIPPLE_DRIFT;
         let ripple =
             (1.0 + (TAU * (x / self.ripple_length + self.ripple_phase + drift)).sin()) / 2.0;
@@ -431,7 +448,9 @@ impl Scene for Tide {
         if columns == 0 || rows == 0 {
             return;
         }
-        self.cues.push(Cue::Tide);
+        self.cues.push(Cue::Tide {
+            swell: self.swell(self.time as f32),
+        });
         let waterlines = self.waterlines(columns, rows, self.time as f32);
         for (index, wetness) in self.wetness.iter_mut().enumerate() {
             let (x, row) = (index % columns, index / columns);
