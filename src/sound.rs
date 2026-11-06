@@ -10,6 +10,7 @@ pub enum Cue {
     Typing,
     Fire,
     River,
+    Tide,
 }
 
 /// Seconds the sound keeps playing after its last cue, longer than the
@@ -18,6 +19,11 @@ pub enum Cue {
 const HOLD: f32 = 0.3;
 const FADE_IN: f32 = 0.1;
 const FADE_OUT: f32 = 0.4;
+
+/// Brings the tide down 14 dB to the level of the fire, because it was
+/// recorded close to the sand, and its cut copies the stream with no
+/// re-encode.
+const TIDE_GAIN: f32 = 0.2;
 
 /// How loud hearth plays, on top of the system volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +96,13 @@ impl Recording {
             rate: decoded.sample_rate,
         }
     }
+
+    fn scaled(mut self, gain: f32) -> Self {
+        for frame in &mut self.frames {
+            *frame = frame.map(|sample| sample * gain);
+        }
+        self
+    }
 }
 
 fn typing() -> &'static Recording {
@@ -105,6 +118,11 @@ fn fire() -> &'static Recording {
 fn river() -> &'static Recording {
     static RIVER: OnceLock<Recording> = OnceLock::new();
     RIVER.get_or_init(|| Recording::decode(include_bytes!("../sounds/river.mp3")))
+}
+
+fn tide() -> &'static Recording {
+    static TIDE: OnceLock<Recording> = OnceLock::new();
+    TIDE.get_or_init(|| Recording::decode(include_bytes!("../sounds/tide.mp3")).scaled(TIDE_GAIN))
 }
 
 /// A recording that loops while its cue keeps coming, and fades out when
@@ -174,6 +192,7 @@ pub struct Mixer {
     typing: Bed,
     fire: Bed,
     river: Bed,
+    tide: Bed,
     on: bool,
     gain: f32,
 }
@@ -186,6 +205,7 @@ impl Mixer {
             typing: Bed::new(typing(), rate as f32),
             fire: Bed::new(fire(), rate as f32),
             river: Bed::new(river(), rate as f32),
+            tide: Bed::new(tide(), rate as f32),
             on: true,
             gain: Volume::FULL.gain(),
         }
@@ -201,6 +221,7 @@ impl Mixer {
             Cue::Typing => self.typing.cue(),
             Cue::Fire => self.fire.cue(),
             Cue::River => self.river.cue(),
+            Cue::Tide => self.tide.cue(),
         }
     }
 
@@ -210,6 +231,7 @@ impl Mixer {
             self.typing.silence();
             self.fire.silence();
             self.river.silence();
+            self.tide.silence();
         }
     }
 
@@ -225,7 +247,12 @@ impl Mixer {
     }
 
     pub fn frame(&mut self) -> [f32; 2] {
-        let beds = [self.typing.frame(), self.fire.frame(), self.river.frame()];
+        let beds = [
+            self.typing.frame(),
+            self.fire.frame(),
+            self.river.frame(),
+            self.tide.frame(),
+        ];
         [0, 1].map(|channel| beds.iter().map(|bed| bed[channel]).sum::<f32>() * self.gain)
     }
 }

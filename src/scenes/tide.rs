@@ -8,6 +8,7 @@ use ratatui::style::Color;
 
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
 use crate::scene::{Rng, Scene};
+use crate::sound::Cue;
 use crate::theme::Palette;
 
 /// Ticks in one tide, from low water to high and back, about four minutes.
@@ -110,6 +111,7 @@ pub struct Tide {
     /// The shade of the dry sand in each cell, by row and then by column.
     sand: Vec<usize>,
     shades: Shades,
+    cues: Vec<Cue>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -226,6 +228,7 @@ impl Tide {
             objects: Vec::new(),
             sand: Vec::new(),
             shades: Shades::new(palette),
+            cues: Vec::new(),
             rng,
         }
     }
@@ -428,6 +431,7 @@ impl Scene for Tide {
         if columns == 0 || rows == 0 {
             return;
         }
+        self.cues.push(Cue::Tide);
         let waterlines = self.waterlines(columns, rows, self.time as f32);
         for (index, wetness) in self.wetness.iter_mut().enumerate() {
             let (x, row) = (index % columns, index / columns);
@@ -437,6 +441,10 @@ impl Scene for Tide {
                 wetness.saturating_sub(1)
             };
         }
+    }
+
+    fn drain_cues(&mut self, out: &mut Vec<Cue>) {
+        out.append(&mut self.cues);
     }
 
     fn set_progress(&mut self, progress: f64) -> bool {
