@@ -337,7 +337,8 @@ fn the_tide_swell_changes_how_loud_it_plays() {
     let bottom = tide_played(&mut Mixer::new(RATE), ticks(3.0), |_| 0.0);
 
     // Then:
-    let rise = decibels(&top[seconds(1.0)..]) - decibels(&bottom[seconds(1.0)..]);
+    let heard = seconds(1.0) * 2;
+    let rise = decibels(&top[heard..]) - decibels(&bottom[heard..]);
     assert!(rise >= 3.0, "{rise} dB");
 }
 
