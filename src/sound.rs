@@ -10,9 +10,9 @@ pub enum Cue {
     Typing,
     Fire,
     River,
-    /// How far the wave on screen has run up the sand, from 0 at the bottom
-    /// of a draw back to 1 at the top of the strongest run up.
     Tide {
+        /// How far the wave on screen has run up the sand, from 0 at the
+        /// bottom of a draw back to 1 at the top of the strongest run up.
         swell: f32,
     },
 }
@@ -24,15 +24,12 @@ const HOLD: f32 = 0.3;
 const FADE_IN: f32 = 0.1;
 const FADE_OUT: f32 = 0.4;
 
-/// Brings the tide down 14 dB to the level of the fire, because it was
-/// recorded close to the sand, and its cut copies the stream with no
-/// re-encode.
-const TIDE_GAIN: f32 = 0.2;
 /// The gains of the tide at the bottom of a draw back and at the top of the
-/// strongest run up. A wave's mean swell is about one half, so the tide
-/// stays near its level.
-const SWELL_QUIET: f32 = 0.5;
-const SWELL_LOUD: f32 = 1.25;
+/// strongest run up. The tide was recorded close to the sand, and its cut
+/// copies the stream with no re-encode, so these bring it down to the level
+/// of the fire. A wave's mean swell is about one half.
+const SWELL_QUIET: f32 = 0.1;
+const SWELL_LOUD: f32 = 0.25;
 /// Seconds over which the gain follows the swell, so its step on each tick
 /// is not heard.
 const SWELL_GLIDE: f32 = 0.1;
@@ -108,13 +105,6 @@ impl Recording {
             rate: decoded.sample_rate,
         }
     }
-
-    fn scaled(mut self, gain: f32) -> Self {
-        for frame in &mut self.frames {
-            *frame = frame.map(|sample| sample * gain);
-        }
-        self
-    }
 }
 
 fn typing() -> &'static Recording {
@@ -134,7 +124,7 @@ fn river() -> &'static Recording {
 
 fn tide() -> &'static Recording {
     static TIDE: OnceLock<Recording> = OnceLock::new();
-    TIDE.get_or_init(|| Recording::decode(include_bytes!("../sounds/tide.mp3")).scaled(TIDE_GAIN))
+    TIDE.get_or_init(|| Recording::decode(include_bytes!("../sounds/tide.mp3")))
 }
 
 /// A recording that loops while its cue keeps coming, and fades out when
