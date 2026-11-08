@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use hearth::clock::Clock;
 use hearth::octant::{CELL_HEIGHT, CELL_WIDTH};
-use hearth::scene::{Rng, Scene, TICK_RATE};
+use hearth::scene::{Control, Rng, Scene, TICK_RATE};
 use hearth::scenes::hourglass::{Hourglass, Lengths};
 use hearth::theme::{self, Palette};
 use rand::SeedableRng;
@@ -531,21 +531,21 @@ fn the_lengths_set_how_long_each_phase_runs() {
 /// When: the clock reads the start, half a second and a second and a half
 /// into the first work round, halfway through the first break, and the
 /// start of the long break.
-/// Then: the time left reads "work 1/4, 25:00 left" twice, "work 1/4,
-/// 24:59 left", "break 1/4, 2:30 left" and "long break, 15:00 left".
+/// Then: the time left reads "work 1/4 · 25:00 left" twice, "work 1/4 ·
+/// 24:59 left", "break 1/4 · 2:30 left" and "long break · 15:00 left".
 ///
-/// Why it matters: `+` and `-` show this on the hourglass, and a count
-/// that rounds down shows a second less than is left.
+/// Why it matters: the line above the glass shows this, and a count that
+/// rounds down shows a second less than is left.
 #[test]
 fn the_time_left_names_the_phase_and_the_round() {
     // Given:
     let (mut scene, now) = hourglass(7);
     let checks = [
-        (Duration::ZERO, "work 1/4, 25:00 left"),
-        (Duration::from_millis(500), "work 1/4, 25:00 left"),
-        (Duration::from_millis(1_500), "work 1/4, 24:59 left"),
-        (WORK + BREAK / 2, "break 1/4, 2:30 left"),
-        (WORK * 4 + BREAK * 3, "long break, 15:00 left"),
+        (Duration::ZERO, "work 1/4 · 25:00 left"),
+        (Duration::from_millis(500), "work 1/4 · 25:00 left"),
+        (Duration::from_millis(1_500), "work 1/4 · 24:59 left"),
+        (WORK + BREAK / 2, "break 1/4 · 2:30 left"),
+        (WORK * 4 + BREAK * 3, "long break · 15:00 left"),
     ];
 
     for (at, expected) in checks {
@@ -664,50 +664,65 @@ fn text_of(buffer: &Buffer, area: Rect, row: u16) -> String {
         .collect()
 }
 
-/// A hint under the glass names the keys.
+fn plate_of(buffer: &Buffer, area: Rect, mut rows: impl Iterator<Item = u16>, plate: char) -> u16 {
+    rows.find(|&row| text_of(buffer, area, row).contains(plate))
+        .unwrap_or_else(|| panic!("no plate {plate:?}"))
+}
+
+fn frame_middle(buffer: &Buffer, area: Rect, row: u16, plate: &str) -> f32 {
+    let frame: Vec<u16> = (0..area.width)
+        .filter(|&column| buffer[(area.x + column, area.y + row)].symbol() == plate)
+        .collect();
+    f32::from(frame[0] + frame[frame.len() - 1]) / 2.0
+}
+
+fn text_middle(text: &str) -> f32 {
+    let first = text.len() - text.trim_start().len();
+    let last = text.trim_end().chars().count() - 1;
+    (first + last) as f32 / 2.0
+}
+
+fn words_of(buffer: &Buffer, area: Rect, row: u16) -> String {
+    text_of(buffer, area, row)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The keys under the glass name each control, and a narrow pane drops
+/// keys from the end until the line fits.
 /// Given: a glass at a hundred by thirty, then the same glass on a pane
-/// thirty cells wide.
+/// twenty cells wide.
 /// When: each ticks and renders.
-/// Then: on the wide pane a row under the frame's lower plate reads "r
-/// start the cycle again" and "+ time left", centred under the frame to
-/// within two cells. The narrow pane has no room for the hint, so no row
-/// holds it, and the frame still stands.
+/// Then: on the wide pane the row under the frame's lower plate reads
+/// "space pause" and "r restart", in that order, centred under the frame to
+/// within two cells. The narrow pane keeps "space pause" and drops "r
+/// restart", and the frame still stands.
 ///
-/// Why it matters: `r` starts the cycle again and `+` shows the time left
-/// on the hourglass, and with nothing on screen to say so a user cannot
-/// find either.
+/// Why it matters: with nothing on screen to name the keys, a user cannot
+/// find them, and a line wider than its pane is cut through a word.
 #[test]
-fn a_hint_under_the_glass_names_the_keys() {
+fn the_keys_under_the_glass_name_each_control() {
     // Given:
     let (mut scene, _) = hourglass(7);
-    let narrow = Rect::new(0, 0, 30, 30);
+    let narrow = Rect::new(0, 0, 20, 30);
 
     // When:
     scene.tick(AREA);
     let wide = render(&scene, AREA, AREA);
 
     // Then:
-    let plate = (0..AREA.height)
-        .rev()
-        .find(|&row| text_of(&wide, AREA, row).contains('\u{2580}'))
-        .expect("no lower plate");
-    let frame: Vec<u16> = (0..AREA.width)
-        .filter(|&column| wide[(column, plate)].symbol() == "\u{2580}")
-        .collect();
-    let middle = f32::from(frame[0] + frame[frame.len() - 1]) / 2.0;
-    let hint = (plate + 1..AREA.height)
-        .find(|&row| text_of(&wide, AREA, row).contains("time left"))
-        .unwrap_or_else(|| panic!("no hint under the plate at row {plate}"));
-    let text = text_of(&wide, AREA, hint);
+    let plate = plate_of(&wide, AREA, (0..AREA.height).rev(), '\u{2580}');
+    let middle = frame_middle(&wide, AREA, plate, "\u{2580}");
+    let text = text_of(&wide, AREA, plate + 1);
+    let words = words_of(&wide, AREA, plate + 1);
+    let pause = words.find("space pause").expect(&words);
+    let restart = words.find("r restart").expect(&words);
+    assert!(pause < restart, "the keys read {words:?}");
     assert!(
-        text.contains("r start the cycle again") && text.contains("+ time left"),
-        "the hint reads {text:?}"
-    );
-    let first = text.find('r').unwrap() as f32;
-    let last = (text.trim_end().chars().count() - 1) as f32;
-    assert!(
-        ((first + last) / 2.0 - middle).abs() <= 2.0,
-        "the hint spans {first} to {last}, the frame is centred on {middle}"
+        (text_middle(&text) - middle).abs() <= 2.0,
+        "the keys are centred on {}, the frame on {middle}",
+        text_middle(&text)
     );
 
     // When:
@@ -715,11 +730,111 @@ fn a_hint_under_the_glass_names_the_keys() {
     let small = render(&scene, narrow, narrow);
 
     // Then:
-    assert!(
-        (0..narrow.height).all(|row| !text_of(&small, narrow, row).contains("time")),
-        "a hint on a pane too narrow for it"
-    );
+    let plate = plate_of(&small, narrow, (0..narrow.height).rev(), '\u{2580}');
+    let words = words_of(&small, narrow, plate + 1);
+    assert_eq!(words, "space pause", "the keys on a narrow pane");
     assert_eq!(colour_of(&small, narrow, "\u{2503}"), FRAME);
+}
+
+/// The line above the glass names the phase and the time left, and says
+/// when the timer is paused.
+/// Given: a glass at a hundred by thirty a minute and a half into the
+/// first work round, then the same glass on a pane twenty cells wide.
+/// When: each renders, running and then paused.
+/// Then: on the wide pane the row over the frame's upper plate reads "work
+/// 1/4 · 23:30 left", centred over the frame to within two cells, and
+/// paused it reads "work 1/4 · 23:30 left · paused". The narrow pane has no
+/// room for the phase, so it reads "23:30", and paused "23:30 · paused".
+///
+/// Why it matters: a timer that hides its time left until a key is
+/// pressed, or that does not say it stopped, sends a user to work or to a
+/// break at the wrong time.
+#[test]
+fn the_line_above_the_glass_names_the_phase_and_the_time_left() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    let narrow = Rect::new(0, 0, 20, 30);
+    run(&mut scene, &now, Duration::from_secs(90), AREA);
+
+    for (area, running, paused) in [
+        (
+            AREA,
+            "work 1/4 · 23:30 left",
+            "work 1/4 · 23:30 left · paused",
+        ),
+        (narrow, "23:30", "23:30 · paused"),
+    ] {
+        // When:
+        scene.tick(area);
+        let shown = render(&scene, area, area);
+
+        // Then:
+        let plate = plate_of(&shown, area, 0..area.height, '\u{2584}');
+        assert_eq!(text_of(&shown, area, plate - 1).trim(), running);
+        let middle = frame_middle(&shown, area, plate, "\u{2584}");
+        let text = text_of(&shown, area, plate - 1);
+        assert!(
+            (text_middle(&text) - middle).abs() <= 2.0,
+            "the line is centred on {}, the frame on {middle}",
+            text_middle(&text)
+        );
+
+        // When:
+        scene.control(Control::Pause);
+        let shown = render(&scene, area, area);
+
+        // Then:
+        assert_eq!(text_of(&shown, area, plate - 1).trim(), paused);
+        scene.control(Control::Pause);
+    }
+}
+
+/// A pause holds the time left and the sand, and a resume goes on from
+/// there.
+/// Given: a glass a quarter through the first work round, with grains
+/// still falling through the neck.
+/// When: the timer pauses and the clock runs on five minutes, then it
+/// resumes and the clock runs on one minute more.
+/// Then: paused, the time left and every cell of the glass stay as they
+/// were, the falling grains too. Resumed, the time left is one minute less
+/// than at the pause, and the sand moves on.
+///
+/// Why it matters: a pause that lets the time run on, or that drops the
+/// sand to where the clock would have it, loses the user's place in the
+/// round.
+#[test]
+fn a_pause_holds_the_time_and_the_sand() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    run(&mut scene, &now, WORK / 4, AREA);
+    let before = render(&scene, AREA, AREA);
+    let left = scene.time_left();
+
+    // When:
+    scene.control(Control::Pause);
+    run(&mut scene, &now, WORK / 4 + Duration::from_secs(300), AREA);
+
+    // Then:
+    assert_eq!(
+        scene.time_left().map(|text| text.replace(" · paused", "")),
+        left
+    );
+    let held = render(&scene, AREA, AREA);
+    let status = plate_of(&before, AREA, 0..AREA.height, '\u{2584}') - 1;
+    let changed = AREA
+        .positions()
+        .filter(|position| position.y != status)
+        .filter(|position| held[*position] != before[*position])
+        .count();
+    assert_eq!(changed, 0, "cells of the glass changed while paused");
+
+    // When:
+    scene.control(Control::Pause);
+    run(&mut scene, &now, WORK / 4 + Duration::from_secs(360), AREA);
+
+    // Then:
+    assert_eq!(scene.time_left().as_deref(), Some("work 1/4 · 17:45 left"));
+    assert_ne!(sand(&render(&scene, AREA, AREA), AREA), sand(&before, AREA));
 }
 
 fn outline(buffer: &Buffer, area: Rect) -> Vec<(usize, usize)> {

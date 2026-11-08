@@ -505,3 +505,38 @@ fn a_chord_does_not_type_into_a_search() {
     );
     assert!(list_rows(&app).iter().any(|row| row.contains("/rai")));
 }
+
+fn shows_text(app: &App, text: &str) -> bool {
+    let shown = app_frame(app, WIDE);
+    (0..WIDE.height).any(|y| {
+        let row: String = (0..WIDE.width).map(|x| shown[(x, y)].symbol()).collect();
+        row.contains(text)
+    })
+}
+
+/// Space pauses the hourglass and space again resumes it.
+/// Given: hearth on the hourglass, after one tick.
+/// When: space is pressed, then pressed again.
+/// Then: the screen says the timer is paused, then no longer says so.
+///
+/// Why it matters: space is the one way to stop the timer for an
+/// interruption without losing the round.
+#[test]
+fn space_pauses_and_resumes_the_hourglass() {
+    // Given:
+    let mut app = App::new(SceneKind::Hourglass, 7, corpus());
+    app.tick(WIDE);
+    assert!(!shows_text(&app, "paused"));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char(' '))]);
+
+    // Then:
+    assert!(shows_text(&app, "paused"));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char(' '))]);
+
+    // Then:
+    assert!(!shows_text(&app, "paused"));
+}

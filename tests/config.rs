@@ -636,7 +636,7 @@ fn plus_and_minus_on_the_hourglass_show_the_time_left() {
 
         // Then:
         assert!(
-            header(&app).contains("work 1/4, 25:00 left"),
+            header(&app).contains("work 1/4 · 25:00 left"),
             "{}",
             header(&app)
         );
