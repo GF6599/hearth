@@ -165,8 +165,6 @@ impl App {
         palette(self.theme, self.background)
     }
 
-    /// Every pane starts its scene again in the theme's colours, because
-    /// some scenes keep the colour of each cell they drew.
     fn repaint(&mut self) {
         let palette = self.palette();
         for pane in self.panes.iter_mut() {

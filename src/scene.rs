@@ -197,6 +197,13 @@ pub trait Scene {
     fn control(&mut self, _control: Control) -> bool {
         false
     }
+
+    /// Moves the scene to new colours in place, and returns whether it did.
+    /// A scene that keeps the colour of each cell it drew returns false,
+    /// and the pane builds it again, which also starts it again.
+    fn repaint(&mut self, _palette: &'static Palette) -> bool {
+        false
+    }
 }
 
 /// A key that controls the timer of a scene that keeps real time.

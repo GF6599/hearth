@@ -285,6 +285,13 @@ fn sand_shades(palette: &Palette, sand: Color, shadow: Color) -> Vec<Color> {
         .collect()
 }
 
+fn shades_of(palette: &Palette, colours: Colours) -> [Vec<Color>; 2] {
+    [
+        sand_shades(palette, colours.work, colours.work_shadow),
+        sand_shades(palette, colours.rest, colours.rest_shadow),
+    ]
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Colours {
     frame: Color,
@@ -432,10 +439,7 @@ impl Hourglass {
             top: 0,
             moving: BTreeSet::new(),
             outline: Vec::new(),
-            shades: [
-                sand_shades(palette, colours.work, colours.work_shadow),
-                sand_shades(palette, colours.rest, colours.rest_shadow),
-            ],
+            shades: shades_of(palette, colours),
         }
     }
 
@@ -967,6 +971,16 @@ impl Scene for Hourglass {
                 ..phase
             }),
             Control::Next => self.start(phase.next(elapsed, self.lengths)),
+        }
+        true
+    }
+
+    fn repaint(&mut self, palette: &'static Palette) -> bool {
+        self.palette = palette;
+        self.colours = Colours::of(palette);
+        self.shades = shades_of(palette, self.colours);
+        if let Some(glass) = self.glass {
+            self.outline = self.draw_outline(glass);
         }
         true
     }

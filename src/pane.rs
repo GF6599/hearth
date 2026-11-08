@@ -360,7 +360,9 @@ impl Pane {
     ) {
         self.palette = palette;
         self.background = background;
-        self.rebuild(corpus, speed, settings);
+        if !self.scene.repaint(palette) {
+            self.rebuild(corpus, speed, settings);
+        }
     }
 
     pub fn rebuild(&mut self, corpus: &Arc<Corpus>, speed: Speed, settings: Settings) {
