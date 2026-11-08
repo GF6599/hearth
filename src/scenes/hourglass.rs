@@ -83,10 +83,11 @@ const MARKS: i32 = 2;
 /// The timer's keys, most needed first, because a narrow pane drops them
 /// from the end. `r` builds the scene again on a new clock, so the cycle
 /// starts again at the first work round.
-const HINT: [(&str, &str); 4] = [
+const HINT: [(&str, &str); 5] = [
     ("space", " pause"),
     ("n", " next"),
     ("+/-", " 1 min"),
+    ("e", " lengths"),
     ("r", " restart"),
 ];
 const MINUTE: Duration = Duration::from_secs(60);
@@ -939,6 +940,10 @@ impl Scene for Hourglass {
         }
         self.release(glass);
         self.fall(glass);
+    }
+
+    fn set_lengths(&mut self, lengths: Lengths) {
+        self.lengths = lengths;
     }
 
     fn control(&mut self, control: Control) -> bool {

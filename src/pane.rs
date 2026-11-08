@@ -7,6 +7,7 @@ use ratatui::style::Style;
 use crate::config::Background;
 use crate::corpus::Corpus;
 use crate::scene::{Control, FRAMES_PER_TICK, QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
+use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::Speed;
 use crate::sound::Cue;
 use crate::theme::{self, Palette};
@@ -376,6 +377,10 @@ impl Pane {
 
     pub fn control(&mut self, control: Control) -> bool {
         self.scene.control(control)
+    }
+
+    pub fn set_lengths(&mut self, lengths: Lengths) {
+        self.scene.set_lengths(lengths);
     }
 
     pub fn set_speed(&mut self, speed: Speed) {

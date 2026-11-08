@@ -91,6 +91,17 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('/') => app.start_search(),
             _ => {}
         }
+    } else if app.is_setting_lengths() {
+        match key.code {
+            KeyCode::Char('q') => app.quit(),
+            KeyCode::Char('j') | KeyCode::Down => app.next_length(),
+            KeyCode::Char('k') | KeyCode::Up => app.previous_length(),
+            KeyCode::Char('+') => app.lengthen(),
+            KeyCode::Char('-') => app.shorten(),
+            KeyCode::Enter => app.save_lengths(),
+            KeyCode::Esc => app.cancel_lengths(),
+            _ => {}
+        }
     } else {
         match key.code {
             KeyCode::Char('q') => app.quit(),
@@ -113,6 +124,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(']') => app.louder(),
             KeyCode::Char(' ') => app.pause(),
             KeyCode::Char('n') => app.next_phase(),
+            KeyCode::Char('e') => app.edit_lengths(),
             _ => {}
         }
     }

@@ -246,6 +246,25 @@ pub fn save_volume(path: &Path, volume: Volume) -> io::Result<()> {
     replace(path, &document.to_string())
 }
 
+/// Sets the three hourglass lengths in whole minutes, the same way.
+pub fn save_lengths(path: &Path, lengths: Lengths) -> io::Result<()> {
+    let mut document = read_document(path)?;
+    let table = document
+        .entry("hourglass")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "hourglass is not a table"))?;
+    for (key, length) in [
+        ("work", lengths.work),
+        ("break", lengths.r#break),
+        ("long_break", lengths.long_break),
+    ] {
+        let minutes = i64::try_from(length.as_secs() / 60).unwrap_or(i64::MAX);
+        set_in_place(table, key, Value::from(minutes));
+    }
+    replace(path, &document.to_string())
+}
+
 fn read_document(path: &Path) -> io::Result<DocumentMut> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,

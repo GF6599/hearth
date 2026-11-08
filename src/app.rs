@@ -8,6 +8,7 @@ use ratatui::widgets::Widget;
 
 use crate::config::{self, Background, Config};
 use crate::corpus::Corpus;
+use crate::lengths::LengthsEditor;
 use crate::octant;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
@@ -58,6 +59,8 @@ pub struct App {
     /// scene.
     query: Option<String>,
     frames: u32,
+    /// The hourglass lengths the user sets, while the box is open.
+    lengths: Option<LengthsEditor>,
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
     fresh: bool,
@@ -141,6 +144,7 @@ impl App {
             picker_top: 0,
             query: None,
             frames: 0,
+            lengths: None,
             fresh: false,
             redraw: true,
             area: Rect::default(),
@@ -393,6 +397,9 @@ impl App {
         if picking.is_none() && self.notice > 0 {
             self.render_notice(focused, buf);
         }
+        if let Some(editor) = &self.lengths {
+            editor.render(focused, self.palette(), buf);
+        }
         if self.background == Background::Terminal {
             self.clear_background(area, buf);
         }
@@ -453,6 +460,58 @@ impl App {
 
     pub fn next_phase(&mut self) {
         self.panes.focused_mut().control(Control::Next);
+    }
+
+    /// Opens the lengths box on the hourglass. Other scenes have no
+    /// lengths.
+    pub fn edit_lengths(&mut self) {
+        if self.panes.focused().kind == SceneKind::Hourglass {
+            self.lengths = Some(LengthsEditor::new(self.settings.lengths));
+        }
+    }
+
+    pub fn is_setting_lengths(&self) -> bool {
+        self.lengths.is_some()
+    }
+
+    pub fn next_length(&mut self) {
+        self.lengths.as_mut().map(LengthsEditor::next);
+    }
+
+    pub fn previous_length(&mut self) {
+        self.lengths.as_mut().map(LengthsEditor::previous);
+    }
+
+    pub fn lengthen(&mut self) {
+        self.lengths.as_mut().map(LengthsEditor::longer);
+    }
+
+    pub fn shorten(&mut self) {
+        self.lengths.as_mut().map(LengthsEditor::shorter);
+    }
+
+    pub fn cancel_lengths(&mut self) {
+        self.lengths = None;
+    }
+
+    /// Every hourglass takes the new lengths from its next phase, and so
+    /// does each one built later.
+    pub fn save_lengths(&mut self) {
+        let Some(editor) = self.lengths.take() else {
+            return;
+        };
+        let lengths = editor.lengths();
+        self.settings.lengths = lengths;
+        for pane in self.panes.iter_mut() {
+            pane.set_lengths(lengths);
+        }
+        let saved = match &self.saving {
+            Some(path) => config::save_lengths(path, lengths),
+            None => Ok(()),
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = format!("lengths {lengths}");
+        self.notice = NOTICE_FRAMES;
     }
 
     pub fn faster(&mut self) {

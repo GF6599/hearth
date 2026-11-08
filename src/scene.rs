@@ -188,6 +188,10 @@ pub trait Scene {
     /// keeps its cues until then, so a frame that ticks twice loses none.
     fn drain_cues(&mut self, _out: &mut Vec<Cue>) {}
 
+    /// Only the hourglass has lengths. It runs the phase it is in to its
+    /// end, and each phase after that at its new length.
+    fn set_lengths(&mut self, _lengths: Lengths) {}
+
     /// Takes a timer control, and returns whether the scene has a timer
     /// that took it. The others ignore it.
     fn control(&mut self, _control: Control) -> bool {
