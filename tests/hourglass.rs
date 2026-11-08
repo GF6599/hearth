@@ -1264,3 +1264,33 @@ fn minus_with_under_a_minute_left_goes_to_the_next_phase() {
         (top + bottom, 0)
     );
 }
+
+/// `-` just after a phase ended, before the glass turned, still turns it.
+/// Given: a glass one second before the end of the first work round, its
+/// sand in the bottom, and then the clock ten seconds past the end with no
+/// tick between.
+/// When: the timer takes a minute less, and the glass ticks.
+/// Then: the line reads "break 1/4 · 3:50 left", and most of the sand is in
+/// the top in the break colour.
+///
+/// Why it matters: a key pressed between the end of a phase and the next
+/// tick would run the new phase with the old phase's sand in the bottom, so
+/// the glass shows no time left.
+#[test]
+fn minus_between_a_phase_end_and_the_next_tick_turns_the_glass() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    run(&mut scene, &now, WORK - Duration::from_secs(1), AREA);
+    let (top, bottom) = sand(&render(&scene, AREA, AREA), AREA);
+    let total = top + bottom;
+    now.set(WORK + Duration::from_secs(10));
+
+    // When:
+    scene.control(Control::Shorter);
+    scene.tick(AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "break 1/4 · 3:50 left");
+    let (top, _) = sand_in(&render(&scene, AREA, AREA), AREA, BREAK_SAND);
+    assert!(top > total * 9 / 10, "{top} of {total} in the top");
+}
