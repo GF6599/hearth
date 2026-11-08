@@ -699,3 +699,138 @@ fn a_stale_temp_file_does_not_block_a_save() {
     assert!(text.contains("volume = 40"), "{text}");
     assert!(text.contains("theme = \"dracula\""), "{text}");
 }
+
+fn rows_of(app: &App, area: Rect) -> Vec<String> {
+    let mut buffer = Buffer::empty(area);
+    app.render(area, &mut buffer);
+    (0..area.height)
+        .map(|y| {
+            let row: String = (0..area.width).map(|x| buffer[(x, y)].symbol()).collect();
+            row.split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+        .collect()
+}
+
+fn shows(app: &App, area: Rect, text: &str) -> bool {
+    rows_of(app, area).iter().any(|row| row.contains(text))
+}
+
+/// The lengths editor saves all three lengths, keeps the file's comments,
+/// and the next phase and the next start take them.
+/// Given: hearth on the hourglass, saving to a file whose `[hourglass]`
+/// table sets work to 25 with comments around it.
+/// When: `e` opens the editor, work goes up a minute, the break up two and
+/// the long break down one, and Enter saves.
+/// Then: the editor first marks work at 25 min. After the save it is gone,
+/// the file keeps its comments and reads back 26/7/14 min, the running
+/// round still has 25:00 left, and the editor opens again on work at 26
+/// min. The next phase is a break of 7:00, and hearth started again from
+/// the file runs a work round of 26:00.
+///
+/// Why it matters: a length set in the editor that the file loses, or that
+/// the next round does not take, is a preference the user set for nothing.
+#[test]
+fn the_editor_saves_the_lengths_and_keeps_the_comments() {
+    // Given:
+    let text = "# my settings\n[hourglass]\n# rounds\nwork = 25 # focus\n";
+    let path = config_file("lengths-editor", Some(text));
+    let config = Config::load(&path).unwrap();
+    let mut app = app(&["hearth", "hourglass"], &config).saving_to(path.clone());
+    let area = Rect::new(0, 0, 100, 30);
+    app.tick(area);
+
+    // When:
+    app.edit_lengths();
+
+    // Then:
+    assert!(
+        shows(&app, area, "› work 25 min"),
+        "{:#?}",
+        rows_of(&app, area)
+    );
+
+    // When:
+    app.lengthen();
+    app.next_length();
+    app.lengthen();
+    app.lengthen();
+    app.next_length();
+    app.shorten();
+    app.save_lengths();
+    app.tick(area);
+
+    // Then:
+    assert!(!shows(&app, area, "› "), "{:#?}", rows_of(&app, area));
+    let saved = fs::read_to_string(&path).unwrap();
+    for kept in ["# my settings", "# rounds", "work = 26 # focus"] {
+        assert!(saved.contains(kept), "no {kept:?} in {saved:?}");
+    }
+    let reloaded = Config::load(&path).unwrap();
+    assert_eq!(reloaded.hourglass.to_string(), "26/7/14 min");
+    assert!(shows(&app, area, "work 1/4 · 25:00 left"));
+
+    // When:
+    app.edit_lengths();
+
+    // Then:
+    assert!(
+        shows(&app, area, "› work 26 min"),
+        "{:#?}",
+        rows_of(&app, area)
+    );
+
+    // When:
+    app.cancel_lengths();
+    app.next_phase();
+    app.tick(area);
+
+    // Then:
+    assert!(shows(&app, area, "break 1/4 · 7:00 left"));
+
+    // When:
+    let mut again = self::app(&["hearth", "hourglass"], &reloaded);
+    again.tick(area);
+
+    // Then:
+    assert!(shows(&again, area, "work 1/4 · 26:00 left"));
+}
+
+/// Esc leaves the lengths editor and saves nothing.
+/// Given: hearth on the hourglass, saving to a file that holds a comment.
+/// When: `e` opens the editor, work goes up a minute, and Esc leaves it,
+/// then `e` opens it again.
+/// Then: after Esc the editor is gone, the picker is not open, and the file
+/// is as it was. The editor opens again on work at 25 min.
+///
+/// Why it matters: a change the user backed out of that still reaches the
+/// file, or the next open, sets a length they did not choose.
+#[test]
+fn esc_leaves_the_editor_and_saves_nothing() {
+    // Given:
+    let text = "# my settings\n";
+    let path = config_file("lengths-cancel", Some(text));
+    let config = Config::load(&path).unwrap();
+    let mut app = app(&["hearth", "hourglass"], &config).saving_to(path.clone());
+    let area = Rect::new(0, 0, 100, 30);
+    app.tick(area);
+
+    // When:
+    app.edit_lengths();
+    app.lengthen();
+    app.cancel_lengths();
+
+    // Then:
+    assert!(!shows(&app, area, "› "), "{:#?}", rows_of(&app, area));
+    assert!(!app.is_picking());
+    assert_eq!(fs::read_to_string(&path).unwrap(), text);
+
+    // When:
+    app.edit_lengths();
+
+    // Then:
+    assert!(
+        shows(&app, area, "› work 25 min"),
+        "{:#?}",
+        rows_of(&app, area)
+    );
+}

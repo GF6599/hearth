@@ -702,9 +702,9 @@ fn words_of(buffer: &Buffer, area: Rect, row: u16) -> String {
 /// twenty cells wide.
 /// When: each ticks and renders.
 /// Then: on the wide pane the row under the frame's lower plate reads
-/// "space pause", "n next", "+/- 1 min" and "r restart", in that order,
-/// centred under the frame to within two cells. The narrow pane keeps
-/// "space pause" and drops the rest, and the frame still stands.
+/// "space pause", "n next", "+/- 1 min", "e lengths" and "r restart", in
+/// that order, centred under the frame to within two cells. The narrow pane
+/// keeps "space pause" and drops the rest, and the frame still stands.
 ///
 /// Why it matters: with nothing on screen to name the keys, a user cannot
 /// find them, and a line wider than its pane is cut through a word.
@@ -723,14 +723,20 @@ fn the_keys_under_the_glass_name_each_control() {
     let middle = frame_middle(&wide, AREA, plate, "\u{2580}");
     let text = text_of(&wide, AREA, plate + 1);
     let words = words_of(&wide, AREA, plate + 1);
-    let places: Vec<usize> = ["space pause", "n next", "+/- 1 min", "r restart"]
-        .iter()
-        .map(|key| {
-            words
-                .find(key)
-                .unwrap_or_else(|| panic!("no {key} in {words:?}"))
-        })
-        .collect();
+    let places: Vec<usize> = [
+        "space pause",
+        "n next",
+        "+/- 1 min",
+        "e lengths",
+        "r restart",
+    ]
+    .iter()
+    .map(|key| {
+        words
+            .find(key)
+            .unwrap_or_else(|| panic!("no {key} in {words:?}"))
+    })
+    .collect();
     assert!(places.is_sorted(), "the keys read {words:?}");
     assert!(
         (text_middle(&text) - middle).abs() <= 2.0,

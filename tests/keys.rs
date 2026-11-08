@@ -568,3 +568,89 @@ fn n_plus_and_minus_control_the_hourglass() {
         assert!(shows_text(&app, expected), "after {press}: {expected}");
     }
 }
+
+const HOURGLASS: Rect = Rect::new(0, 0, 100, 30);
+
+fn shows_words(app: &App, text: &str) -> bool {
+    let shown = app_frame(app, HOURGLASS);
+    (0..HOURGLASS.height).any(|y| {
+        let row: String = (0..HOURGLASS.width)
+            .map(|x| shown[(x, y)].symbol())
+            .collect();
+        row.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains(text)
+    })
+}
+
+/// In the lengths editor, `j` and `k` pick a length, and `+` and `-` keep
+/// it in its range.
+/// Given: hearth on the hourglass with the editor open.
+/// When: `j` picks the break and `-` is pressed ten times, then `k` picks
+/// work and `+` is pressed two hundred times, then Esc is pressed.
+/// Then: the break stops at 1 min and work at 180 min, and Esc closes the
+/// editor.
+///
+/// Why it matters: a length outside 1 to 180 minutes is one the next start
+/// refuses, so the editor must not save it.
+#[test]
+fn the_editor_keys_pick_a_length_and_keep_it_in_range() {
+    // Given:
+    let mut app = App::new(SceneKind::Hourglass, 7, corpus());
+    app.tick(HOURGLASS);
+    send(&mut app, vec![key(KeyCode::Char('e'))]);
+
+    // When:
+    let mut keys = vec![key(KeyCode::Char('j'))];
+    keys.extend((0..10).map(|_| key(KeyCode::Char('-'))));
+    send(&mut app, keys);
+
+    // Then:
+    assert!(shows_words(&app, "› break 1 min"));
+
+    // When:
+    let mut keys = vec![key(KeyCode::Char('k'))];
+    keys.extend((0..200).map(|_| key(KeyCode::Char('+'))));
+    send(&mut app, keys);
+
+    // Then:
+    assert!(shows_words(&app, "› work 180 min"));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Esc)]);
+
+    // Then:
+    assert!(!shows_words(&app, "› "));
+}
+
+/// `e` opens the lengths editor on the hourglass only, and Enter closes it.
+/// Given: hearth on fire, and hearth on the hourglass.
+/// When: `e` is pressed on each, then Enter on the hourglass.
+/// Then: fire shows no editor. The hourglass shows the editor with work at
+/// 25 min, and after Enter it is gone.
+///
+/// Why it matters: an editor over a scene with no lengths would set
+/// nothing, and an editor that Enter does not close traps the keys.
+#[test]
+fn e_opens_the_lengths_editor_on_the_hourglass_only() {
+    // Given:
+    let mut fire = App::new(SceneKind::Fire, 7, corpus());
+    let mut hourglass = App::new(SceneKind::Hourglass, 7, corpus());
+    fire.tick(HOURGLASS);
+    hourglass.tick(HOURGLASS);
+
+    // When:
+    send(&mut fire, vec![key(KeyCode::Char('e'))]);
+    send(&mut hourglass, vec![key(KeyCode::Char('e'))]);
+
+    // Then:
+    assert!(!shows_words(&fire, "› work"));
+    assert!(shows_words(&hourglass, "› work 25 min"));
+
+    // When:
+    send(&mut hourglass, vec![key(KeyCode::Enter)]);
+
+    // Then:
+    assert!(!shows_words(&hourglass, "› "));
+}
