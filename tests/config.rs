@@ -722,10 +722,10 @@ fn shows(app: &App, area: Rect, text: &str) -> bool {
 /// When: `e` opens the editor, work goes up a minute, the break up two and
 /// the long break down one, and Enter saves.
 /// Then: the editor first marks work at 25 min. After the save it is gone,
-/// the file keeps its comments and reads back 26/7/14 min, the running
-/// round still has 25:00 left, and the editor opens again on work at 26
-/// min. The next phase is a break of 7:00, and hearth started again from
-/// the file runs a work round of 26:00.
+/// the notice reads "lengths 26/7/14 min", the file keeps its comments and
+/// reads back 26/7/14 min, the running round still has 25:00 left, and the
+/// editor opens again on work at 26 min. The next phase is a break of 7:00,
+/// and hearth started again from the file runs a work round of 26:00.
 ///
 /// Why it matters: a length set in the editor that the file loses, or that
 /// the next round does not take, is a preference the user set for nothing.
@@ -761,6 +761,7 @@ fn the_editor_saves_the_lengths_and_keeps_the_comments() {
 
     // Then:
     assert!(!shows(&app, area, "› "), "{:#?}", rows_of(&app, area));
+    assert!(shows(&app, area, "lengths 26/7/14 min"));
     let saved = fs::read_to_string(&path).unwrap();
     for kept in ["# my settings", "# rounds", "work = 26 # focus"] {
         assert!(saved.contains(kept), "no {kept:?} in {saved:?}");
