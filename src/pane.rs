@@ -374,10 +374,6 @@ impl Pane {
         );
     }
 
-    pub fn time_left(&self) -> Option<String> {
-        self.scene.time_left()
-    }
-
     pub fn control(&mut self, control: Control) -> bool {
         self.scene.control(control)
     }

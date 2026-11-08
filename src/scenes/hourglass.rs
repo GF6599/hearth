@@ -83,7 +83,13 @@ const MARKS: i32 = 2;
 /// The timer's keys, most needed first, because a narrow pane drops them
 /// from the end. `r` builds the scene again on a new clock, so the cycle
 /// starts again at the first work round.
-const HINT: [(&str, &str); 2] = [("space", " pause"), ("r", " restart")];
+const HINT: [(&str, &str); 4] = [
+    ("space", " pause"),
+    ("n", " next"),
+    ("+/-", " 1 min"),
+    ("r", " restart"),
+];
+const MINUTE: Duration = Duration::from_secs(60);
 const HINT_GAP: &str = "   ";
 const DOT: &str = " · ";
 const WIDTH: i32 = CELL_WIDTH as i32;
@@ -320,6 +326,8 @@ enum Kind {
 #[derive(Debug, Clone, Copy)]
 struct Phase {
     kind: Kind,
+    /// The place of the phase in the cycle, from 0 for the first work round.
+    place: u32,
     start: Duration,
     length: Duration,
     /// The work rounds finished in the cycle.
@@ -327,43 +335,35 @@ struct Phase {
 }
 
 impl Phase {
-    /// The phase running at `elapsed`. A cycle is a work round and a break
-    /// `ROUNDS` times, the long break after the last, and then it starts
-    /// again.
-    fn at(elapsed: Duration, lengths: Lengths) -> Phase {
-        let phases: Vec<(Kind, Duration, u32)> = (1..=ROUNDS)
-            .flat_map(|round| {
-                let rest = if round == ROUNDS {
-                    lengths.long_break
-                } else {
-                    lengths.r#break
-                };
-                [
-                    (Kind::Work, lengths.work, round - 1),
-                    (Kind::Break, rest, round),
-                ]
-            })
-            .collect();
-        let cycle: Duration = phases.iter().map(|(_, length, _)| *length).sum();
-        let cycles = u32::try_from(elapsed.as_nanos() / cycle.as_nanos()).unwrap_or(u32::MAX);
-        let mut start = cycle.saturating_mul(cycles);
-        for (kind, length, done) in phases {
-            if elapsed < start + length {
-                return Phase {
-                    kind,
-                    start,
-                    length,
-                    done,
-                };
-            }
-            start += length;
-        }
+    /// The phase at `place` in the cycle, from `start`. A cycle is a work
+    /// round and a break `ROUNDS` times, the long break after the last, and
+    /// then it starts again.
+    fn nth(place: u32, start: Duration, lengths: Lengths) -> Phase {
+        let place = place % (2 * ROUNDS);
+        let round = place / 2 + 1;
+        let (kind, length, done) = if place.is_multiple_of(2) {
+            (Kind::Work, lengths.work, round - 1)
+        } else if round == ROUNDS {
+            (Kind::Break, lengths.long_break, round)
+        } else {
+            (Kind::Break, lengths.r#break, round)
+        };
         Phase {
-            kind: Kind::Work,
+            kind,
+            place,
             start,
-            length: lengths.work,
-            done: 0,
+            length,
+            done,
         }
+    }
+
+    fn end(&self) -> Duration {
+        self.start + self.length
+    }
+
+    /// The phase after this one, from `start`, at its length in `lengths`.
+    fn next(&self, start: Duration, lengths: Lengths) -> Phase {
+        Self::nth(self.place + 1, start, lengths)
     }
 
     /// The share of the phase still to run at `elapsed`.
@@ -388,7 +388,8 @@ pub struct Hourglass {
     height: u16,
     glass: Option<Glass>,
     /// The phase the sand shows. The glass turns when the clock moves on
-    /// to the next.
+    /// to the next. `+` and `-` change its length, so the cycle follows
+    /// from it and not from the clock alone.
     phase: Phase,
     /// Whether each pixel of the pane holds a grain, row by row.
     sand: Vec<bool>,
@@ -423,7 +424,7 @@ impl Hourglass {
             width: 0,
             height: 0,
             glass: None,
-            phase: Phase::at(Duration::ZERO, lengths),
+            phase: Phase::nth(0, Duration::ZERO, lengths),
             sand: Vec::new(),
             inside: Vec::new(),
             total: 0,
@@ -443,6 +444,17 @@ impl Hourglass {
         self.paused_at
             .unwrap_or_else(|| self.clock.elapsed())
             .saturating_sub(self.stopped)
+    }
+
+    /// The phase that runs now: the one the sand shows, or one after it
+    /// when the timer has run past its end since the last tick.
+    fn running(&self) -> Phase {
+        let elapsed = self.elapsed();
+        let mut phase = self.phase;
+        while elapsed >= phase.end() {
+            phase = phase.next(phase.end(), self.lengths);
+        }
+        phase
     }
 
     /// The grains the top holds at this time: all of them at the start of
@@ -647,13 +659,11 @@ impl Hourglass {
             .flatten()
     }
 
-    /// Lays the glass out for the pane and pours the sand in again, with
-    /// the share in the top that the time left gives.
     fn lay_out(&mut self) {
         let pixels = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
         self.sand = vec![false; pixels];
         self.moving.clear();
-        self.phase = Phase::at(self.elapsed(), self.lengths);
+        self.phase = self.running();
         self.glass = Glass::fit(self.width, self.height);
         let Some(glass) = self.glass else {
             self.inside = Vec::new();
@@ -664,6 +674,14 @@ impl Hourglass {
         };
         self.fill_inside(glass);
         self.outline = self.draw_outline(glass);
+        self.pour(glass);
+    }
+
+    /// Pours the sand in again, with the share in the top that the time
+    /// left gives.
+    fn pour(&mut self, glass: Glass) {
+        self.sand.fill(false);
+        self.moving.clear();
         let top = self.room(glass, glass.neck - 1, glass.neck - glass.bulb);
         self.total = (top.len() as f32 * FILL) as usize;
         let due = self.due();
@@ -784,6 +802,15 @@ impl Hourglass {
         }
     }
 
+    /// Makes `phase` the running phase, and pours the sand for its time
+    /// left.
+    fn start(&mut self, phase: Phase) {
+        self.phase = phase;
+        if let Some(glass) = self.glass {
+            self.pour(glass);
+        }
+    }
+
     /// The first of `lines` that fits the pane with a cell to spare on
     /// each side, centred on the glass on `row`, or nothing when none fits.
     fn centred(
@@ -860,9 +887,8 @@ impl Hourglass {
     /// The phase with its round, such as "work 2/4", and the time left in
     /// it rounded up to the second, such as "18:32".
     fn phase_and_time(&self) -> (String, String) {
-        let elapsed = self.elapsed();
-        let phase = Phase::at(elapsed, self.lengths);
-        let left = (phase.start + phase.length).saturating_sub(elapsed);
+        let phase = self.running();
+        let left = phase.end().saturating_sub(self.elapsed());
         let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
         let name = match phase.kind {
             Kind::Work => format!("work {}/{ROUNDS}", phase.done + 1),
@@ -906,7 +932,7 @@ impl Scene for Hourglass {
         if self.paused_at.is_some() {
             return;
         }
-        let phase = Phase::at(self.elapsed(), self.lengths);
+        let phase = self.running();
         if phase.start != self.phase.start {
             self.phase = phase;
             self.turn(glass);
@@ -915,17 +941,29 @@ impl Scene for Hourglass {
         self.fall(glass);
     }
 
-    fn time_left(&self) -> Option<String> {
-        let [full, _] = self.statuses();
-        Some(full)
-    }
-
     fn control(&mut self, control: Control) -> bool {
+        let elapsed = self.elapsed();
+        let phase = self.running();
         match control {
             Control::Pause => match self.paused_at.take() {
                 Some(at) => self.stopped += self.clock.elapsed().saturating_sub(at),
                 None => self.paused_at = Some(self.clock.elapsed()),
             },
+            Control::Longer => self.start(Phase {
+                length: phase.length + MINUTE,
+                ..phase
+            }),
+            // With a minute or less left, a minute less ends the phase.
+            Control::Shorter if phase.end() <= elapsed + MINUTE => {
+                self.start(phase.next(elapsed, self.lengths));
+            }
+            Control::Shorter => {
+                self.phase = Phase {
+                    length: phase.length - MINUTE,
+                    ..phase
+                };
+            }
+            Control::Next => self.start(phase.next(elapsed, self.lengths)),
         }
         true
     }

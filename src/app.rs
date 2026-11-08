@@ -451,21 +451,27 @@ impl App {
         self.panes.focused_mut().control(Control::Pause);
     }
 
+    pub fn next_phase(&mut self) {
+        self.panes.focused_mut().control(Control::Next);
+    }
+
     pub fn faster(&mut self) {
-        self.change_speed(Speed::faster, Rate::faster);
+        self.change_speed(Speed::faster, Rate::faster, Control::Longer);
     }
 
     pub fn slower(&mut self) {
-        self.change_speed(Speed::slower, Rate::slower);
+        self.change_speed(Speed::slower, Rate::slower, Control::Shorter);
     }
 
-    /// A scene that keeps real time has no speed to change, so it shows
-    /// the time it has left instead, and nothing is saved.
-    fn change_speed(&mut self, speed: fn(Speed) -> Speed, rate: fn(Rate) -> Rate) {
-        if let Some(left) = self.panes.focused().time_left() {
-            self.unsaved = None;
-            self.notice_text = left;
-            self.notice = NOTICE_FRAMES;
+    /// A scene that keeps real time has no speed to change, so `control`
+    /// changes its time instead, and nothing is saved.
+    fn change_speed(
+        &mut self,
+        speed: fn(Speed) -> Speed,
+        rate: fn(Rate) -> Rate,
+        control: Control,
+    ) {
+        if self.panes.focused_mut().control(control) {
             return;
         }
         let saved = if self.panes.focused().kind == SceneKind::Typing {

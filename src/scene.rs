@@ -188,13 +188,6 @@ pub trait Scene {
     /// keeps its cues until then, so a frame that ticks twice loses none.
     fn drain_cues(&mut self, _out: &mut Vec<Cue>) {}
 
-    /// What a scene that keeps real time has left to run, for `+` and `-`
-    /// to show. The rate means nothing to such a scene. The others have
-    /// none.
-    fn time_left(&self) -> Option<String> {
-        None
-    }
-
     /// Takes a timer control, and returns whether the scene has a timer
     /// that took it. The others ignore it.
     fn control(&mut self, _control: Control) -> bool {
@@ -207,6 +200,12 @@ pub trait Scene {
 pub enum Control {
     /// Stops the timer, or starts it again from where it stopped.
     Pause,
+    /// Ends the running phase and starts the next one.
+    Next,
+    /// Adds a minute to the running phase.
+    Longer,
+    /// Takes a minute from the running phase.
+    Shorter,
 }
 
 /// The cells a scene drew at its last tick, for a scene whose picture

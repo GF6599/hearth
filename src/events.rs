@@ -112,6 +112,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('[') => app.quieter(),
             KeyCode::Char(']') => app.louder(),
             KeyCode::Char(' ') => app.pause(),
+            KeyCode::Char('n') => app.next_phase(),
             _ => {}
         }
     }
