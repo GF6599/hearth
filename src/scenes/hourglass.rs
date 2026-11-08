@@ -10,7 +10,7 @@ use ratatui::style::Color;
 
 use crate::clock::Clock;
 use crate::octant::{self, CELL_HEIGHT, CELL_WIDTH, Canvas};
-use crate::scene::{Rng, Scene};
+use crate::scene::{Control, Rng, Scene};
 use crate::theme::Palette;
 
 /// How long each phase of the cycle runs.
@@ -80,10 +80,12 @@ const MARGIN: i32 = 1;
 const POST: i32 = 2;
 /// Cells from the right post out to the round marks.
 const MARKS: i32 = 2;
-/// `r` builds the scene again on a new clock, so the cycle starts again at
-/// the first work round.
-const HINT: [(&str, &str); 2] = [("r", " start the cycle again"), ("+", " time left")];
-const HINT_GAP: i32 = 3;
+/// The timer's keys, most needed first, because a narrow pane drops them
+/// from the end. `r` builds the scene again on a new clock, so the cycle
+/// starts again at the first work round.
+const HINT: [(&str, &str); 2] = [("space", " pause"), ("r", " restart")];
+const HINT_GAP: &str = "   ";
+const DOT: &str = " · ";
 const WIDTH: i32 = CELL_WIDTH as i32;
 const HEIGHT: i32 = CELL_HEIGHT as i32;
 
@@ -377,6 +379,10 @@ pub struct Hourglass {
     colours: Colours,
     rng: Rng,
     clock: Clock,
+    /// The clock's reading when the timer paused, while it is paused.
+    paused_at: Option<Duration>,
+    /// The time the timer spent paused before the pause that runs now.
+    stopped: Duration,
     lengths: Lengths,
     width: u16,
     height: u16,
@@ -411,6 +417,8 @@ impl Hourglass {
             colours,
             rng,
             clock,
+            paused_at: None,
+            stopped: Duration::ZERO,
             lengths,
             width: 0,
             height: 0,
@@ -429,10 +437,18 @@ impl Hourglass {
         }
     }
 
+    /// The time the timer has run: the clock's time less the time spent
+    /// paused.
+    fn elapsed(&self) -> Duration {
+        self.paused_at
+            .unwrap_or_else(|| self.clock.elapsed())
+            .saturating_sub(self.stopped)
+    }
+
     /// The grains the top holds at this time: all of them at the start of
     /// the phase and none at its end.
     fn due(&self) -> usize {
-        (self.total as f64 * self.phase.left(self.clock.elapsed())).ceil() as usize
+        (self.total as f64 * self.phase.left(self.elapsed())).ceil() as usize
     }
 
     fn holds(&self, x: i32, y: i32) -> bool {
@@ -637,7 +653,7 @@ impl Hourglass {
         let pixels = usize::from(self.width) * CELL_WIDTH * usize::from(self.height) * CELL_HEIGHT;
         self.sand = vec![false; pixels];
         self.moving.clear();
-        self.phase = Phase::at(self.clock.elapsed(), self.lengths);
+        self.phase = Phase::at(self.elapsed(), self.lengths);
         self.glass = Glass::fit(self.width, self.height);
         let Some(glass) = self.glass else {
             self.inside = Vec::new();
@@ -768,33 +784,92 @@ impl Hourglass {
         }
     }
 
-    fn hint(&self, glass: Glass, row: i32) -> Vec<((i32, i32), char, Color)> {
-        let letters: usize = HINT
-            .iter()
-            .map(|(key, words)| key.chars().count() + words.chars().count())
-            .sum();
-        let (Ok(letters), Ok(gaps)) = (i32::try_from(letters), i32::try_from(HINT.len() - 1))
+    /// The first of `lines` that fits the pane with a cell to spare on
+    /// each side, centred on the glass on `row`, or nothing when none fits.
+    fn centred(
+        &self,
+        glass: Glass,
+        row: i32,
+        lines: Vec<Vec<(String, Color)>>,
+    ) -> Vec<((i32, i32), char, Color)> {
+        let length = |line: &[(String, Color)]| -> i32 {
+            line.iter()
+                .map(|(text, _)| i32::try_from(text.chars().count()).unwrap_or(i32::MAX))
+                .fold(0, i32::saturating_add)
+        };
+        let Some(line) = lines
+            .into_iter()
+            .find(|line| length(line).saturating_add(2) <= i32::from(self.width))
         else {
             return Vec::new();
         };
-        let length = letters + gaps * HINT_GAP;
-        if length + 2 > i32::from(self.width) {
-            return Vec::new();
-        }
-        let mut column = glass.centre - length / 2;
+        let mut column = glass.centre - length(&line) / 2;
         let mut glyphs = Vec::new();
-        for (index, (key, words)) in HINT.iter().enumerate() {
-            if index > 0 {
-                column += HINT_GAP;
-            }
-            for (text, colour) in [(key, self.colours.key), (words, self.colours.words)] {
-                for glyph in text.chars() {
-                    glyphs.push(((column, row), glyph, colour));
-                    column += 1;
-                }
+        for (text, colour) in line {
+            for glyph in text.chars() {
+                glyphs.push(((column, row), glyph, colour));
+                column += 1;
             }
         }
         glyphs
+    }
+
+    fn hint(&self, glass: Glass, row: i32) -> Vec<((i32, i32), char, Color)> {
+        let lines = (1..=HINT.len())
+            .rev()
+            .map(|count| {
+                let mut line = Vec::new();
+                for (index, (key, words)) in HINT[..count].iter().enumerate() {
+                    if index > 0 {
+                        line.push((HINT_GAP.to_string(), self.colours.words));
+                    }
+                    line.push(((*key).to_string(), self.colours.key));
+                    line.push(((*words).to_string(), self.colours.words));
+                }
+                line
+            })
+            .collect();
+        self.centred(glass, row, lines)
+    }
+
+    fn status(&self, glass: Glass, row: i32) -> Vec<((i32, i32), char, Color)> {
+        let lines = self
+            .statuses()
+            .into_iter()
+            .map(|text| vec![(text, self.colours.words)])
+            .collect();
+        self.centred(glass, row, lines)
+    }
+
+    /// The status in full, such as "work 2/4 · 18:32 left", then the time
+    /// alone, such as "18:32", each with " · paused" while the timer is
+    /// paused.
+    fn statuses(&self) -> [String; 2] {
+        let (name, time) = self.phase_and_time();
+        let paused = if self.paused_at.is_some() {
+            format!("{DOT}paused")
+        } else {
+            String::new()
+        };
+        [
+            format!("{name}{DOT}{time} left{paused}"),
+            format!("{time}{paused}"),
+        ]
+    }
+
+    /// The phase with its round, such as "work 2/4", and the time left in
+    /// it rounded up to the second, such as "18:32".
+    fn phase_and_time(&self) -> (String, String) {
+        let elapsed = self.elapsed();
+        let phase = Phase::at(elapsed, self.lengths);
+        let left = (phase.start + phase.length).saturating_sub(elapsed);
+        let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+        let name = match phase.kind {
+            Kind::Work => format!("work {}/{ROUNDS}", phase.done + 1),
+            Kind::Break if phase.done == ROUNDS => "long break".to_string(),
+            Kind::Break => format!("break {}/{ROUNDS}", phase.done),
+        };
+        (name, format!("{}:{:02}", seconds / 60, seconds % 60))
     }
 }
 
@@ -826,7 +901,12 @@ impl Scene for Hourglass {
         let Some(glass) = self.glass else {
             return;
         };
-        let phase = Phase::at(self.clock.elapsed(), self.lengths);
+        // A paused glass holds each grain where it is, the falling ones too,
+        // so the resume goes on from the same picture.
+        if self.paused_at.is_some() {
+            return;
+        }
+        let phase = Phase::at(self.elapsed(), self.lengths);
         if phase.start != self.phase.start {
             self.phase = phase;
             self.turn(glass);
@@ -835,19 +915,19 @@ impl Scene for Hourglass {
         self.fall(glass);
     }
 
-    /// The phase, its round and the time left, rounded up to the second,
-    /// such as "work 2/4, 18:32 left".
     fn time_left(&self) -> Option<String> {
-        let elapsed = self.clock.elapsed();
-        let phase = Phase::at(elapsed, self.lengths);
-        let left = (phase.start + phase.length).saturating_sub(elapsed);
-        let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
-        let name = match phase.kind {
-            Kind::Work => format!("work {}/{ROUNDS}", phase.done + 1),
-            Kind::Break if phase.done == ROUNDS => "long break".to_string(),
-            Kind::Break => format!("break {}/{ROUNDS}", phase.done),
-        };
-        Some(format!("{name}, {}:{:02} left", seconds / 60, seconds % 60))
+        let [full, _] = self.statuses();
+        Some(full)
+    }
+
+    fn control(&mut self, control: Control) -> bool {
+        match control {
+            Control::Pause => match self.paused_at.take() {
+                Some(at) => self.stopped += self.clock.elapsed().saturating_sub(at),
+                None => self.paused_at = Some(self.clock.elapsed()),
+            },
+        }
+        true
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -885,6 +965,7 @@ impl Scene for Hourglass {
             glyphs.push(((left, row), '┃', self.colours.frame));
             glyphs.push(((right, row), '┃', self.colours.frame));
         }
+        glyphs.extend(self.status(glass, top - 2));
         glyphs.extend(self.hint(glass, bottom + 2));
 
         for ((column, row), glyph, colour) in glyphs {

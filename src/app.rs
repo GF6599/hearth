@@ -11,7 +11,7 @@ use crate::corpus::Corpus;
 use crate::octant;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
-use crate::scene::{ALL, FRAMES_PER_TICK, Rate, Scene, SceneKind, Settings};
+use crate::scene::{ALL, Control, FRAMES_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::typing::Speed;
 use crate::sound::{Cue, Volume};
 use crate::theme::{self, Palette};
@@ -445,6 +445,10 @@ impl App {
 
     pub fn previous_scene(&mut self) {
         self.switch_to(ALL[before(self.slot())]);
+    }
+
+    pub fn pause(&mut self) {
+        self.panes.focused_mut().control(Control::Pause);
     }
 
     pub fn faster(&mut self) {

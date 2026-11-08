@@ -194,6 +194,19 @@ pub trait Scene {
     fn time_left(&self) -> Option<String> {
         None
     }
+
+    /// Takes a timer control, and returns whether the scene has a timer
+    /// that took it. The others ignore it.
+    fn control(&mut self, _control: Control) -> bool {
+        false
+    }
+}
+
+/// A key that controls the timer of a scene that keeps real time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Control {
+    /// Stops the timer, or starts it again from where it stopped.
+    Pause,
 }
 
 /// The cells a scene drew at its last tick, for a scene whose picture
