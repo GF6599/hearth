@@ -531,11 +531,12 @@ fn the_lengths_set_how_long_each_phase_runs() {
 /// When: the clock reads the start, half a second and a second and a half
 /// into the first work round, halfway through the first break, and the
 /// start of the long break.
-/// Then: the time left reads "work 1/4 · 25:00 left" twice, "work 1/4 ·
-/// 24:59 left", "break 1/4 · 2:30 left" and "long break · 15:00 left".
+/// Then: the line above the glass reads "work 1/4 · 25:00 left" twice,
+/// "work 1/4 · 24:59 left", "break 1/4 · 2:30 left" and "long break ·
+/// 15:00 left".
 ///
-/// Why it matters: the line above the glass shows this, and a count that
-/// rounds down shows a second less than is left.
+/// Why it matters: a count that rounds down shows a second less than is
+/// left.
 #[test]
 fn the_time_left_names_the_phase_and_the_round() {
     // Given:
@@ -554,7 +555,7 @@ fn the_time_left_names_the_phase_and_the_round() {
         scene.tick(AREA);
 
         // Then:
-        assert_eq!(scene.time_left().as_deref(), Some(expected), "at {at:?}");
+        assert_eq!(status_of(&scene, AREA), expected, "at {at:?}");
     }
 }
 
@@ -664,6 +665,12 @@ fn text_of(buffer: &Buffer, area: Rect, row: u16) -> String {
         .collect()
 }
 
+fn status_of(scene: &Hourglass, area: Rect) -> String {
+    let shown = render(scene, area, area);
+    let plate = plate_of(&shown, area, 0..area.height, '\u{2584}');
+    text_of(&shown, area, plate - 1).trim().to_string()
+}
+
 fn plate_of(buffer: &Buffer, area: Rect, mut rows: impl Iterator<Item = u16>, plate: char) -> u16 {
     rows.find(|&row| text_of(buffer, area, row).contains(plate))
         .unwrap_or_else(|| panic!("no plate {plate:?}"))
@@ -695,9 +702,9 @@ fn words_of(buffer: &Buffer, area: Rect, row: u16) -> String {
 /// twenty cells wide.
 /// When: each ticks and renders.
 /// Then: on the wide pane the row under the frame's lower plate reads
-/// "space pause" and "r restart", in that order, centred under the frame to
-/// within two cells. The narrow pane keeps "space pause" and drops "r
-/// restart", and the frame still stands.
+/// "space pause", "n next", "+/- 1 min" and "r restart", in that order,
+/// centred under the frame to within two cells. The narrow pane keeps
+/// "space pause" and drops the rest, and the frame still stands.
 ///
 /// Why it matters: with nothing on screen to name the keys, a user cannot
 /// find them, and a line wider than its pane is cut through a word.
@@ -716,9 +723,15 @@ fn the_keys_under_the_glass_name_each_control() {
     let middle = frame_middle(&wide, AREA, plate, "\u{2580}");
     let text = text_of(&wide, AREA, plate + 1);
     let words = words_of(&wide, AREA, plate + 1);
-    let pause = words.find("space pause").expect(&words);
-    let restart = words.find("r restart").expect(&words);
-    assert!(pause < restart, "the keys read {words:?}");
+    let places: Vec<usize> = ["space pause", "n next", "+/- 1 min", "r restart"]
+        .iter()
+        .map(|key| {
+            words
+                .find(key)
+                .unwrap_or_else(|| panic!("no {key} in {words:?}"))
+        })
+        .collect();
+    assert!(places.is_sorted(), "the keys read {words:?}");
     assert!(
         (text_middle(&text) - middle).abs() <= 2.0,
         "the keys are centred on {}, the frame on {middle}",
@@ -808,17 +821,14 @@ fn a_pause_holds_the_time_and_the_sand() {
     let (mut scene, now) = hourglass(7);
     run(&mut scene, &now, WORK / 4, AREA);
     let before = render(&scene, AREA, AREA);
-    let left = scene.time_left();
+    let left = status_of(&scene, AREA);
 
     // When:
     scene.control(Control::Pause);
     run(&mut scene, &now, WORK / 4 + Duration::from_secs(300), AREA);
 
     // Then:
-    assert_eq!(
-        scene.time_left().map(|text| text.replace(" · paused", "")),
-        left
-    );
+    assert_eq!(status_of(&scene, AREA).replace(" · paused", ""), left);
     let held = render(&scene, AREA, AREA);
     let status = plate_of(&before, AREA, 0..AREA.height, '\u{2584}') - 1;
     let changed = AREA
@@ -833,7 +843,7 @@ fn a_pause_holds_the_time_and_the_sand() {
     run(&mut scene, &now, WORK / 4 + Duration::from_secs(360), AREA);
 
     // Then:
-    assert_eq!(scene.time_left().as_deref(), Some("work 1/4 · 17:45 left"));
+    assert_eq!(status_of(&scene, AREA), "work 1/4 · 17:45 left");
     assert_ne!(sand(&render(&scene, AREA, AREA), AREA), sand(&before, AREA));
 }
 
@@ -1130,4 +1140,121 @@ fn a_falling_grain_is_a_soft_point() {
         }
     }
     assert!(soft, "no grain fell with a soft edge");
+}
+
+/// `n` turns the glass over to the next phase with all its time left.
+/// Given: a glass ten minutes into the first work round.
+/// When: the timer goes to the next phase, the glass ticks, and then the
+/// clock runs the five minutes of the break.
+/// Then: the line reads "break 1/4 · 5:00 left", the marks show one round
+/// done, and all the sand is in the top in the break colour. After the
+/// break the line reads "work 2/4 · 25:00 left".
+///
+/// Why it matters: a skip that keeps the old sand, or that does not count
+/// the round, shows a break with the wrong time or loses the long break.
+#[test]
+fn next_turns_the_glass_to_the_next_phase() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    let ten = Duration::from_secs(600);
+    run(&mut scene, &now, ten, AREA);
+    let (top, bottom) = sand(&render(&scene, AREA, AREA), AREA);
+    let total = top + bottom;
+
+    // When:
+    assert!(scene.control(Control::Next));
+    scene.tick(AREA);
+
+    // Then:
+    let shown = render(&scene, AREA, AREA);
+    assert_eq!(status_of(&scene, AREA), "break 1/4 · 5:00 left");
+    assert_eq!(rounds_done(&shown, AREA), 1);
+    assert_eq!(sand_in(&shown, AREA, BREAK_SAND), (total, 0));
+
+    // When:
+    run(&mut scene, &now, ten + BREAK, AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "work 2/4 · 25:00 left");
+}
+
+/// `+` and `-` add or take a minute from the running phase alone.
+/// Given: a glass ten minutes into the first work round, its sand settled.
+/// When: the timer takes a minute more, then two minutes less, and then
+/// the clock runs to the end of the round and through the break.
+/// Then: the line reads 16:00 left after the minute more, and the top holds
+/// more sand than before. It reads 14:00 left after the two minutes less.
+/// The round ends fourteen minutes on, and the next round has its full 25
+/// minutes.
+///
+/// Why it matters: a minute that changes the lengths in the file, or the
+/// next round, breaks the cycle the user set.
+#[test]
+fn plus_and_minus_change_the_running_phase_by_a_minute() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    let ten = Duration::from_secs(600);
+    run(&mut scene, &now, ten, AREA);
+    for _ in 0..SETTLE {
+        scene.tick(AREA);
+    }
+    let (top, _) = sand(&render(&scene, AREA, AREA), AREA);
+
+    // When:
+    assert!(scene.control(Control::Longer));
+    scene.tick(AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "work 1/4 · 16:00 left");
+    let (longer, _) = sand(&render(&scene, AREA, AREA), AREA);
+    assert!(longer > top, "{longer} grains in the top, {top} before");
+
+    // When:
+    scene.control(Control::Shorter);
+    scene.control(Control::Shorter);
+    scene.tick(AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "work 1/4 · 14:00 left");
+
+    // When:
+    let end = ten + Duration::from_secs(14 * 60);
+    run(&mut scene, &now, end - Duration::from_secs(1), AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "work 1/4 · 0:01 left");
+
+    // When:
+    run(&mut scene, &now, end + BREAK, AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "work 2/4 · 25:00 left");
+}
+
+/// `-` with less than a minute left goes to the next phase.
+/// Given: a glass thirty seconds before the end of the first work round.
+/// When: the timer takes a minute less, and the glass ticks.
+/// Then: the line reads "break 1/4 · 5:00 left", and all the sand is in the
+/// top in the break colour.
+///
+/// Why it matters: a phase with less than a minute left has no minute to
+/// give, and a `-` that ends it must still turn the glass to the next phase
+/// with all its time.
+#[test]
+fn minus_with_under_a_minute_left_goes_to_the_next_phase() {
+    // Given:
+    let (mut scene, now) = hourglass(7);
+    run(&mut scene, &now, WORK - Duration::from_secs(30), AREA);
+    let (top, bottom) = sand(&render(&scene, AREA, AREA), AREA);
+
+    // When:
+    scene.control(Control::Shorter);
+    scene.tick(AREA);
+
+    // Then:
+    assert_eq!(status_of(&scene, AREA), "break 1/4 · 5:00 left");
+    assert_eq!(
+        sand_in(&render(&scene, AREA, AREA), AREA, BREAK_SAND),
+        (top + bottom, 0)
+    );
 }

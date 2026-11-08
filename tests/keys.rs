@@ -540,3 +540,31 @@ fn space_pauses_and_resumes_the_hourglass() {
     // Then:
     assert!(!shows_text(&app, "paused"));
 }
+
+/// `n`, `+` and `-` reach the hourglass timer.
+/// Given: hearth on the hourglass, after one tick.
+/// When: `n` is pressed, then `+`, then `-`.
+/// Then: the screen shows the first break with 5:00 left, then 6:00
+/// left, then 5:00 left again.
+///
+/// Why it matters: these keys are the one way to skip a phase or change
+/// its time while hearth runs.
+#[test]
+fn n_plus_and_minus_control_the_hourglass() {
+    // Given:
+    let mut app = App::new(SceneKind::Hourglass, 7, corpus());
+    app.tick(WIDE);
+
+    for (press, expected) in [
+        ('n', "break 1/4 · 5:00 left"),
+        ('+', "break 1/4 · 6:00 left"),
+        ('-', "break 1/4 · 5:00 left"),
+    ] {
+        // When:
+        send(&mut app, vec![key(KeyCode::Char(press))]);
+        app.tick(WIDE);
+
+        // Then:
+        assert!(shows_text(&app, expected), "after {press}: {expected}");
+    }
+}

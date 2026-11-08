@@ -613,33 +613,40 @@ fn the_picker_shows_the_hourglass_lengths_from_the_file() {
     }
 }
 
-/// `+` and `-` on the hourglass show the time left and save nothing.
+/// `+` and `-` on the hourglass change its time and save nothing.
 /// Given: hearth on the hourglass, saving to a file that holds a comment.
 /// When: `+` is pressed, then `-`.
-/// Then: the notice each time reads the first work round with 25 minutes
-/// left, and the file is as it was.
+/// Then: the screen shows 26:00 left in the first work round, then 25:00
+/// left, and the file is as it was each time.
 ///
 /// Why it matters: the hourglass keeps real time, so a speed for it would
 /// mean nothing, and a save of one would put a key in the file that the
 /// next start refuses.
 #[test]
-fn plus_and_minus_on_the_hourglass_show_the_time_left() {
+fn plus_and_minus_on_the_hourglass_save_nothing() {
     // Given:
     let text = "# my settings\n";
     let path = config_file("hourglass-keys", Some(text));
     let config = Config::load(&path).unwrap();
     let mut app = app(&["hearth", "hourglass"], &config).saving_to(path.clone());
+    let area = Rect::new(0, 0, 100, 30);
+    app.tick(area);
 
-    for press in [App::faster, App::slower] {
+    for (press, expected) in [
+        (App::faster as fn(&mut App), "work 1/4 · 26:00 left"),
+        (App::slower, "work 1/4 · 25:00 left"),
+    ] {
         // When:
         press(&mut app);
 
         // Then:
-        assert!(
-            header(&app).contains("work 1/4 · 25:00 left"),
-            "{}",
-            header(&app)
-        );
+        let mut buffer = Buffer::empty(area);
+        app.render(area, &mut buffer);
+        let shown = (0..area.height).any(|y| {
+            let row: String = (0..area.width).map(|x| buffer[(x, y)].symbol()).collect();
+            row.contains(expected)
+        });
+        assert!(shown, "no {expected:?} on screen");
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
     }
 }
