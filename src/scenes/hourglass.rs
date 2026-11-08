@@ -962,12 +962,10 @@ impl Scene for Hourglass {
             Control::Shorter if phase.end() <= elapsed + MINUTE => {
                 self.start(phase.next(elapsed, self.lengths));
             }
-            Control::Shorter => {
-                self.phase = Phase {
-                    length: phase.length - MINUTE,
-                    ..phase
-                };
-            }
+            Control::Shorter => self.start(Phase {
+                length: phase.length - MINUTE,
+                ..phase
+            }),
             Control::Next => self.start(phase.next(elapsed, self.lengths)),
         }
         true
