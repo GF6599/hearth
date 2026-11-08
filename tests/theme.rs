@@ -142,6 +142,38 @@ fn t_in_the_picker_moves_the_list_and_the_preview_to_the_next_theme() {
     );
 }
 
+fn shows(buffer: &Buffer, text: &str) -> bool {
+    (0..buffer.area.height).any(|y| row(buffer, y).contains(text))
+}
+
+/// A theme change repaints the hourglass and keeps its timer.
+/// Given: the hourglass on the default theme, moved on to the first break
+/// and paused.
+/// When: `t` is pressed.
+/// Then: the frame still shows the first break with 5:00 left and paused,
+/// and no default colour that the next theme does not have.
+///
+/// Why it matters: a timer that starts again at the first work round on a
+/// colour change loses the round the user is in.
+#[test]
+fn t_keeps_the_hourglass_phase_and_pause() {
+    // Given:
+    let mut app = App::new(SceneKind::Hourglass, 7, Arc::new(Corpus::embedded()));
+    frame(&mut app, 1);
+    send_keys(&mut app, &[KeyCode::Char('n'), KeyCode::Char(' ')]);
+    let status = "break 1/4 · 5:00 left · paused";
+    assert!(shows(&frame(&mut app, 1), status));
+
+    // When:
+    send_keys(&mut app, &[KeyCode::Char('t')]);
+
+    // Then:
+    let shown = frame(&mut app, 10);
+    assert!(shows(&shown, status), "{status:?} is gone");
+    let (_, next) = theme::THEMES[1];
+    assert_none_of(&shown, &left_behind(&theme::ROSE_PINE, next), "hourglass");
+}
+
 /// Given: fire on the default theme.
 /// When: `t` is pressed.
 /// Then: the top row of the frame names the next theme.
