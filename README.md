@@ -18,6 +18,7 @@ The app draws about 60 frames a second. Most scenes draw in octant pixels, eight
 | `drive` | | The view from behind a car on a night road. The road narrows to the horizon, bends left and right, and climbs and falls over long hills, so a crest hides the road beyond it. Edge stripes, centre dashes and posts rush toward the car over dark land. The car keeps to its lane on its own and leans into each bend, while the moon and the stars slide against the bend. Within seconds of the start, and then every so often, a slower car appears ahead in the other lane, grows as the car closes in, and drops behind |
 | `city` | | A city at night, built for the pane: near and far towers with a rim on each roof, window grids and antennas with blinking lights, under stars and a moon. Windows light and go dark one by one as the night goes from evening to late and back over a few minutes. A lit train crosses on a raised line now and then, and the water below mirrors the towers dimly, each lit window a short streak that the ripples break |
 | `river` | | The git history of the repository that `--repo` or the `repo` key names, or of the current directory, as a river seen from above. Each branch is a lane of water that splits off where the branch starts and joins where it merges, each commit is a stone, a merge in iris, and the commit at the middle row shows its subject beside its stone. The river runs between two sandy banks from the oldest of the last 500 commits to the newest, and starts again. Outside a repository it says so |
+| `weather` | | The weather now at the place that `--latitude` and `--longitude` or the `[weather]` table give: the weather in words, the temperature and the place, with the credit to Open-Meteo under it. It reads the weather again every 15 minutes, on a thread of its own, and says so when it cannot |
 | `matrix` | [cmatrix](https://github.com/abishekvashok/cmatrix) by Chris Allegretta | Columns of half-width katakana and capitals fall at their own pace, a bright head and a tail that fades from foam to pine |
 | `fire` | [the PSX Doom fire](https://fabiensanglard.net/doom_fire_psx/), via Fabien Sanglard | The doom fire: heat rises from a white-hot base through gold, rose, love and a grey smoke and dies into the background, in the theme's colours only, blended where one meets the next |
 | `life` | [John Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life) | Conway's game of life on a torus, a cell of the game to a pixel, a cell drawn in rose where most of its cells were just born and in iris where they have settled, reseeded when the board goes still |
@@ -80,6 +81,14 @@ hearth typing --repo rust-lang/rust           # a GitHub repository
 hearth typing --repo https://example.com/x.git
 ```
 
+The weather scene shows the weather at a place given in degrees north and east, south and west as negative numbers:
+
+```sh
+hearth weather --latitude 59.91 --longitude 10.75
+```
+
+The flags come before the `[weather]` table of the config file, and each needs the other. Without a place, the scene says how to give one.
+
 A GitHub repository or a clone address is cloned once, with its last 500 commits, into `~/.cache/hearth` (or `$XDG_CACHE_HOME/hearth`), with one line on stderr before the terminal opens. Every later run reads the cache, so the scene starts without a network. Only tracked text files under 64 KiB are read, so an ignored or untracked file never shows. A repository with no function in any of them is refused at startup.
 
 ### Config file
@@ -103,6 +112,10 @@ work = 50       # minutes, from 1 to 180. Also break and long_break. Absent: 25,
 
 [typing]
 shortest = 0.25 # the share of the frame a function must fill, from 0 to 1. 0 types every function. Absent: 0.5
+
+[weather]
+latitude = 59.91   # degrees north, from -90 to 90. Give both or neither. Absent: no place
+longitude = 10.75  # degrees east, from -180 to 180
 ```
 
 The theme colours every scene and the picker. `t` moves to the next theme, starts each scene again in its colours, and saves the theme to the file the way `+` and `-` save a speed. The hourglass changes its colours only, so its phase, its time left and a pause hold. Dawn, Latte, Tokyo Night Day, Kanagawa Lotus, Alucard and Solarized Light are light themes, so their fire grows from the gold role and not from white. `background = "terminal"` leaves out the theme's base colour, its panels and the murmuration dusk, so the terminal's own background shows behind every scene and the picker, and a transparent or translucent terminal stays so. The other colours stay as the theme draws them, the grey of the fire's smoke included. The typing scene's minimap draws each line as one row of pixels with a clear row under it, so the terminal shows between them, and dims the lines not yet typed toward the muted grey, because a mix toward the hidden base reads as a dark shade. A scene or `--repo` on the command line comes before the file. `+` and `-` save the new speed to the file at once and keep its comments. A save that fails shows in the notice, and the speed still holds for the run. The hourglass keeps real time, so `[speed]` has no key for it, and on the hourglass `+` and `-` change the running phase by a minute and save nothing. The typing scene skips a function with fewer lines than `shortest` times the rows of code its frame holds, so the limit follows the size of the terminal. A function of 40 lines or more, which the scene cuts at 40, is always long enough. A file with no function long enough gives way to the next file, and when no file in the repository has one, the scene types the longest function each time. A repository with more than 32 KB of text is measured on a thread of its own, so the screen does not wait for it. Until the first function long enough is found, the frame shows "finding a function long enough". A finished function stays on screen for a moment, then scrolls up and out of the frame in under a second at any speed, slowly at first and at last. When the next function is not found yet, the frame stays empty until it is. A key hearth does not know, or a value outside its range, stops startup with a message that names the file and the key.
@@ -162,3 +175,5 @@ Every scene is a module under `src/scenes/` that implements the `Scene` trait: `
 ## License
 
 MIT.
+
+The weather comes from [Open-Meteo](https://open-meteo.com/), whose data is under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Its free service is for non-commercial use.
