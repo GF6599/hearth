@@ -2,9 +2,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
-use crate::scene::{self, Scene};
+use crate::scene::{self, Rng, Scene};
 use crate::theme::Palette;
 use crate::weather::{Location, Report, Source, Watch};
+
+mod sky;
+
+use sky::Sky;
 
 pub const READING: &str = "reading the weather";
 pub const NO_LOCATION: &str = "set latitude and longitude in [weather] to see the weather";
@@ -23,10 +27,11 @@ pub struct Weather {
     /// waits on the network.
     reading: Option<Watch>,
     shown: Option<Read>,
+    sky: Sky,
 }
 
 impl Weather {
-    pub fn new(palette: &'static Palette, source: Option<Source>) -> Self {
+    pub fn new(rng: Rng, palette: &'static Palette, source: Option<Source>) -> Self {
         let location = source.as_ref().map(Source::location);
         let reading = source.and_then(Source::watch);
         let shown = (location.is_some() && reading.is_none()).then(|| Err(NO_THREAD.to_string()));
@@ -35,7 +40,12 @@ impl Weather {
             location,
             reading,
             shown,
+            sky: Sky::new(rng, palette),
         }
+    }
+
+    fn shows_sky(&self) -> bool {
+        matches!(self.shown, Some(Ok(_)))
     }
 
     fn line(&self, text: &str, row: u16, colour: Color, area: Rect, buf: &mut Buffer) {
@@ -56,6 +66,13 @@ impl Scene for Weather {
         if let Some(read) = self.reading.as_ref().and_then(Watch::latest) {
             self.shown = Some(read);
         }
+        if self.shows_sky() {
+            self.sky.tick();
+        }
+    }
+
+    fn set_progress(&mut self, progress: f64) -> bool {
+        self.shows_sky() && self.sky.set_progress(progress)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -70,22 +87,19 @@ impl Scene for Weather {
             None => scene::draw_notice(READING, area, self.palette, buf),
             Some(Err(reason)) => scene::draw_notice(reason, area, self.palette, buf),
             Some(Ok(report)) => {
+                self.sky
+                    .render(report.weather(), report.day(), self.palette, area, buf);
                 let top = area.y + area.height.min(2) / 2;
                 let bottom = area.y + area.height - 1;
-                self.line(
-                    &report.status(location),
-                    top,
-                    self.palette.subtle,
-                    area,
-                    buf,
-                );
-                self.line(CREDIT, bottom, self.palette.muted, area, buf);
+                self.line(&report.status(location), top, self.palette.text, area, buf);
+                self.line(CREDIT, bottom, self.palette.subtle, area, buf);
             }
         }
     }
 
     fn repaint(&mut self, palette: &'static Palette) -> bool {
         self.palette = palette;
+        self.sky.repaint(palette);
         true
     }
 }

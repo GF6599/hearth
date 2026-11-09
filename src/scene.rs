@@ -414,6 +414,7 @@ impl SceneKind {
             SceneKind::City => Box::new(City::new(rng, palette)),
             SceneKind::River => Box::new(River::new(rng, palette, Arc::clone(corpus))),
             SceneKind::Weather => Box::new(Weather::new(
+                rng,
                 palette,
                 settings.location.map(Source::open_meteo),
             )),
