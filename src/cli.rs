@@ -9,6 +9,7 @@ use crate::app::App;
 use crate::config::{self, Config};
 use crate::corpus::{self, Corpus};
 use crate::scene::SceneKind;
+use crate::weather::{self, LATITUDE, LONGITUDE, Location};
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -25,6 +26,27 @@ pub struct Cli {
     /// clone address. Without it, hearth types its own source
     #[arg(long, value_name = "REPO")]
     pub repo: Option<String>,
+
+    /// Where the weather scene looks, in degrees north. It comes before
+    /// the `[weather]` table of the config file
+    #[arg(long, value_name = "DEGREES", requires = "longitude", allow_negative_numbers = true, value_parser = latitude)]
+    pub latitude: Option<f64>,
+
+    /// Where the weather scene looks, in degrees east
+    #[arg(long, value_name = "DEGREES", requires = "latitude", allow_negative_numbers = true, value_parser = longitude)]
+    pub longitude: Option<f64>,
+}
+
+fn latitude(text: &str) -> Result<f64, String> {
+    number(text).and_then(|value| weather::degrees(value, LATITUDE))
+}
+
+fn longitude(text: &str) -> Result<f64, String> {
+    number(text).and_then(|value| weather::degrees(value, LONGITUDE))
+}
+
+fn number(text: &str) -> Result<f64, String> {
+    text.parse().map_err(|_| "must be a number".to_string())
 }
 
 impl Cli {
@@ -43,8 +65,19 @@ impl Cli {
         self.repo.as_deref().or(config.repo.as_deref())
     }
 
+    pub fn location(&self, config: &Config) -> Option<Location> {
+        match (self.latitude, self.longitude) {
+            (Some(latitude), Some(longitude)) => Location::new(latitude, longitude).ok(),
+            _ => config.location,
+        }
+    }
+
     pub fn app(&self, config: &Config, corpus: Arc<Corpus>) -> App {
-        App::configured(self.scene.or(config.scene), self.seed(), corpus, config)
+        let config = Config {
+            location: self.location(config),
+            ..config.clone()
+        };
+        App::configured(self.scene.or(config.scene), self.seed(), corpus, &config)
     }
 
     /// The source files for the typing scene and the place the river reads

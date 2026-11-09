@@ -1,6 +1,6 @@
 //! The preferences a user keeps between runs: the scene to start, the
 //! repository to type, the colour theme and its background, the sound and
-//! its volume, and the speed of each scene.
+//! its volume, the speed of each scene, and the place of the weather.
 
 use std::fs;
 use std::io::{self, Write};
@@ -13,6 +13,7 @@ use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::{Shortest, Speed};
 use crate::sound::Volume;
 use crate::theme;
+use crate::weather::Location;
 
 /// What shows where a scene is empty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct Config {
     pub shortest: Shortest,
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
+    pub location: Option<Location>,
 }
 
 /// `None` with no home folder, because any user can put a file in the
@@ -117,9 +119,10 @@ impl Config {
                 "speed" => config.read_speeds(item).map_err(fail)?,
                 "hourglass" => config.read_lengths(item).map_err(fail)?,
                 "typing" => config.read_typing(item).map_err(fail)?,
+                "weather" => config.read_weather(item).map_err(fail)?,
                 other => {
                     return Err(fail(format!(
-                        "{other} is not a setting. The settings are scene, repo, theme, background, sound, volume, speed, hourglass and typing"
+                        "{other} is not a setting. The settings are scene, repo, theme, background, sound, volume, speed, hourglass, typing and weather"
                     )));
                 }
             }
@@ -204,6 +207,36 @@ impl Config {
                 .and_then(Shortest::from_share);
             self.shortest = shortest.map_err(|e| format!("typing.{name} {e}"))?;
         }
+        Ok(())
+    }
+
+    fn read_weather(&mut self, item: &Item) -> Result<(), String> {
+        let table = item
+            .as_table_like()
+            .ok_or_else(|| "weather must be a table of latitude and longitude".to_string())?;
+        let (mut latitude, mut longitude) = (None, None);
+        for (name, value) in table.iter() {
+            let degrees = value
+                .as_float()
+                .or_else(|| value.as_integer().map(|whole| whole as f64))
+                .ok_or_else(|| format!("weather.{name} must be a number"));
+            match name {
+                "latitude" => latitude = Some(degrees?),
+                "longitude" => longitude = Some(degrees?),
+                other => {
+                    return Err(format!(
+                        "weather.{other} is not a setting. The settings are latitude and longitude"
+                    ));
+                }
+            }
+        }
+        self.location = match (latitude, longitude) {
+            (Some(latitude), Some(longitude)) => {
+                Some(Location::new(latitude, longitude).map_err(|e| format!("weather.{e}"))?)
+            }
+            (None, None) => None,
+            _ => return Err("weather needs both latitude and longitude".into()),
+        };
         Ok(())
     }
 }

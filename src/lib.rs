@@ -51,3 +51,4 @@ pub mod sound;
 pub mod splitmix;
 pub mod theme;
 pub mod tree;
+pub mod weather;

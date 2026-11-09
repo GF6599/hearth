@@ -116,6 +116,7 @@ impl App {
         let settings = Settings {
             lengths: config.hourglass,
             shortest: config.shortest,
+            location: config.location,
         };
         let mut app = Self {
             theme,

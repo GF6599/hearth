@@ -17,3 +17,4 @@ pub mod solar;
 pub mod study;
 pub mod tide;
 pub mod typing;
+pub mod weather;

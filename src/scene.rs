@@ -30,8 +30,10 @@ use crate::scenes::solar::Solar;
 use crate::scenes::study::Study;
 use crate::scenes::tide::Tide;
 use crate::scenes::typing::{Shortest, Speed, Typing};
+use crate::scenes::weather::Weather;
 use crate::sound::Cue;
 use crate::theme::Palette;
+use crate::weather::{Location, Source};
 
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
@@ -85,12 +87,14 @@ const _: () = assert!(normal_step() < RATES.len(), "no rate runs one tick a tick
 pub struct Settings {
     pub lengths: Lengths,
     pub shortest: Shortest,
+    pub location: Option<Location>,
 }
 
 impl Settings {
     pub const DEFAULT: Settings = Settings {
         lengths: Lengths::DEFAULT,
         shortest: Shortest::DEFAULT,
+        location: None,
     };
 }
 
@@ -258,6 +262,7 @@ pub enum SceneKind {
     Drive,
     City,
     River,
+    Weather,
     Matrix,
     Fire,
     Life,
@@ -281,6 +286,7 @@ pub const ALL: &[SceneKind] = &[
     SceneKind::Drive,
     SceneKind::City,
     SceneKind::River,
+    SceneKind::Weather,
     SceneKind::Matrix,
     SceneKind::Fire,
     SceneKind::Life,
@@ -313,6 +319,7 @@ impl SceneKind {
             SceneKind::Drive => "drive",
             SceneKind::City => "city",
             SceneKind::River => "river",
+            SceneKind::Weather => "weather",
             SceneKind::Hourglass => "hourglass",
             SceneKind::Study => "study",
             SceneKind::Typing => "typing",
@@ -339,6 +346,7 @@ impl SceneKind {
             SceneKind::Drive => "a night drive over hills and bends, past slower cars",
             SceneKind::City => "a city at night, its windows lit over the water",
             SceneKind::River => "the git history as a river of lanes and stones",
+            SceneKind::Weather => "the weather now at the place you give",
             SceneKind::Hourglass => "an hourglass that keeps a Pomodoro cycle",
             SceneKind::Study => "a desk by a rainy window, a cat on the sill",
             SceneKind::Typing => "functions typed from a git repository",
@@ -365,6 +373,7 @@ impl SceneKind {
             SceneKind::Drive => None,
             SceneKind::City => None,
             SceneKind::River => None,
+            SceneKind::Weather => None,
             SceneKind::Hourglass => Some("after the Pomodoro Technique by Francesco Cirillo"),
             SceneKind::Study => Some("after the lofi study streams"),
             SceneKind::Typing => Some("after gittype by Yuji Ueki"),
@@ -404,6 +413,10 @@ impl SceneKind {
             SceneKind::Drive => Box::new(Drive::new(rng, palette)),
             SceneKind::City => Box::new(City::new(rng, palette)),
             SceneKind::River => Box::new(River::new(rng, palette, Arc::clone(corpus))),
+            SceneKind::Weather => Box::new(Weather::new(
+                palette,
+                settings.location.map(Source::open_meteo),
+            )),
             SceneKind::Hourglass => Box::new(Hourglass::new(
                 rng,
                 palette,
