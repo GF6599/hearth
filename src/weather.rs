@@ -14,7 +14,7 @@ use ureq::tls::{Certificate, RootCerts, TlsConfig, TlsProvider};
 /// non-commercial purposes only.
 pub const OPEN_METEO: &str = "https://api.open-meteo.com";
 
-const CURRENT: &str = "weather_code,temperature_2m,wind_speed_10m";
+const CURRENT: &str = "weather_code,temperature_2m,wind_speed_10m,is_day";
 
 /// The wind speed in km/h from which a clear or cloudy sky reads as wind:
 /// force 6 on the Beaufort scale, a strong breeze. No weather code means
@@ -72,59 +72,83 @@ impl fmt::Display for Location {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Type {
+    Clear,
+    Cloud,
+    Rain,
+    Snow,
+    Storm,
+    Fog,
+    Wind,
+}
+
 /// The weather at one moment, in Open-Meteo's default units: °C and km/h.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Report {
-    code: u8,
     words: &'static str,
+    coded: Type,
     temperature: f64,
     wind: f64,
+    day: bool,
 }
 
 impl Report {
     pub fn status(&self, at: Location) -> String {
-        let clear_or_cloudy = self.code <= 3;
-        let weather = if clear_or_cloudy && self.wind >= WIND {
+        let weather = if self.weather() == Type::Wind {
             format!("wind {} km/h", self.wind.round() as i64)
         } else {
             self.words.to_string()
         };
         format!("{weather} · {} °C · {at}", self.temperature.round() as i64)
     }
+
+    pub fn weather(&self) -> Type {
+        let calm = matches!(self.coded, Type::Clear | Type::Cloud);
+        if calm && self.wind >= WIND {
+            Type::Wind
+        } else {
+            self.coded
+        }
+    }
+
+    pub fn day(&self) -> bool {
+        self.day
+    }
 }
 
 /// The WMO weather codes that Open-Meteo sends, in its own words.
-fn words(code: u8) -> Option<&'static str> {
+fn meaning(code: u8) -> Option<(&'static str, Type)> {
     Some(match code {
-        0 => "clear sky",
-        1 => "mainly clear",
-        2 => "partly cloudy",
-        3 => "overcast",
-        45 => "fog",
-        48 => "depositing rime fog",
-        51 => "light drizzle",
-        53 => "moderate drizzle",
-        55 => "dense drizzle",
-        56 => "light freezing drizzle",
-        57 => "dense freezing drizzle",
-        61 => "slight rain",
-        63 => "moderate rain",
-        65 => "heavy rain",
-        66 => "light freezing rain",
-        67 => "heavy freezing rain",
-        71 => "slight snowfall",
-        73 => "moderate snowfall",
-        75 => "heavy snowfall",
-        77 => "snow grains",
-        80 => "slight rain showers",
-        81 => "moderate rain showers",
-        82 => "violent rain showers",
-        85 => "slight snow showers",
-        86 => "heavy snow showers",
-        95 => "thunderstorm",
-        96 => "thunderstorm with slight hail",
-        97 => "heavy thunderstorm",
-        99 => "thunderstorm with heavy hail",
+        0 => ("clear sky", Type::Clear),
+        1 => ("mainly clear", Type::Clear),
+        2 => ("partly cloudy", Type::Cloud),
+        3 => ("overcast", Type::Cloud),
+        45 => ("fog", Type::Fog),
+        48 => ("depositing rime fog", Type::Fog),
+        51 => ("light drizzle", Type::Rain),
+        53 => ("moderate drizzle", Type::Rain),
+        55 => ("dense drizzle", Type::Rain),
+        56 => ("light freezing drizzle", Type::Rain),
+        57 => ("dense freezing drizzle", Type::Rain),
+        61 => ("slight rain", Type::Rain),
+        63 => ("moderate rain", Type::Rain),
+        65 => ("heavy rain", Type::Rain),
+        66 => ("light freezing rain", Type::Rain),
+        67 => ("heavy freezing rain", Type::Rain),
+        71 => ("slight snowfall", Type::Snow),
+        73 => ("moderate snowfall", Type::Snow),
+        75 => ("heavy snowfall", Type::Snow),
+        77 => ("snow grains", Type::Snow),
+        80 => ("slight rain showers", Type::Rain),
+        81 => ("moderate rain showers", Type::Rain),
+        82 => ("violent rain showers", Type::Rain),
+        85 => ("slight snow showers", Type::Snow),
+        86 => ("heavy snow showers", Type::Snow),
+        95 => ("thunderstorm", Type::Storm),
+        96 => ("thunderstorm with slight hail", Type::Storm),
+        97 => ("heavy thunderstorm", Type::Storm),
+        99 => ("thunderstorm with heavy hail", Type::Storm),
         _ => return None,
     })
 }
@@ -144,15 +168,16 @@ pub fn parse(body: &str) -> Result<Report, String> {
     let known = sent
         .as_u64()
         .and_then(|code| u8::try_from(code).ok())
-        .and_then(|code| words(code).map(|words| (code, words)));
-    let (code, words) = known.ok_or_else(|| {
+        .and_then(meaning);
+    let (words, coded) = known.ok_or_else(|| {
         format!("Open-Meteo sent weather code {sent}, which hearth does not know")
     })?;
     Ok(Report {
-        code,
         words,
+        coded,
         temperature: number("temperature_2m")?,
         wind: number("wind_speed_10m")?,
+        day: number("is_day")? != 0.0,
     })
 }
 
