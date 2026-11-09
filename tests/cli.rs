@@ -231,3 +231,29 @@ fn the_river_reads_its_history_once_at_startup() {
     assert!(quit, "hearth did not quit on q");
     assert_eq!(count, 1);
 }
+
+/// Given: a latitude out of range on the command line, and a latitude with
+/// no longitude.
+/// When: hearth starts with each, with no terminal.
+/// Then: each exits 2 with a message that names the flag at fault.
+///
+/// Why it matters: half a location or a wrong one would fetch the weather
+/// of another place, or fail on every fetch.
+#[test]
+fn a_bad_location_flag_stops_startup_and_names_the_flag() {
+    for (name, args, flag) in [
+        (
+            "range",
+            &["--latitude", "91", "--longitude", "10"][..],
+            "--latitude",
+        ),
+        ("half", &["--latitude", "59.91"][..], "--longitude"),
+    ] {
+        // When:
+        let (code, stderr) = run(args, &config_home(name, None));
+
+        // Then:
+        assert_eq!(code, 2, "{name}: {stderr}");
+        assert!(stderr.contains(flag), "{name}: {stderr}");
+    }
+}

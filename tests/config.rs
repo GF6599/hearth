@@ -17,6 +17,7 @@ use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
 use hearth::sound::Volume;
 use hearth::theme;
+use hearth::weather::Location;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
@@ -834,4 +835,86 @@ fn esc_leaves_the_editor_and_saves_nothing() {
         "{:#?}",
         rows_of(&app, area)
     );
+}
+
+/// The weather table sets the location, and the two flags win over it.
+/// Given: a file whose `[weather]` holds Oslo, and one with whole degrees.
+/// When: hearth reads each with no flags, and the first again with
+/// `--latitude` and `--longitude`.
+/// Then: the location is the file's place, then the flags' place.
+///
+/// Why it matters: the flags let a user look at another place for one run
+/// without editing the file.
+#[test]
+fn the_weather_table_sets_the_location_and_the_flags_win() {
+    // Given:
+    let oslo = Config::load(&config_file(
+        "weather-oslo",
+        Some("[weather]\nlatitude = 59.91\nlongitude = 10.75\n"),
+    ))
+    .unwrap();
+    let whole = Config::load(&config_file(
+        "weather-whole",
+        Some("[weather]\nlatitude = 60\nlongitude = -10\n"),
+    ))
+    .unwrap();
+    let plain = Cli::try_parse_from(["hearth"]).unwrap();
+    let flagged =
+        Cli::try_parse_from(["hearth", "--latitude", "-33.87", "--longitude", "-70.65"]).unwrap();
+
+    // Then:
+    assert_eq!(
+        plain.location(&oslo),
+        Some(Location::new(59.91, 10.75).unwrap())
+    );
+    assert_eq!(
+        plain.location(&whole),
+        Some(Location::new(60.0, -10.0).unwrap())
+    );
+    assert_eq!(
+        flagged.location(&oslo),
+        Some(Location::new(-33.87, -70.65).unwrap())
+    );
+    assert_eq!(plain.location(&Config::default()), None);
+}
+
+/// A bad weather table stops startup with a message that names the key.
+/// Given: a latitude out of range, a longitude that is a word, a latitude
+/// with no longitude, and a key that is no setting.
+/// When: hearth reads each file.
+/// Then: each is refused with a message that names the key and its rule.
+///
+/// Why it matters: a location read half or not at all shows the weather of
+/// another place, or none, with no hint why.
+#[test]
+fn a_bad_weather_table_names_the_key() {
+    for (name, text, expected) in [
+        (
+            "range",
+            "[weather]\nlatitude = 91\nlongitude = 10\n",
+            "weather.latitude must be from -90 to 90",
+        ),
+        (
+            "word",
+            "[weather]\nlatitude = 59.91\nlongitude = \"east\"\n",
+            "weather.longitude must be a number",
+        ),
+        (
+            "half",
+            "[weather]\nlatitude = 59.91\n",
+            "weather needs both latitude and longitude",
+        ),
+        (
+            "other",
+            "[weather]\nplace = \"Oslo\"\n",
+            "weather.place is not a setting",
+        ),
+    ] {
+        // When:
+        let refused =
+            Config::load(&config_file(&format!("weather-{name}"), Some(text))).unwrap_err();
+
+        // Then:
+        assert!(refused.contains(expected), "{name}: {refused}");
+    }
 }
