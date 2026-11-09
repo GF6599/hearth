@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use hearth::scene::Scene;
 use hearth::scenes::weather::{CREDIT, NO_LOCATION, READING, Weather};
 use hearth::theme;
-use hearth::weather::{Location, Source, parse};
+use hearth::weather::{Location, Source, Type, parse};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
@@ -60,10 +60,16 @@ fn closed() -> String {
     format!("http://{}", listener.local_addr().unwrap())
 }
 
-/// The reply Open-Meteo gives for the current weather.
+/// The reply Open-Meteo gives for the current weather by day.
 fn current(code: i64, temperature: f64, wind: f64) -> String {
+    current_at(code, temperature, wind, 1)
+}
+
+/// The reply Open-Meteo gives for the current weather, by day when
+/// `is_day` is 1 and at night when it is 0.
+fn current_at(code: i64, temperature: f64, wind: f64, is_day: i64) -> String {
     format!(
-        r#"{{"latitude":59.906296,"longitude":10.744095,"current_units":{{"time":"iso8601","interval":"seconds","weather_code":"wmo code","temperature_2m":"°C","wind_speed_10m":"km/h","is_day":""}},"current":{{"time":"2026-11-09T13:15","interval":900,"weather_code":{code},"temperature_2m":{temperature},"wind_speed_10m":{wind},"is_day":1}}}}"#
+        r#"{{"latitude":59.906296,"longitude":10.744095,"current_units":{{"time":"iso8601","interval":"seconds","weather_code":"wmo code","temperature_2m":"°C","wind_speed_10m":"km/h","is_day":""}},"current":{{"time":"2026-11-09T13:15","interval":900,"weather_code":{code},"temperature_2m":{temperature},"wind_speed_10m":{wind},"is_day":{is_day}}}}}"#
     )
 }
 
@@ -125,7 +131,7 @@ fn the_scene_names_the_weather_the_temperature_and_the_place() {
     for part in [
         "latitude=59.91",
         "longitude=10.75",
-        "current=weather_code,temperature_2m,wind_speed_10m",
+        "current=weather_code,temperature_2m,wind_speed_10m,is_day",
     ] {
         assert!(request.contains(part), "{part} in {request}");
     }
@@ -195,6 +201,60 @@ fn each_code_reads_as_its_weather_and_a_strong_wind_as_the_wind() {
         // Then:
         assert_eq!(report.status(place), expected, "code {code}, wind {wind}");
     }
+}
+
+/// Each weather code falls in one of the seven weather types, and a strong
+/// wind over a clear or cloudy sky is wind.
+/// Given: every code Open-Meteo sends, with the wind below and at the
+/// threshold.
+/// When: each reply is read.
+/// Then: each code gives its type, and the wind turns only a clear or
+/// cloudy sky to wind.
+///
+/// Why it matters: the type picks what the sky draws, so a code in the
+/// wrong type draws snow in the rain.
+#[test]
+fn each_code_falls_in_its_weather_type() {
+    let rain = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82];
+    for (codes, wind, expected) in [
+        (&[0, 1][..], 38.9, Type::Clear),
+        (&[2, 3], 38.9, Type::Cloud),
+        (&[45, 48], 39.0, Type::Fog),
+        (&rain, 39.0, Type::Rain),
+        (&[71, 73, 75, 77, 85, 86], 39.0, Type::Snow),
+        (&[95, 96, 97, 99], 39.0, Type::Storm),
+        (&[0, 1, 2, 3], 39.0, Type::Wind),
+    ] {
+        for &code in codes {
+            // When:
+            let report = parse(&current(code, 10.0, wind)).unwrap();
+
+            // Then:
+            assert_eq!(report.weather(), expected, "code {code}, wind {wind}");
+        }
+    }
+}
+
+/// Open-Meteo says whether it is day or night at the place.
+/// Given: a reply with `is_day` 1, one with 0, and one with none.
+/// When: each is read.
+/// Then: the first is day, the second is night, and the third names what
+/// it lacks.
+///
+/// Why it matters: a clear sky shows the sun by day and the moon at night,
+/// so a guess would show the sun at midnight.
+#[test]
+fn is_day_tells_day_from_night() {
+    // When:
+    let day = parse(&current_at(0, 10.0, 5.0, 1)).unwrap();
+    let night = parse(&current_at(0, 10.0, 5.0, 0)).unwrap();
+    let neither =
+        parse(r#"{"current":{"weather_code":0,"temperature_2m":10.0,"wind_speed_10m":5.0}}"#);
+
+    // Then:
+    assert!(day.day());
+    assert!(!night.day());
+    assert_eq!(neither.unwrap_err(), "Open-Meteo sent no is_day");
 }
 
 /// A reply hearth cannot use shows what went wrong, in plain text.
