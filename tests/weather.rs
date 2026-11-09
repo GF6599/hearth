@@ -1,17 +1,21 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
+mod pixels;
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hearth::scene::Scene;
+use hearth::scene::{Rng, Scene};
 use hearth::scenes::weather::{CREDIT, NO_LOCATION, READING, Weather};
-use hearth::theme;
+use hearth::theme::{self, Palette};
 use hearth::weather::{Location, Source, Type, parse};
+use rand::SeedableRng;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 const AREA: Rect = Rect::new(0, 0, 100, 30);
 
@@ -73,6 +77,10 @@ fn current_at(code: i64, temperature: f64, wind: f64, is_day: i64) -> String {
     )
 }
 
+fn seeded() -> Rng {
+    Rng::seed_from_u64(7)
+}
+
 fn oslo() -> Location {
     Location::new(59.91, 10.75).unwrap()
 }
@@ -117,7 +125,11 @@ fn the_scene_names_the_weather_the_temperature_and_the_place() {
     let server = serve("200 OK", &current(63, 7.4, 12.0));
 
     // When:
-    let mut scene = Weather::new(&theme::ROSE_PINE, Some(Source::new(&server.base, oslo())));
+    let mut scene = Weather::new(
+        seeded(),
+        &theme::ROSE_PINE,
+        Some(Source::new(&server.base, oslo())),
+    );
     let shown = settled(&mut scene);
 
     // Then:
@@ -295,7 +307,11 @@ fn a_reply_hearth_cannot_use_shows_what_went_wrong() {
         (closed(), "cannot reach Open-Meteo"),
     ] {
         // When:
-        let mut scene = Weather::new(&theme::ROSE_PINE, Some(Source::new(&base, oslo())));
+        let mut scene = Weather::new(
+            seeded(),
+            &theme::ROSE_PINE,
+            Some(Source::new(&base, oslo())),
+        );
         let shown = settled(&mut scene);
 
         // Then:
@@ -322,7 +338,11 @@ fn the_scene_says_it_is_reading_until_the_weather_lands() {
     // Given:
     let (open, gate) = mpsc::channel();
     let server = serve_after("200 OK", &current(3, 9.0, 10.0), Some(gate));
-    let mut scene = Weather::new(&theme::ROSE_PINE, Some(Source::new(&server.base, oslo())));
+    let mut scene = Weather::new(
+        seeded(),
+        &theme::ROSE_PINE,
+        Some(Source::new(&server.base, oslo())),
+    );
 
     // When:
     scene.tick(AREA);
@@ -353,7 +373,7 @@ fn the_scene_asks_again_after_a_failure_and_stops_once_closed() {
     let source = Source::new(&server.base, oslo()).every(wait, wait);
 
     // When:
-    let scene = Weather::new(&theme::ROSE_PINE, Some(source));
+    let scene = Weather::new(seeded(), &theme::ROSE_PINE, Some(source));
     for _ in 0..2 {
         server
             .requests
@@ -378,7 +398,7 @@ fn the_scene_asks_again_after_a_failure_and_stops_once_closed() {
 #[test]
 fn without_a_location_the_scene_says_how_to_give_one() {
     // When:
-    let mut scene = Weather::new(&theme::ROSE_PINE, None);
+    let mut scene = Weather::new(seeded(), &theme::ROSE_PINE, None);
     scene.tick(AREA);
 
     // Then:
@@ -409,5 +429,292 @@ fn a_location_holds_only_coordinates_in_range() {
     ] {
         let refused = Location::new(latitude, longitude).unwrap_err();
         assert!(refused.contains(range), "{refused}");
+    }
+}
+
+/// The ticks between the two frames a test of motion compares: about four
+/// seconds.
+const LATER: u32 = 66;
+
+fn landed_in(palette: &'static Palette, body: &str) -> Weather {
+    let server = serve("200 OK", body);
+    let mut scene = Weather::new(seeded(), palette, Some(Source::new(&server.base, oslo())));
+    settled(&mut scene);
+    scene
+}
+
+fn landed(body: &str) -> Weather {
+    landed_in(&theme::ROSE_PINE, body)
+}
+
+fn later(scene: &mut Weather) {
+    for _ in 0..LATER {
+        scene.tick(AREA);
+    }
+}
+
+fn channels(colour: Color) -> (u8, u8, u8) {
+    match colour {
+        Color::Rgb(r, g, b) => (r, g, b),
+        other => panic!("{other:?} is not a colour of the theme"),
+    }
+}
+
+/// The sun is gold toward the text: bright, and far redder than blue.
+fn is_sunlit(colour: Color) -> bool {
+    let (r, _, b) = channels(colour);
+    r >= 200 && i32::from(r) - i32::from(b) >= 50
+}
+
+/// The moon, the stars and the clouds lean to the text and the subtle
+/// colour, which in Rose Pine are light and hold at least as much blue as
+/// red. The sky holds less light, and the sun and its rays less blue.
+fn is_pale(colour: Color) -> bool {
+    let (r, g, b) = channels(colour);
+    r.min(g).min(b) >= 100 && b >= r
+}
+
+/// Each pixel of the frame in the rows from `top` to `bottom`, as shares of
+/// the frame's height, that `keep` accepts, with its place.
+fn pixels_in(
+    scene: &Weather,
+    (top, bottom): (f32, f32),
+    keep: impl Fn(Color) -> bool,
+) -> Vec<(usize, usize)> {
+    let grid = pixels::colours(&render(scene), AREA);
+    let height = grid.len() as f32;
+    let rows = (top * height) as usize..(bottom * height) as usize;
+    rows.flat_map(|y| {
+        let keep = &keep;
+        grid[y]
+            .iter()
+            .enumerate()
+            .filter(move |(_, colour)| keep(**colour))
+            .map(move |(x, _)| (x, y))
+    })
+    .collect()
+}
+
+/// The pixels with no other within `reach` pixels, as a star stands alone
+/// and the moon does not.
+fn alone(places: &[(usize, usize)], reach: usize) -> usize {
+    places
+        .iter()
+        .filter(|(x, y)| {
+            !places.iter().any(|(ox, oy)| {
+                (ox, oy) != (x, y) && x.abs_diff(*ox) <= reach && y.abs_diff(*oy) <= reach
+            })
+        })
+        .count()
+}
+
+fn top_light(scene: &Weather) -> u32 {
+    pixels::colours(&render(scene), AREA)[0]
+        .iter()
+        .map(|colour| {
+            let (r, g, b) = channels(*colour);
+            u32::from(r) + u32::from(g) + u32::from(b)
+        })
+        .sum()
+}
+
+/// A clear sky shows the sun by day, and the moon and the stars at night.
+/// Given: a clear sky by day and a clear sky at night.
+/// When: each scene draws.
+/// Then: the day frame has a sun in the upper half. The night frame has no
+/// sun, a moon, stars that stand alone, and a darker sky.
+///
+/// Why it matters: the sky is how the scene tells day from night, so the
+/// sun at midnight shows the wrong time of day.
+#[test]
+fn a_clear_sky_shows_the_sun_by_day_and_the_moon_and_stars_at_night() {
+    // When:
+    let day = landed(&current_at(0, 18.0, 5.0, 1));
+    let night = landed(&current_at(0, 4.0, 5.0, 0));
+
+    // Then:
+    let upper = (0.0, 0.5);
+    let sun = pixels_in(&day, upper, is_sunlit).len();
+    assert!(sun >= 40, "{sun} pixels of sun by day");
+    assert!(
+        pixels_in(&night, upper, is_sunlit).is_empty(),
+        "a sun at night"
+    );
+    let pale = pixels_in(&night, upper, is_pale);
+    assert!(pale.len() >= 40, "{} pale pixels at night", pale.len());
+    let stars = alone(&pale, 2);
+    assert!(stars >= 5, "{stars} stars at night");
+    assert!(top_light(&day) > top_light(&night));
+}
+
+/// Clouds drift across the sky.
+/// Given: a partly cloudy sky by day.
+/// When: the scene draws, then draws again four seconds later.
+/// Then: both frames hold clouds, and the clouds lie in other places.
+///
+/// Why it matters: the scene is a screensaver, and a sky that stands still
+/// reads as a frozen app.
+#[test]
+fn clouds_drift_across_the_sky() {
+    // Given:
+    let mut scene = landed(&current(2, 9.0, 10.0));
+    let sky = (0.0, 0.5);
+
+    // When:
+    let before = pixels_in(&scene, sky, is_pale);
+    later(&mut scene);
+    let after = pixels_in(&scene, sky, is_pale);
+
+    // Then:
+    assert!(before.len() >= 200, "{} pixels of cloud", before.len());
+    assert!(after.len() >= 200, "{} pixels of cloud", after.len());
+    let moved = before.iter().filter(|place| !after.contains(place)).count();
+    assert!(moved >= 50, "{moved} pixels of cloud moved");
+}
+
+/// Fog drifts over the land in front of the hills.
+/// Given: a fog and a clear sky, both by day.
+/// When: each scene draws, then draws again four seconds later.
+/// Then: the ground at the foot of the frame changes under the fog, and
+/// stays the same under the clear sky.
+///
+/// Why it matters: fog that drifts only behind the hills leaves the land
+/// sharp, and the scene reads as a clear day.
+#[test]
+fn fog_drifts_over_the_land_in_front_of_the_hills() {
+    let ground = (0.86, 0.94);
+    for (body, drifts) in [(current(45, 3.0, 2.0), true), (current(0, 3.0, 2.0), false)] {
+        // Given:
+        let mut scene = landed(&body);
+        let grid = |scene: &Weather| pixels::colours(&render(scene), AREA);
+
+        // When:
+        let before = grid(&scene);
+        later(&mut scene);
+        let after = grid(&scene);
+
+        // Then:
+        let height = before.len() as f32;
+        let rows = (ground.0 * height) as usize..(ground.1 * height) as usize;
+        let changed = rows
+            .flat_map(|y| (0..before[y].len()).map(move |x| (x, y)))
+            .filter(|&(x, y)| before[y][x] != after[y][x])
+            .count();
+        assert_eq!(changed >= 20, drifts, "{changed} pixels of ground changed");
+    }
+}
+
+/// A new theme repaints the sky and keeps the weather.
+/// Given: a cloudy sky in Rose Pine.
+/// When: the theme changes to Rose Pine Dawn.
+/// Then: the sky takes other colours, and the weather still shows with no
+/// new read.
+///
+/// Why it matters: a repaint that read the weather again would send the
+/// place to Open-Meteo on each theme key.
+#[test]
+fn a_new_theme_repaints_the_sky_and_keeps_the_weather() {
+    // Given:
+    let mut scene = landed(&current(3, 9.0, 10.0));
+    let before = pixels::colours(&render(&scene), AREA);
+
+    // When:
+    assert!(scene.repaint(&theme::ROSE_PINE_DAWN));
+    let shown = render(&scene);
+
+    // Then:
+    let after = pixels::colours(&shown, AREA);
+    assert_ne!(before[0][0], after[0][0]);
+    assert!(shows(&shown, "overcast · 9 °C"));
+}
+
+/// Rose Pine over the terminal's background, and the same theme with
+/// another base. A colour mixed with the base moves when the base moves.
+const SEE_THROUGH: &Palette = &Palette {
+    see_through: true,
+    ..theme::ROSE_PINE
+};
+const OTHER_BASE: &Palette = &Palette {
+    base: Color::Rgb(250, 0, 250),
+    see_through: true,
+    ..theme::ROSE_PINE
+};
+
+/// The cells of a frame that may differ between two bases, one in a
+/// hundred. A cell of three colours or more with a pixel of the base keeps
+/// the pair of colours nearest its pixels, the base among them, so a few
+/// such cells keep another pair. A colour mixed with the base changes a
+/// band of sky, thousands of cells.
+const PAIRS_THAT_MOVE: usize = AREA.area() as usize / 100;
+
+/// Over the terminal's background, no colour of the sky mixes with it.
+/// Given: Rose Pine over the terminal's background, and the same theme with
+/// another base.
+/// When: a clear day, a clear night, a cloudy sky and a fog draw in each.
+/// Then: the cells that show no base show the same glyph and colours in
+/// both, but for a few cells that keep another pair.
+///
+/// Why it matters: the terminal's background is not known, so a mix with
+/// it shows as a colour that belongs to no theme.
+#[test]
+fn over_the_terminal_background_nothing_mixes_with_the_base() {
+    for body in [
+        current_at(0, 18.0, 5.0, 1),
+        current_at(0, 4.0, 5.0, 0),
+        current(2, 9.0, 10.0),
+        current(45, 3.0, 2.0),
+    ] {
+        // When:
+        let one = render(&landed_in(SEE_THROUGH, &body));
+        let other = render(&landed_in(OTHER_BASE, &body));
+
+        // Then:
+        let mut compared = 0;
+        let mut moved = Vec::new();
+        for position in AREA.positions() {
+            let (cell, twin) = (&one[position], &other[position]);
+            if [cell.fg, cell.bg].contains(&SEE_THROUGH.base)
+                || [twin.fg, twin.bg].contains(&OTHER_BASE.base)
+            {
+                continue;
+            }
+            compared += 1;
+            if (cell.symbol(), cell.fg, cell.bg) != (twin.symbol(), twin.fg, twin.bg) {
+                moved.push(position);
+            }
+        }
+        assert!(compared > 0, "no cell without the base in {body}");
+        assert!(
+            moved.len() <= PAIRS_THAT_MOVE,
+            "{} cells differ, {moved:?} in {body}",
+            moved.len()
+        );
+    }
+}
+
+/// A smaller area draws only inside it.
+/// Given: a clear sky that has landed.
+/// When: it renders into areas smaller than the buffer, down to nothing.
+/// Then: no cell outside the area changes.
+///
+/// Why it matters: a pane that draws past its edge paints over the pane
+/// beside it.
+#[test]
+fn a_smaller_area_draws_only_inside_it() {
+    // Given:
+    let canvas = Rect::new(0, 0, 40, 12);
+    let mut scene = landed(&current(0, 18.0, 5.0));
+
+    // When, then:
+    for area in [
+        Rect::new(3, 2, 20, 6),
+        Rect::new(3, 2, 1, 1),
+        Rect::new(3, 2, 5, 0),
+        Rect::new(3, 2, 0, 0),
+    ] {
+        scene.tick(area);
+        let mut buffer = Buffer::empty(canvas);
+        scene.render(area, &mut buffer);
+        pixels::assert_blank_outside(&buffer, area);
     }
 }
