@@ -196,9 +196,9 @@ fn listed(app: &App) -> Vec<String> {
 /// `/` and letters narrow the list to the scenes that match them loosely.
 /// Given: the picker.
 /// When: `/` is pressed and `drv` typed, then the query is cleared and
-/// `the` typed.
+/// `of` typed.
 /// Then: `drv` lists only the drive, whose name holds the letters in
-/// order, and marks it, and the pane runs it. `the`, which no name holds in
+/// order, and marks it, and the pane runs it. `of`, which no name holds in
 /// order, lists the scenes whose summary holds the word, in the order of
 /// the list. The query shows in the list's top rule, and the list frame
 /// keeps its corners.
@@ -229,17 +229,17 @@ fn slash_and_letters_narrow_the_list_to_the_loose_matches() {
 
     // When:
     send(&mut app, vec![key(KeyCode::Backspace); 3]);
-    send(&mut app, typed("the"));
+    send(&mut app, typed("of"));
 
     // Then:
     let by_name = |kind: &&SceneKind| {
         let mut letters = kind.name().chars();
-        "the".chars().all(|wanted| letters.any(|c| c == wanted))
+        "of".chars().all(|wanted| letters.any(|c| c == wanted))
     };
-    assert!(!ALL.iter().any(|kind| by_name(&kind)), "a name holds `the`");
+    assert!(!ALL.iter().any(|kind| by_name(&kind)), "a name holds `of`");
     let expected: Vec<&str> = ALL
         .iter()
-        .filter(|kind| kind.summary().contains("the"))
+        .filter(|kind| kind.summary().contains("of"))
         .map(|kind| kind.name())
         .collect();
     assert!(expected.len() >= 2, "{expected:?}");
