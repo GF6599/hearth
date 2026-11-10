@@ -8,6 +8,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use hearth::octant::CELL_HEIGHT;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::weather::{CREDIT, NO_LOCATION, READING, Weather};
 use hearth::theme::{self, Palette};
@@ -689,6 +690,57 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
             "{} cells differ, {moved:?} in {body}",
             moved.len()
         );
+    }
+}
+
+/// In every theme, the night is dark under a bright moon, and the status
+/// reads over the sky.
+/// Given: each theme, light and dark.
+/// When: a clear night and a clear day draw.
+/// Then: at night the brightest pixel of the upper sky outshines the sky at
+/// its top by far. By day and at night, each letter of the status is
+/// lighter than the cell behind it.
+///
+/// Why it matters: a light theme swaps its base and its text, so a sky
+/// mixed from them shows a pale night under a dark moon, with the status
+/// lost in it.
+#[test]
+fn every_theme_draws_a_dark_night_and_a_status_that_reads() {
+    for (name, palette) in theme::THEMES {
+        for (body, night) in [
+            (current_at(0, 4.0, 5.0, 0), true),
+            (current_at(0, 18.0, 5.0, 1), false),
+        ] {
+            // When:
+            let shown = render(&landed_in(palette, &body));
+
+            // Then:
+            if night {
+                let grid = pixels::colours(&shown, AREA);
+                let sky = theme::luma(grid[CELL_HEIGHT * 2][0]);
+                let brightest = grid[..grid.len() / 2]
+                    .iter()
+                    .flatten()
+                    .map(|colour| theme::luma(*colour))
+                    .max()
+                    .unwrap();
+                assert!(
+                    brightest > sky + 100_000,
+                    "{name}: the moon at {brightest} over a sky at {sky}"
+                );
+            }
+            let status = (0..AREA.width)
+                .map(|x| &shown[(x, 1)])
+                .filter(|cell| cell.symbol().chars().all(char::is_alphanumeric));
+            for cell in status {
+                assert!(
+                    theme::luma(cell.fg) > theme::luma(cell.bg),
+                    "{name}, night {night}: {:?} on {:?}",
+                    cell.fg,
+                    cell.bg
+                );
+            }
+        }
     }
 }
 
