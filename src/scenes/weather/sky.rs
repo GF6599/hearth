@@ -140,15 +140,109 @@ const FOG: [(f32, f32, f32, f32, u8); 5] = [
     (0.96, 0.05, 0.45, -3.5, 2),
 ];
 
+/// The clouds that close the sky over rain, snow and a storm: a bank along
+/// the top, and a lower layer that rain and a storm add.
+const BANKS: [Spread; 2] = [
+    Spread {
+        count: 7,
+        width: 0.3,
+        height: 0.09,
+        speed: 2.0,
+        rows: (0.02, 0.12),
+    },
+    Spread {
+        count: 6,
+        width: 0.32,
+        height: 0.1,
+        speed: 5.0,
+        rows: (0.05, 0.18),
+    },
+];
+/// How much faster the clouds of a storm move, and the share of its radius
+/// each of their puffs swells and shrinks by.
+const STORM_HASTE: f32 = 2.4;
+const CHURN: f32 = 0.14;
+
+/// The pixel row where rain and snow come out of the clouds. The status
+/// lies in the two rows of cells above it, and a drop behind a letter
+/// would light the whole cell.
+const FALL_TOP: usize = 2 * CELL_HEIGHT;
+/// The most drops or flakes.
+const FALLS: usize = 640;
+/// How rain falls: the pixels of pane for each drop, the pixels across for
+/// each pixel down, the pixels a second of the furthest drop and what the
+/// nearest adds on a pane as tall as `CLOUD_PANE`, and the pixels of the
+/// longest streak.
+#[derive(Debug, Clone, Copy)]
+struct Shower {
+    room: f32,
+    slant: f32,
+    speed: (f32, f32),
+    streak: f32,
+}
+
+const RAIN: Shower = Shower {
+    room: 150.0,
+    slant: 0.22,
+    speed: (90.0, 120.0),
+    streak: 4.0,
+};
+const DOWNPOUR: Shower = Shower {
+    room: 85.0,
+    slant: 0.45,
+    speed: (130.0, 150.0),
+    streak: 6.0,
+};
+/// The depth from which a drop is near enough to splash, the seconds a
+/// splash lasts, and the pixels its two droplets fly out and up.
+const SPLASHES_FROM: f32 = 0.55;
+const SPLASH: f32 = 0.22;
+const SPLASH_REACH: (f32, f32) = (4.0, 4.0);
+
+/// The pixels of pane for each flake, the pixels a second of the furthest
+/// flake and what the nearest adds, the pixels a second every flake drifts
+/// across, and the pixels the furthest flake sways and what the nearest
+/// adds.
+const SNOW_ROOM: f32 = 170.0;
+const SNOW_SPEED: (f32, f32) = (7.0, 16.0);
+const SNOW_DRIFT: f32 = 3.0;
+const SWAY: (f32, f32) = (1.0, 2.5);
+/// The depth from which a flake is near enough to draw four pixels.
+const LARGE_FLAKE: f32 = 0.75;
+/// The seconds the snow takes to lie as deep as it gets, the share of the
+/// height that is, and the share of it that lies from the first frame.
+const SNOW_FILL: f32 = 45.0;
+const SNOW_DEEP: f32 = 0.04;
+const FIRST_SNOW: f32 = 0.2;
+
+/// The seconds of each round of a storm, which holds one strike at a time
+/// of its own, and the seconds the strike lights the sky.
+const STRIKE_GAP: f32 = 7.0;
+const FLASH: f32 = 0.34;
+/// The shares of the width a bolt starts between, the share of the height
+/// it starts at, and the pixels down of each of its steps.
+const BOLT_SPAN: (f32, f32) = (0.25, 0.6);
+const BOLT_TOP: f32 = 0.15;
+const BOLT_STEP: f32 = 2.0;
+/// One step in this many starts a branch, and a branch runs this many
+/// steps at least and at most.
+const BRANCH_ODDS: u64 = 11;
+const BRANCH_STEPS: (u64, u64) = (4, 10);
+/// How strongly a flash at its brightest veils the frame.
+const FLASH_VEIL: f32 = 0.3;
+
 /// The steps a share of a glow or a fade rounds to.
 const SHADE_STEPS: f32 = 64.0;
 
-/// What the sky shows. Rain, snow, a storm and the wind draw a cloudy sky
-/// until each has a sky of its own.
+/// What the sky shows. The wind draws a cloudy sky until it has a sky of
+/// its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Look {
     Clear,
     Cloud,
+    Rain,
+    Snow,
+    Storm,
     Fog,
 }
 
@@ -157,7 +251,10 @@ impl Look {
         match weather {
             Type::Clear => Look::Clear,
             Type::Fog => Look::Fog,
-            Type::Cloud | Type::Rain | Type::Snow | Type::Storm | Type::Wind => Look::Cloud,
+            Type::Rain => Look::Rain,
+            Type::Snow => Look::Snow,
+            Type::Storm => Look::Storm,
+            Type::Cloud | Type::Wind => Look::Cloud,
         }
     }
 
@@ -166,7 +263,10 @@ impl Look {
         match self {
             Look::Clear => 1.0,
             Look::Cloud => 0.6,
+            Look::Snow => 0.5,
+            Look::Rain => 0.4,
             Look::Fog => 0.3,
+            Look::Storm => 0.25,
         }
     }
 }
@@ -191,6 +291,8 @@ struct Land {
     chimney: Color,
     fence: Color,
     smoke: Color,
+    /// The snow that lies on the roof and on the tip of each pine.
+    cap: Option<Color>,
 }
 
 /// The colours of the sky by day or at night, mixed once from the palette.
@@ -207,6 +309,19 @@ struct Hours {
     fog: Color,
     /// The sun or the moon through the fog.
     veiled: Color,
+    /// The land under snow.
+    snow_land: Land,
+    rainy: [Color; 3],
+    snowy: [Color; 3],
+    stormy: [Color; 3],
+    /// The clouds over rain, over snow and over a storm, each as the shade
+    /// below, the body and the light on top.
+    rain_bank: [Color; 3],
+    snow_bank: [Color; 3],
+    storm_bank: [Color; 3],
+    drop: Color,
+    splash: Color,
+    flake: Color,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -227,6 +342,9 @@ struct Shades {
     lamp: Color,
     /// The lit window from its dimmest flicker to its brightest.
     window: [Color; 4],
+    bolt: Color,
+    bolt_glow: Color,
+    flash: Color,
 }
 
 impl Shades {
@@ -271,6 +389,25 @@ impl Shades {
             chimney: mix(dark, overlay, 0.9),
             fence: mix(day_near, palette.rose, 0.4),
             smoke: palette.subtle,
+            cap: None,
+        };
+        let day_snow = mix(palette.subtle, bright, 0.45);
+        let day_snowy = [
+            mix(dark, palette.subtle, 0.5),
+            mix(dark, palette.subtle, 0.7),
+            mix(palette.subtle, bright, 0.15),
+        ];
+        let day_snow_land = Land {
+            ridge: mix(day_snowy[2], bright, 0.25),
+            far: mix(palette.subtle, bright, 0.2),
+            far_lit: mix(palette.subtle, bright, 0.4),
+            near: day_snow,
+            near_lit: mix(day_snow, bright, 0.5),
+            grass: mix(day_snow, palette.pine, 0.5),
+            fleck: mix(day_snow, palette.subtle, 0.5),
+            fence: mix(dark, palette.rose, 0.45),
+            cap: Some(mix(day_snow, bright, 0.5)),
+            ..day_land
         };
         let night_haze = mix(dark, palette.iris, 0.24);
         let night_far = mix(mix(dark, palette.iris, 0.16), overlay, 0.55);
@@ -293,6 +430,25 @@ impl Shades {
             chimney: mix(dark, overlay, 0.9),
             fence: mix(night_near, palette.muted, 0.4),
             smoke: palette.muted,
+            cap: None,
+        };
+        let night_snow = mix(palette.muted, palette.subtle, 0.5);
+        let night_snowy = [
+            mix(dark, palette.subtle, 0.1),
+            mix(dark, palette.subtle, 0.2),
+            mix(dark, palette.subtle, 0.32),
+        ];
+        let night_snow_land = Land {
+            ridge: mix(night_snowy[2], palette.muted, 0.3),
+            far: mix(overlay, palette.muted, 0.6),
+            far_lit: mix(overlay, palette.subtle, 0.5),
+            near: night_snow,
+            near_lit: mix(night_snow, palette.subtle, 0.5),
+            grass: mix(night_snow, dark, 0.5),
+            fleck: mix(night_snow, palette.muted, 0.6),
+            fence: mix(dark, overlay, 0.6),
+            cap: Some(palette.subtle),
+            ..night_land
         };
         let clouds = |bodies: [Color; 3], shade: Color, light: Color, lean: f32| {
             bodies.map(|body| [mix(body, shade, 0.5), body, mix(body, light, lean)])
@@ -329,6 +485,36 @@ impl Shades {
                 ),
                 fog: mix(palette.subtle, bright, 0.3),
                 veiled: mix(mix(dark, palette.subtle, 0.4), bright, 0.45),
+                snow_land: day_snow_land,
+                rainy: [
+                    mix(dark, palette.muted, 0.4),
+                    mix(dark, palette.muted, 0.6),
+                    mix(mix(dark, palette.muted, 0.7), palette.foam, 0.2),
+                ],
+                snowy: day_snowy,
+                stormy: [
+                    mix(dark, overlay, 0.6),
+                    mix(mix(dark, overlay, 0.8), palette.iris, 0.12),
+                    mix(mix(dark, palette.muted, 0.35), palette.iris, 0.2),
+                ],
+                rain_bank: [
+                    mix(dark, palette.muted, 0.55),
+                    mix(palette.muted, palette.subtle, 0.3),
+                    mix(palette.muted, palette.subtle, 0.75),
+                ],
+                snow_bank: [
+                    mix(palette.muted, palette.subtle, 0.6),
+                    mix(palette.subtle, bright, 0.2),
+                    mix(palette.subtle, bright, 0.55),
+                ],
+                storm_bank: [
+                    mix(dark, overlay, 0.5),
+                    mix(overlay, palette.muted, 0.25),
+                    mix(overlay, palette.muted, 0.7),
+                ],
+                drop: mix(palette.foam, bright, 0.3),
+                splash: mix(palette.foam, bright, 0.5),
+                flake: bright,
             },
             night: Hours {
                 land: night_land,
@@ -355,6 +541,36 @@ impl Shades {
                 ),
                 fog: mix(palette.muted, palette.subtle, 0.4),
                 veiled: mix(mix(dark, palette.muted, 0.12), palette.subtle, 0.4),
+                snow_land: night_snow_land,
+                rainy: [
+                    dark,
+                    mix(dark, palette.muted, 0.12),
+                    mix(dark, palette.muted, 0.24),
+                ],
+                snowy: night_snowy,
+                stormy: [
+                    dark,
+                    mix(dark, palette.iris, 0.07),
+                    mix(dark, palette.iris, 0.16),
+                ],
+                rain_bank: [
+                    mix(dark, overlay, 0.5),
+                    mix(dark, palette.muted, 0.45),
+                    mix(palette.muted, palette.subtle, 0.3),
+                ],
+                snow_bank: [
+                    mix(dark, palette.muted, 0.5),
+                    mix(overlay, palette.muted, 0.7),
+                    mix(palette.muted, palette.subtle, 0.5),
+                ],
+                storm_bank: [
+                    mix(dark, overlay, 0.35),
+                    mix(dark, overlay, 0.9),
+                    mix(overlay, palette.muted, 0.5),
+                ],
+                drop: palette.subtle,
+                splash: mix(palette.subtle, palette.foam, 0.4),
+                flake: mix(palette.subtle, bright, 0.6),
             },
             sun: mix(palette.gold, bright, 0.35),
             sun_core: mix(mix(palette.gold, bright, 0.35), bright, 0.3),
@@ -367,6 +583,9 @@ impl Shades {
             glass: mix(dark, palette.foam, 0.4),
             lamp: palette.gold,
             window: [0.7, 0.8, 0.9, 1.0].map(|share| mix(dark, palette.gold, share)),
+            bolt: mix(bright, palette.iris, 0.12),
+            bolt_glow: palette.iris,
+            flash: mix(palette.iris, bright, 0.5),
         }
     }
 }
@@ -465,6 +684,65 @@ fn cloud(rng: &mut Rng, aspect: f32) -> Vec<Puff> {
     puffs
 }
 
+impl Layer {
+    fn new(rng: &mut Rng, spread: Spread) -> Self {
+        let Spread {
+            count,
+            width,
+            height,
+            speed,
+            rows: (high, low),
+        } = spread;
+        let clouds = (0..count)
+            .map(|_| {
+                let puffs = cloud(rng, width / height * CLOUD_PANE.0 / CLOUD_PANE.1);
+                let reach = puffs
+                    .iter()
+                    .map(|puff| puff.across.abs() + puff.radius)
+                    .fold(0.0, f32::max);
+                Cloud {
+                    across: rng.random_range(0.0..1.0),
+                    down: rng.random_range(high..low),
+                    puffs,
+                    reach,
+                }
+            })
+            .collect();
+        Self {
+            clouds,
+            height,
+            speed,
+        }
+    }
+}
+
+/// A drop of rain or a flake of snow: the share of the width it starts at,
+/// its depth from 0, the furthest, to 1, the nearest, the share of its way
+/// down it starts at, and the radians a second a flake sways.
+#[derive(Debug, Clone, Copy)]
+struct Fall {
+    across: f32,
+    depth: f32,
+    phase: f32,
+    sway: f32,
+}
+
+/// Numbers that depend only on a seed, so a bolt draws the same shape in
+/// every frame of its strike.
+struct Dice(u64);
+
+impl Dice {
+    fn roll(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        splitmix::mix(self.0)
+    }
+
+    /// A share from 0 up to 1.
+    fn share(&mut self) -> f32 {
+        (self.roll() >> 40) as f32 / (1_u64 << 24) as f32
+    }
+}
+
 #[derive(Debug)]
 pub struct Sky {
     shades: Shades,
@@ -473,10 +751,14 @@ pub struct Sky {
     near_pines: [f32; 2],
     stars: Vec<Star>,
     layers: Vec<Layer>,
+    banks: [Layer; 2],
+    falls: Vec<Fall>,
     fog_phases: [f32; FOG.len()],
     seed: u64,
     ticks: u64,
     progress: f32,
+    /// The ticks it has snowed without a break.
+    snowed: u64,
 }
 
 impl Sky {
@@ -503,34 +785,18 @@ impl Sky {
             .collect();
         let layers = LAYERS
             .iter()
-            .map(
-                |&Spread {
-                     count,
-                     width,
-                     height,
-                     speed,
-                     rows: (high, low),
-                 }| Layer {
-                    clouds: (0..count)
-                        .map(|_| {
-                            let puffs =
-                                cloud(&mut rng, width / height * CLOUD_PANE.0 / CLOUD_PANE.1);
-                            let reach = puffs
-                                .iter()
-                                .map(|puff| puff.across.abs() + puff.radius)
-                                .fold(0.0, f32::max);
-                            Cloud {
-                                across: rng.random_range(0.0..1.0),
-                                down: rng.random_range(high..low),
-                                puffs,
-                                reach,
-                            }
-                        })
-                        .collect(),
-                    height,
-                    speed,
-                },
-            )
+            .map(|spread| Layer::new(&mut rng, *spread))
+            .collect();
+        let fog_phases = std::array::from_fn(|_| rng.random_range(0.0..TAU));
+        let seed = rng.random();
+        let banks = BANKS.map(|spread| Layer::new(&mut rng, spread));
+        let falls = (0..FALLS)
+            .map(|_| Fall {
+                across: rng.random_range(0.0..1.0),
+                depth: rng.random_range(0.0..1.0),
+                phase: rng.random_range(0.0..1.0),
+                sway: rng.random_range(0.6..1.5),
+            })
             .collect();
         Self {
             shades: Shades::new(palette),
@@ -539,10 +805,13 @@ impl Sky {
             near_pines,
             stars,
             layers,
-            fog_phases: std::array::from_fn(|_| rng.random_range(0.0..TAU)),
-            seed: rng.random(),
+            banks,
+            falls,
+            fog_phases,
+            seed,
             ticks: 0,
             progress: 0.0,
+            snowed: 0,
         }
     }
 
@@ -554,9 +823,16 @@ impl Sky {
         self.shades = Shades::new(palette);
     }
 
-    pub fn tick(&mut self) {
+    /// Moves the sky on by a tick of `weather`. Snow lies deeper with each
+    /// tick it falls, and is gone once it stops.
+    pub fn tick(&mut self, weather: Type) {
         self.ticks += 1;
         self.progress = 0.0;
+        self.snowed = if Look::of(weather) == Look::Snow {
+            self.snowed + 1
+        } else {
+            0
+        };
     }
 
     /// Returns whether the progress moves the sky, which it does at every
@@ -593,6 +869,9 @@ impl Sky {
         let sky = match look {
             Look::Clear => hours.clear,
             Look::Cloud => hours.cloudy,
+            Look::Rain => hours.rainy,
+            Look::Snow => hours.snowy,
+            Look::Storm => hours.stormy,
             Look::Fog => hours.foggy,
         };
         canvas.bands((h * FAR.0) as usize, &sky);
@@ -600,6 +879,8 @@ impl Sky {
         let sun = (SUN.0 * w, SUN.1 * h);
         let moon = (MOON.0 * w, MOON.1 * h);
         match (look, day) {
+            // The bank of clouds hides the sun and the moon.
+            (Look::Rain | Look::Snow | Look::Storm, _) => {}
             (Look::Fog, true) => canvas.disc(sun, disc, hours.veiled),
             (Look::Fog, false) => canvas.disc(moon, disc, hours.veiled),
             (_, true) => self.sun(&mut canvas, sun, disc, t),
@@ -610,10 +891,25 @@ impl Sky {
             }
             (Look::Cloud, false) => self.moon(&mut canvas, moon, disc),
         }
-        if look == Look::Cloud {
-            for (layer, colours) in self.layers.iter().zip(hours.clouds) {
-                draw_layer(&mut canvas, layer, colours, t);
+        let [bank, lower] = &self.banks;
+        match look {
+            Look::Cloud => {
+                for (layer, colours) in self.layers.iter().zip(hours.clouds) {
+                    draw_layer(&mut canvas, layer, colours, t, 1.0, 0.0);
+                }
             }
+            Look::Rain => {
+                for layer in [lower, bank] {
+                    draw_layer(&mut canvas, layer, hours.rain_bank, t, 1.0, 0.0);
+                }
+            }
+            Look::Snow => draw_layer(&mut canvas, bank, hours.snow_bank, t, 1.0, 0.0),
+            Look::Storm => {
+                for layer in [lower, bank] {
+                    draw_layer(&mut canvas, layer, hours.storm_bank, t, STORM_HASTE, CHURN);
+                }
+            }
+            Look::Clear | Look::Fog => {}
         }
         if look == Look::Clear && day {
             self.birds(&mut canvas, t);
@@ -621,7 +917,11 @@ impl Sky {
         // Light from the left by day, where the sun is, and from the right
         // at night, where the moon is.
         let light = if day { look.light() } else { -look.light() };
-        let land = hours.land;
+        let land = if look == Look::Snow {
+            hours.snow_land
+        } else {
+            hours.land
+        };
         let [ridge, far, near] = self.lines;
         // Fog hides the furthest ridge.
         if look != Look::Fog {
@@ -633,14 +933,209 @@ impl Sky {
         light_crest(&mut canvas, far_line, land.far_lit, light, FAR_RIM);
         self.far_pines(&mut canvas, land, light);
         self.fog(&mut canvas, look, hours.fog, 1, t);
-        let near_line = |x: f32| near.at(x, w, h);
+        let lying = if look == Look::Snow {
+            self.lying(h)
+        } else {
+            0.0
+        };
+        let near_line = |x: f32| near.at(x, w, h) - lying * drift(x, w);
         fill_below(&mut canvas, near_line, land.near);
         light_crest(&mut canvas, near_line, land.near_lit, light, NEAR_RIM);
         self.grass(&mut canvas, land);
         self.near_pines(&mut canvas, land, light);
         self.cottage(&mut canvas, land, day, t);
         self.fog(&mut canvas, look, hours.fog, 2, t);
+        match look {
+            Look::Rain => self.rain(&mut canvas, RAIN, hours, t),
+            Look::Snow => self.snow(&mut canvas, hours.flake, lying, t),
+            Look::Storm => {
+                self.strike(&mut canvas, t);
+                self.rain(&mut canvas, DOWNPOUR, hours, t);
+            }
+            Look::Clear | Look::Cloud | Look::Fog => {}
+        }
         canvas.render(area, buf);
+    }
+
+    /// The pixels deep the snow lies where it lies deepest, on a pane `h`
+    /// pixels tall.
+    fn lying(&self, h: f32) -> f32 {
+        let fallen = self.snowed as f32 * TICK_RATE.as_secs_f32() / SNOW_FILL;
+        h * SNOW_DEEP * (FIRST_SNOW + (1.0 - FIRST_SNOW) * fallen.min(1.0))
+    }
+
+    /// The pixel row where a drop or a flake at pixel column `x` lands: on
+    /// the far hill for the furthest, and further down the land the nearer
+    /// it is, to the row above the credit.
+    fn landing(&self, x: f32, depth: f32, w: f32, h: f32) -> f32 {
+        let far = self.lines[1].at(x, w, h);
+        let floor = h - CELL_HEIGHT as f32 - 1.0;
+        far + (floor - far).max(0.0) * ((depth - 0.25) / 0.75).clamp(0.0, 1.0)
+    }
+
+    /// Where fall `fall` is on its way down at `speed` pixels a second: the
+    /// share of the width it started this way down at, its pixel row, and
+    /// the seconds since it left the clouds. Each way down starts at
+    /// another place across.
+    fn falling(fall: &Fall, speed: f32, h: f32, t: f32) -> (f32, f32, f32) {
+        const GOLDEN: f32 = 0.618_034;
+        let top = FALL_TOP as f32;
+        // The way runs on below the pane for as long as a splash lasts, so
+        // a drop that lands on the lowest row still splashes in full.
+        let way = (h - top).max(1.0) + speed * SPLASH;
+        let at = t * speed / way + fall.phase;
+        let round = at.floor();
+        let across = (fall.across + round * GOLDEN).fract();
+        let gone = at - round;
+        (across, top + gone * way, gone * way / speed)
+    }
+
+    fn rain(&self, canvas: &mut Canvas, shower: Shower, hours: Hours, t: f32) {
+        let (w, h) = (canvas.width() as f32, canvas.height() as f32);
+        let scale = h / CLOUD_PANE.1;
+        let count = ((w * h / shower.room) as usize).min(self.falls.len());
+        let slant = shower.slant;
+        for fall in self.falls.iter().take(count) {
+            let speed = (shower.speed.0 + shower.speed.1 * fall.depth) * scale;
+            let (across, y, _) = Self::falling(fall, speed, h, t);
+            // A drop moves across as it falls, so it starts as far left of
+            // the pane as it moves, and the rain reaches each edge.
+            let start = across * (w + slant * h) - slant * h;
+            let mut ground = self.landing(start + slant * h * 0.8, fall.depth, w, h);
+            ground = self.landing(start + slant * ground, fall.depth, w, h);
+            if y < ground {
+                let x = start + slant * y;
+                let streak = 1.0 + (shower.streak - 1.0) * fall.depth;
+                for back in 0..streak.ceil() as usize {
+                    let back = back as f32;
+                    if y - back < FALL_TOP as f32 {
+                        break;
+                    }
+                    let share = (0.3 + 0.5 * fall.depth) * (1.0 - back / streak);
+                    blend_at(
+                        canvas,
+                        (x - slant * back, y - back),
+                        hours.drop,
+                        octant::stepped(share, SHADE_STEPS),
+                    );
+                }
+                continue;
+            }
+            let landed = (y - ground) / speed / SPLASH;
+            if fall.depth < SPLASHES_FROM || landed >= 1.0 {
+                continue;
+            }
+            let x = start + slant * ground;
+            let (out, up) = SPLASH_REACH;
+            let rise = up * (landed * PI).sin() * fall.depth;
+            let share = octant::stepped(0.8 * (1.0 - landed), SHADE_STEPS);
+            for side in [-1.0, 1.0] {
+                let place = (x + side * (1.0 + landed * out), ground - rise);
+                blend_at(canvas, place, hours.splash, share);
+            }
+        }
+    }
+
+    fn snow(&self, canvas: &mut Canvas, flake: Color, lying: f32, t: f32) {
+        let (w, h) = (canvas.width() as f32, canvas.height() as f32);
+        let scale = h / CLOUD_PANE.1;
+        let count = ((w * h / SNOW_ROOM) as usize).min(self.falls.len());
+        for fall in self.falls.iter().take(count) {
+            let speed = (SNOW_SPEED.0 + SNOW_SPEED.1 * fall.depth) * scale;
+            let (across, y, fallen) = Self::falling(fall, speed, h, t);
+            let sway = (SWAY.0 + SWAY.1 * fall.depth) * (t * fall.sway + fall.phase * TAU).sin();
+            let x = (across * w + SNOW_DRIFT * fallen).rem_euclid(w) + sway;
+            let ground = self.landing(x, fall.depth, w, h) - lying * drift(x, w);
+            if y >= ground {
+                continue;
+            }
+            let bright = 0.3 + 0.7 * fall.depth;
+            let pixels: &[(f32, f32, f32)] = if fall.depth > LARGE_FLAKE {
+                &[
+                    (0.0, 0.0, 1.0),
+                    (1.0, 0.0, 0.55),
+                    (0.0, 1.0, 0.55),
+                    (1.0, 1.0, 0.35),
+                ]
+            } else {
+                &[(0.0, 0.0, 0.9)]
+            };
+            for &(dx, dy, share) in pixels {
+                blend_at(
+                    canvas,
+                    (x + dx, y + dy),
+                    flake,
+                    octant::stepped(bright * share, SHADE_STEPS),
+                );
+            }
+        }
+    }
+
+    /// How bright the strike of the round at `t` seconds is, from 0 to 1,
+    /// with the round, or none between two strikes. A strike lights the sky
+    /// twice.
+    fn flash(&self, t: f32) -> Option<(u64, f32)> {
+        let round = (t / STRIKE_GAP).floor();
+        let mixed = splitmix::mix(self.seed ^ 0x57_0a_4d ^ round as u64);
+        let wait = (mixed % 1000) as f32 / 1000.0 * (STRIKE_GAP - FLASH);
+        let since = t - round * STRIKE_GAP - wait;
+        let bright = match since / FLASH {
+            lit if !(0.0..1.0).contains(&lit) => return None,
+            lit if lit < 0.25 => 1.0,
+            lit if lit < 0.4 => 0.25,
+            lit if lit < 0.6 => 0.85,
+            lit => 0.85 * (1.0 - lit) / 0.4,
+        };
+        Some((round as u64, bright))
+    }
+
+    /// The bolt of a strike and its flash over the whole frame.
+    fn strike(&self, canvas: &mut Canvas, t: f32) {
+        let Some((round, bright)) = self.flash(t) else {
+            return;
+        };
+        let (w, h) = (canvas.width(), canvas.height());
+        let veil = octant::stepped(FLASH_VEIL * bright, SHADE_STEPS);
+        for y in 0..h {
+            for x in 0..w {
+                canvas.blend(x, y, self.shades.flash, veil);
+            }
+        }
+        let (wf, hf) = (w as f32, h as f32);
+        let mut dice = Dice(splitmix::mix(self.seed ^ round.wrapping_mul(0x9e37_79b9)));
+        let x = wf * (BOLT_SPAN.0 + (BOLT_SPAN.1 - BOLT_SPAN.0) * dice.share());
+        let foot = self.lines[1].at(x, wf, hf);
+        // Each limb still to draw: its start, its drift across a step, its
+        // steps and its width. The trunk runs to the hill.
+        let mut limbs = vec![((x, hf * BOLT_TOP), 0.0, u64::MAX, 1.0_f32)];
+        let mut branched = false;
+        while let Some((mut at, lean, steps, width)) = limbs.pop() {
+            let trunk = width == 1.0;
+            let mut step = 0;
+            while at.1 < foot && step < steps {
+                let jitter = (dice.roll() % 5) as f32 - 2.0;
+                let next = (at.0 + jitter * 0.8 + lean, at.1 + BOLT_STEP);
+                stroke(canvas, at, next, self.shades.bolt_glow, 0.3 * bright, 1.0);
+                stroke(canvas, at, next, self.shades.bolt_glow, 0.3 * bright, -1.0);
+                stroke(canvas, at, next, self.shades.bolt, bright * width, 0.0);
+                at = next;
+                step += 1;
+                // A trunk with no branch a third of its way down takes
+                // one there, so every bolt branches.
+                let due = !branched && at.1 > hf * BOLT_TOP + (foot - hf * BOLT_TOP) / 3.0;
+                if trunk && (due || dice.roll().is_multiple_of(BRANCH_ODDS)) {
+                    branched = true;
+                    let side = if dice.roll().is_multiple_of(2) {
+                        1.2
+                    } else {
+                        -1.2
+                    };
+                    let (least, most) = BRANCH_STEPS;
+                    let run = least + dice.roll() % (most - least + 1);
+                    limbs.push((at, side, run, 0.6));
+                }
+            }
+        }
     }
 
     fn noise(&self, x: usize, y: usize) -> u64 {
@@ -733,6 +1228,17 @@ impl Sky {
             ],
             land.roof,
         );
+        if let Some(cap) = land.cap {
+            canvas.polygon(
+                &[
+                    (left - 1.5 + peak - 1.0, top - 0.5 - peak - 1.0),
+                    (right + 1.5 - peak + 1.0, top - 0.5 - peak - 1.0),
+                    (right + 1.5 - peak / 2.0, top - 0.5 - peak / 2.0),
+                    (left - 1.5 + peak / 2.0, top - 0.5 - peak / 2.0),
+                ],
+                cap,
+            );
+        }
         canvas.line((left - 1.5, top), (right + 1.5, top), 1.0, land.eave);
         let window = (left + (wide / 3.0).floor() + 1.0, top + 3.0);
         if day {
@@ -940,6 +1446,14 @@ fn pine(canvas: &mut Canvas, foot: (f32, f32), tall: f32, land: Land, light: f32
             canvas.polygon(&[(x, top), (x, bottom), (x + side, bottom)], lit);
         }
     }
+    if let Some(cap) = land.cap {
+        let down = tall * 0.22;
+        let half = tall * 0.2 * 0.22 / 0.5;
+        canvas.polygon(
+            &[(x, tip), (x + half, tip + down), (x - half, tip + down)],
+            cap,
+        );
+    }
 }
 
 /// Lights the crest of the line `top` gives where it slopes toward the
@@ -964,32 +1478,80 @@ fn light_crest(canvas: &mut Canvas, top: impl Fn(f32) -> f32, lit: Color, light:
     }
 }
 
-fn draw_layer(canvas: &mut Canvas, layer: &Layer, colours: [Color; 3], t: f32) {
+/// Draws a layer of clouds `haste` times as fast as it is set, with each
+/// puff swelling and shrinking by `churn` of its radius.
+fn draw_layer(
+    canvas: &mut Canvas,
+    layer: &Layer,
+    colours: [Color; 3],
+    t: f32,
+    haste: f32,
+    churn: f32,
+) {
     let (w, h) = (canvas.width() as f32, canvas.height() as f32);
     let tall = layer.height * h;
     let [shade, body, light] = colours;
     for cloud in &layer.clouds {
         let x = wrap(
-            cloud.across * w + layer.speed * t * w / CLOUD_PANE.0,
+            cloud.across * w + layer.speed * haste * t * w / CLOUD_PANE.0,
             w,
             cloud.reach * tall,
         );
         let y = cloud.down * h;
         let at = |puff: &Puff, down: f32| (x + puff.across * tall, y + (puff.down + down) * tall);
-        for puff in &cloud.puffs {
-            canvas.disc(at(puff, puff.radius * 0.25), puff.radius * tall, shade);
+        let swell = |index: usize| 1.0 + churn * (t * 1.7 + index as f32 * 2.4).sin();
+        for (index, puff) in cloud.puffs.iter().enumerate() {
+            let radius = puff.radius * swell(index) * tall;
+            canvas.disc(at(puff, puff.radius * 0.25), radius, shade);
         }
-        for puff in &cloud.puffs {
-            canvas.disc(at(puff, 0.0), puff.radius * 0.95 * tall, body);
+        for (index, puff) in cloud.puffs.iter().enumerate() {
+            let radius = puff.radius * 0.95 * swell(index) * tall;
+            canvas.disc(at(puff, 0.0), radius, body);
         }
-        for puff in cloud.puffs.iter().filter(|puff| puff.tall) {
+        for (index, puff) in cloud.puffs.iter().enumerate() {
+            if !puff.tall {
+                continue;
+            }
             let (px, py) = at(puff, -puff.radius * 0.3);
             canvas.disc(
                 (px - puff.radius * 0.2 * tall, py),
-                puff.radius * 0.55 * tall,
+                puff.radius * 0.55 * swell(index) * tall,
                 light,
             );
         }
+    }
+}
+
+/// The share of the deepest snow that lies at pixel column `x` of a pane
+/// `w` pixels wide, in drifts.
+fn drift(x: f32, w: f32) -> f32 {
+    let along = x / w * TAU;
+    0.7 + 0.2 * (along * 3.0).sin() + 0.1 * (along * 7.0 + 1.0).sin()
+}
+
+/// Blends `colour` by `share` along the line from `from` to `to`, a pixel
+/// wide and `aside` pixels across from it.
+fn stroke(
+    canvas: &mut Canvas,
+    from: (f32, f32),
+    to: (f32, f32),
+    colour: Color,
+    share: f32,
+    aside: f32,
+) {
+    let share = octant::stepped(share, SHADE_STEPS);
+    let steps = (to.0 - from.0)
+        .abs()
+        .max((to.1 - from.1).abs())
+        .ceil()
+        .max(1.0);
+    for step in 0..steps as usize {
+        let along = step as f32 / steps;
+        let place = (
+            from.0 + (to.0 - from.0) * along + aside,
+            from.1 + (to.1 - from.1) * along,
+        );
+        blend_at(canvas, place, colour, share);
     }
 }
 

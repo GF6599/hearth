@@ -66,8 +66,8 @@ impl Scene for Weather {
         if let Some(read) = self.reading.as_ref().and_then(Watch::latest) {
             self.shown = Some(read);
         }
-        if self.shows_sky() {
-            self.sky.tick();
+        if let Some(Ok(report)) = &self.shown {
+            self.sky.tick(report.weather());
         }
     }
 
