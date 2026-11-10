@@ -797,6 +797,286 @@ fn a_storm_lights_the_sky_with_each_strike() {
 /// storm at night is as bright.
 const BOLT_LIGHT: u32 = 450;
 
+/// A strong wind and a light one under the same overcast sky, from one
+/// seed, so both scenes hold the same land.
+fn wind_and_calm() -> (Weather, Weather) {
+    (
+        landed(&current(3, 12.0, 55.0)),
+        landed(&current(3, 12.0, 5.0)),
+    )
+}
+
+/// A part of the frame, as shares of its height and of its width.
+type Part = ((f32, f32), (f32, f32));
+
+/// The far hill and its pines, above the near hill.
+const FAR_HILL: Part = ((0.56, 0.71), (0.0, 1.0));
+/// The line of the near hill between its pines and the cottage.
+const MEADOW: Part = ((0.74, 0.87), (0.25, 0.65));
+/// The land and the air over it, below the clouds and above the credit.
+const OVER_LAND: Part = ((0.45, 0.93), (0.0, 1.0));
+/// The air below the clouds and above the grass of the near hill.
+const AIR: Part = ((0.45, 0.72), (0.0, 1.0));
+
+fn part(scene: &Weather, (rows, columns): Part) -> Vec<((usize, usize), Color)> {
+    let grid = pixels::colours(&render(scene), AREA);
+    let (height, width) = (grid.len() as f32, grid[0].len() as f32);
+    let rows = (rows.0 * height) as usize..(rows.1 * height) as usize;
+    let columns = (columns.0 * width) as usize..(columns.1 * width) as usize;
+    rows.flat_map(|y| columns.clone().map(move |x| (x, y)))
+        .map(|(x, y)| ((x, y), grid[y][x]))
+        .collect()
+}
+
+/// What the wind changes in a part of the frame: the pixels that show
+/// another colour than in the calm frame. A cell shows two colours, so a
+/// pixel beside one that moved can take a colour of neither group.
+struct Blown {
+    /// The places with a colour the calm part holds elsewhere: mostly land
+    /// that moved.
+    land: Vec<(usize, usize)>,
+    /// The pixels with a colour the calm part does not hold: mostly what
+    /// the wind carries through the air.
+    carried: Vec<((usize, usize), Color)>,
+}
+
+fn blown(wind: &Weather, calm: &Weather, place: Part) -> Blown {
+    let calm = part(calm, place);
+    let own: std::collections::HashSet<Color> = calm.iter().map(|(_, colour)| *colour).collect();
+    let mut blown = Blown {
+        land: Vec::new(),
+        carried: Vec::new(),
+    };
+    for ((at, colour), (_, still)) in part(wind, place).into_iter().zip(calm) {
+        if !own.contains(&colour) {
+            blown.carried.push((at, colour));
+        } else if colour != still {
+            blown.land.push(at);
+        }
+    }
+    blown
+}
+
+/// A leaf is gold, rose or love: far redder than blue, where a gust line
+/// and the land of Rose Pine hold more blue than red.
+fn is_leaf(colour: Color) -> bool {
+    let (r, _, b) = channels(colour);
+    i32::from(r) - i32::from(b) >= 40
+}
+
+/// The pines of the far hill are darker than the hills behind them and
+/// than a leaf or a gust line that crosses them.
+fn is_pine(colour: Color) -> bool {
+    light(colour) < 290
+}
+
+/// The ticks of one sway of a pine and of one gust line, with room: three
+/// seconds.
+const SWAY_TICKS: u32 = 50;
+
+/// A strong wind drives the clouds across the sky faster.
+/// Given: a strong wind and a light wind under the same overcast sky.
+/// When: each scene draws tick by tick for a second.
+/// Then: the upper half of the frame changes half as much again or more
+/// under the strong wind.
+///
+/// Why it matters: clouds that drift at the pace of a calm day make the
+/// wind read as a cloudy sky with a few leaves.
+#[test]
+fn a_strong_wind_drives_the_clouds_faster() {
+    // Given:
+    let (mut wind, mut calm) = wind_and_calm();
+    let sky = ((0.0, 0.5), (0.0, 1.0));
+    let changes = |scene: &mut Weather| {
+        let mut changed = 0;
+        for _ in 0..16 {
+            let before = part(scene, sky);
+            scene.tick(AREA);
+            let after = part(scene, sky);
+            changed += before.iter().zip(&after).filter(|(b, a)| b != a).count();
+        }
+        changed
+    };
+
+    // When:
+    let (driven, drifting) = (changes(&mut wind), changes(&mut calm));
+
+    // Then:
+    assert!(drifting >= 1000, "{drifting} pixels of calm sky changed");
+    assert!(
+        driven * 2 >= drifting * 3,
+        "{driven} pixels changed in the wind, {drifting} in the calm"
+    );
+}
+
+/// The grass bends in waves that travel downwind.
+/// Given: a strong wind and a light wind over the same land.
+/// When: each scene draws tick by tick.
+/// Then: in the wind, the grass along the near hill differs from the calm
+/// grass in some columns and not in others. A tick later those columns lie
+/// a pixel further right, the way the wind blows, more than further left.
+///
+/// Why it matters: grass that bends all at once, or in waves that run
+/// against the leaves, reads as a flicker and not as wind.
+#[test]
+fn the_grass_bends_in_waves_that_travel_downwind() {
+    // Given:
+    let (mut wind, mut calm) = wind_and_calm();
+    let bends = |wind: &Weather, calm: &Weather| -> std::collections::BTreeSet<usize> {
+        blown(wind, calm, MEADOW)
+            .land
+            .into_iter()
+            .map(|(x, _)| x)
+            .collect()
+    };
+    let meadow: std::collections::BTreeSet<usize> =
+        part(&calm, MEADOW).iter().map(|((x, _), _)| *x).collect();
+    let (mut downwind, mut upwind) = (0, 0);
+
+    // When:
+    let mut bent = bends(&wind, &calm);
+    for _ in 0..10 {
+        // Then:
+        assert!(bent.len() >= 20, "{} columns of grass bend", bent.len());
+        assert!(
+            bent.len() <= meadow.len() * 3 / 4,
+            "{} of {} columns of grass bend",
+            bent.len(),
+            meadow.len()
+        );
+        wind.tick(AREA);
+        calm.tick(AREA);
+        let next = bends(&wind, &calm);
+        downwind += bent.iter().filter(|x| next.contains(&(**x + 1))).count();
+        upwind += bent
+            .iter()
+            .filter(|x| **x > 0 && next.contains(&(**x - 1)))
+            .count();
+        bent = next;
+    }
+    assert!(
+        downwind >= upwind + 20,
+        "{downwind} columns moved downwind and {upwind} upwind"
+    );
+}
+
+/// The pines on the far hill sway in the wind.
+/// Given: a strong wind and a light wind over the same land.
+/// When: each scene draws tick by tick for one sway.
+/// Then: the dark pixels of the pines on the far hill stand away from the
+/// calm pines, at one time by twice the pixels of another time.
+///
+/// Why it matters: a pine that stands straight, or leans and holds still,
+/// makes the wind stop at the far hill.
+#[test]
+fn the_pines_on_the_far_hill_sway_in_the_wind() {
+    // Given:
+    let (mut wind, mut calm) = wind_and_calm();
+    let pines = |scene: &Weather| -> std::collections::HashSet<(usize, usize)> {
+        part(scene, FAR_HILL)
+            .into_iter()
+            .filter(|(_, colour)| is_pine(*colour))
+            .map(|(at, _)| at)
+            .collect()
+    };
+
+    // When:
+    let leans: Vec<usize> = (0..SWAY_TICKS)
+        .map(|_| {
+            wind.tick(AREA);
+            calm.tick(AREA);
+            pines(&wind).symmetric_difference(&pines(&calm)).count()
+        })
+        .collect();
+
+    // Then:
+    let (least, most) = (*leans.iter().min().unwrap(), *leans.iter().max().unwrap());
+    assert!(most >= 20, "{most} pixels of pine lean at the most");
+    assert!(
+        least * 2 <= most,
+        "from {least} to {most} pixels of pine lean"
+    );
+}
+
+/// The wind blows leaves across the land.
+/// Given: a strong wind and a light wind over the same land, by day.
+/// When: each scene draws, then draws again a tick later.
+/// Then: leaves show over the land where the calm frame has none, and most
+/// of them are in another place a tick later.
+///
+/// Why it matters: the leaves are the part of the wind the eye follows, and
+/// a leaf that hangs in the air reads as a fault of the terminal.
+#[test]
+fn the_wind_blows_leaves_across_the_land() {
+    // Given:
+    let (mut wind, mut calm) = wind_and_calm();
+    let leaves = |wind: &Weather, calm: &Weather| -> Vec<(usize, usize)> {
+        blown(wind, calm, OVER_LAND)
+            .carried
+            .into_iter()
+            .filter(|(_, colour)| is_leaf(*colour))
+            .map(|(at, _)| at)
+            .collect()
+    };
+
+    // When:
+    let before = leaves(&wind, &calm);
+    wind.tick(AREA);
+    calm.tick(AREA);
+    let after = leaves(&wind, &calm);
+
+    // Then:
+    assert!(before.len() >= 10, "{} pixels of leaf", before.len());
+    assert!(after.len() >= 10, "{} pixels of leaf", after.len());
+    let moved = before.iter().filter(|at| !after.contains(at)).count();
+    assert!(
+        moved * 2 >= before.len(),
+        "{moved} of {} pixels of leaf moved",
+        before.len()
+    );
+}
+
+/// Gust lines cross the air over the land.
+/// Given: a strong wind and a light wind over the same land, by day.
+/// When: each scene draws tick by tick for the life of a gust line.
+/// Then: at some tick, pixels that are no leaf and no colour of the calm
+/// frame fill a run of columns as long as a line, where a pine that leans
+/// changes a few columns.
+///
+/// Why it matters: the gust lines show the wind in the air, and without
+/// them only the land moves.
+#[test]
+fn gust_lines_cross_the_air_over_the_land() {
+    // Given:
+    let (mut wind, mut calm) = wind_and_calm();
+
+    // When:
+    let mut longest = 0;
+    for _ in 0..SWAY_TICKS {
+        let columns: std::collections::BTreeSet<usize> = blown(&wind, &calm, AIR)
+            .carried
+            .into_iter()
+            .filter(|(_, colour)| !is_leaf(*colour))
+            .map(|((x, _), _)| x)
+            .collect();
+        let (mut run, mut last) = (0, None);
+        for x in columns {
+            run = if last.is_some_and(|last| last + 1 == x) {
+                run + 1
+            } else {
+                1
+            };
+            longest = longest.max(run);
+            last = Some(x);
+        }
+        wind.tick(AREA);
+        calm.tick(AREA);
+    }
+
+    // Then:
+    assert!(longest >= 30, "the longest line is {longest} pixels long");
+}
+
 /// A new theme repaints the sky and keeps the weather.
 /// Given: a cloudy sky in Rose Pine.
 /// When: the theme changes to Rose Pine Dawn.
@@ -843,8 +1123,8 @@ const PAIRS_THAT_MOVE: usize = AREA.area() as usize / 100;
 /// Over the terminal's background, no colour of the sky mixes with it.
 /// Given: Rose Pine over the terminal's background, and the same theme with
 /// another base.
-/// When: a clear day, a clear night, a cloudy sky, a fog, a rain, a snow
-/// and a storm draw in each.
+/// When: a clear day, a clear night, a cloudy sky, a fog, a rain, a snow,
+/// a storm and a strong wind draw in each.
 /// Then: the cells that show no base show the same glyph and colours in
 /// both, but for a few cells that keep another pair.
 ///
@@ -860,6 +1140,7 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
         current(63, 9.0, 10.0),
         current(73, -2.0, 4.0),
         current(95, 16.0, 12.0),
+        current(3, 12.0, 55.0),
     ] {
         // When:
         let one = render(&landed_in(SEE_THROUGH, &body));
@@ -941,7 +1222,8 @@ fn every_theme_draws_a_dark_night_and_a_status_that_reads() {
 }
 
 /// A smaller area draws only inside it.
-/// Given: a clear sky, a rain, a snow and a storm that have landed.
+/// Given: a clear sky, a rain, a snow, a storm and a strong wind that have
+/// landed.
 /// When: each renders into areas smaller than the buffer, down to nothing.
 /// Then: no cell outside the area changes.
 ///
@@ -951,8 +1233,8 @@ fn every_theme_draws_a_dark_night_and_a_status_that_reads() {
 fn a_smaller_area_draws_only_inside_it() {
     // Given:
     let canvas = Rect::new(0, 0, 40, 12);
-    for code in [0, 63, 73, 95] {
-        let mut scene = landed(&current(code, 18.0, 5.0));
+    for (code, wind) in [(0, 5.0), (63, 5.0), (73, 5.0), (95, 5.0), (3, 55.0)] {
+        let mut scene = landed(&current(code, 18.0, wind));
 
         // When, then:
         for area in [
