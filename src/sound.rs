@@ -2,6 +2,8 @@
 //! they stand for, and the speaker that plays them.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
 /// What happened in a scene on its last tick, for the mixer to sound.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -107,36 +109,76 @@ impl Recording {
     }
 }
 
-fn typing() -> &'static Recording {
-    static TYPING: OnceLock<Recording> = OnceLock::new();
-    TYPING.get_or_init(|| Recording::decode(include_bytes!("../sounds/typing.mp3")))
+/// An mp3 in the binary, and its recording once a cue has asked for it. A
+/// decoded recording takes up to 17 MB, so a scene that never runs costs
+/// nothing.
+#[derive(Debug)]
+struct Track {
+    mp3: &'static [u8],
+    recording: OnceLock<Recording>,
+    preparing: AtomicBool,
 }
 
-fn fire() -> &'static Recording {
-    static FIRE: OnceLock<Recording> = OnceLock::new();
-    FIRE.get_or_init(|| Recording::decode(include_bytes!("../sounds/fire.mp3")))
+impl Track {
+    const fn new(mp3: &'static [u8]) -> Self {
+        Self {
+            mp3,
+            recording: OnceLock::new(),
+            preparing: AtomicBool::new(false),
+        }
+    }
+
+    fn recording(&self) -> &Recording {
+        self.recording.get_or_init(|| Recording::decode(self.mp3))
+    }
 }
 
-fn river() -> &'static Recording {
-    static RIVER: OnceLock<Recording> = OnceLock::new();
-    RIVER.get_or_init(|| Recording::decode(include_bytes!("../sounds/river.mp3")))
+static TYPING: Track = Track::new(include_bytes!("../sounds/typing.mp3"));
+static FIRE: Track = Track::new(include_bytes!("../sounds/fire.mp3"));
+static RIVER: Track = Track::new(include_bytes!("../sounds/river.mp3"));
+static TIDE: Track = Track::new(include_bytes!("../sounds/tide.mp3"));
+
+fn track(cue: Cue) -> &'static Track {
+    match cue {
+        Cue::Typing => &TYPING,
+        Cue::Fire => &FIRE,
+        Cue::River => &RIVER,
+        Cue::Tide { .. } => &TIDE,
+    }
 }
 
-fn tide() -> &'static Recording {
-    static TIDE: OnceLock<Recording> = OnceLock::new();
-    TIDE.get_or_init(|| Recording::decode(include_bytes!("../sounds/tide.mp3")))
+/// Says if the recording of `cue` is decoded, so the cue plays with no wait.
+pub fn decoded(cue: Cue) -> bool {
+    track(cue).recording.get().is_some()
+}
+
+/// Starts the decode of the recording of `cue` on a thread of its own, once,
+/// and returns at once. A thread that does not start leaves the next call
+/// to try again.
+pub fn prepare(cue: Cue) {
+    let track = track(cue);
+    if decoded(cue) || track.preparing.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let started = thread::Builder::new().name("sound".into()).spawn(move || {
+        track.recording();
+    });
+    if started.is_err() {
+        track.preparing.store(false, Ordering::Release);
+    }
 }
 
 /// A recording that loops while its cue keeps coming, and fades out when
 /// the cue stops. It keeps its place while silent, so it goes on where it
-/// left off.
+/// left off. It is silent until its recording is decoded, and it never
+/// decodes in `frame`, which runs on the audio thread.
 #[derive(Debug)]
 struct Bed {
-    recording: &'static Recording,
+    track: &'static Track,
     /// The place in the recording, in its frames.
     place: f64,
-    /// The recording's frames for each output frame.
-    step: f64,
+    /// Output frames a second.
+    rate: f64,
     level: f32,
     rise: f32,
     fall: f32,
@@ -146,11 +188,11 @@ struct Bed {
 }
 
 impl Bed {
-    fn new(recording: &'static Recording, rate: f32) -> Self {
+    fn new(track: &'static Track, rate: f32) -> Self {
         Self {
-            recording,
+            track,
             place: 0.0,
-            step: f64::from(recording.rate) / f64::from(rate),
+            rate: f64::from(rate),
             level: 0.0,
             rise: 1.0 / (FADE_IN * rate),
             fall: 1.0 / (FADE_OUT * rate),
@@ -160,6 +202,7 @@ impl Bed {
     }
 
     fn cue(&mut self) {
+        self.track.recording();
         self.held = self.hold;
     }
 
@@ -175,14 +218,18 @@ impl Bed {
         } else {
             self.level = (self.level - self.fall).max(0.0);
         }
-        let frames = &self.recording.frames;
+        let Some(recording) = self.track.recording.get() else {
+            return [0.0; 2];
+        };
+        let frames = &recording.frames;
         if self.level == 0.0 || frames.is_empty() {
             return [0.0; 2];
         }
+        let step = f64::from(recording.rate) / self.rate;
         let index = self.place as usize;
         let share = (self.place - index as f64) as f32;
         let (now, next) = (frames[index], frames[(index + 1) % frames.len()]);
-        self.place = (self.place + self.step) % frames.len() as f64;
+        self.place = (self.place + step) % frames.len() as f64;
         [0, 1].map(|c| (now[c] + (next[c] - now[c]) * share) * self.level)
     }
 }
@@ -225,14 +272,12 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    /// Decodes each recording the first time a mixer is built, which takes
-    /// a moment, so the speaker builds its mixer before the stream starts.
     pub fn new(rate: u32) -> Self {
         Self {
-            typing: Bed::new(typing(), rate as f32),
-            fire: Bed::new(fire(), rate as f32),
-            river: Bed::new(river(), rate as f32),
-            tide: Bed::new(tide(), rate as f32),
+            typing: Bed::new(&TYPING, rate as f32),
+            fire: Bed::new(&FIRE, rate as f32),
+            river: Bed::new(&RIVER, rate as f32),
+            tide: Bed::new(&TIDE, rate as f32),
             swell: Swell::new(rate as f32),
             on: true,
             gain: Volume::FULL.gain(),
@@ -240,7 +285,8 @@ impl Mixer {
     }
 
     /// A cue that arrives while the mixer is off is dropped, so it does
-    /// not play late when the sound comes back.
+    /// not play late when the sound comes back. The first cue of a
+    /// recording decodes it and waits for it, unless `prepare` did so before.
     pub fn play(&mut self, cue: Cue) {
         if !self.on {
             return;
@@ -302,7 +348,7 @@ mod speaker {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    use super::{Cue, Mixer, Volume};
+    use super::{Cue, Mixer, Volume, decoded, prepare};
 
     enum Message {
         Cue(Cue),
@@ -396,13 +442,19 @@ mod speaker {
         /// The stream reads no cue while the sound is off, so none is sent
         /// then and the channel does not grow. A send fails only when the
         /// audio thread has ended, and the error that ended it arrives
-        /// through `take_error`.
+        /// through `take_error`. A cue whose recording is not decoded yet
+        /// starts the decode and is dropped, so the audio thread never
+        /// decodes.
         pub fn play(&self, cues: impl IntoIterator<Item = Cue>) {
             if !self.on {
                 return;
             }
             for cue in cues {
-                let _ = self.send.send(Message::Cue(cue));
+                if decoded(cue) {
+                    let _ = self.send.send(Message::Cue(cue));
+                } else {
+                    prepare(cue);
+                }
             }
         }
 
