@@ -231,6 +231,47 @@ const BRANCH_STEPS: (u64, u64) = (4, 10);
 /// How strongly a flash at its brightest veils the frame.
 const FLASH_VEIL: f32 = 0.3;
 
+/// The streaks the wind draws the clouds out to, from the furthest.
+const STREAKS: [Spread; 2] = [
+    Spread {
+        count: 5,
+        width: 0.3,
+        height: 0.02,
+        speed: 22.0,
+        rows: (0.1, 0.28),
+    },
+    Spread {
+        count: 4,
+        width: 0.42,
+        height: 0.026,
+        speed: 36.0,
+        rows: (0.2, 0.42),
+    },
+];
+/// The gust lines at a time, the seconds each lasts, the shares of the
+/// width it is long at the least and at the most, the share of the width it
+/// moves in a second, and how strongly it shows at its middle.
+const GUSTS: u64 = 4;
+const GUST: f32 = 2.8;
+const GUST_SPAN: (f32, f32) = (0.14, 0.3);
+const GUST_SPEED: f32 = 0.22;
+const GUST_SHARE: f32 = 0.4;
+/// The leaves in the wind, the pixels a second of the slowest on a pane as
+/// tall as `CLOUD_PANE` and what the fastest adds, and the pixels a leaf
+/// rises and falls.
+const LEAVES: u64 = 9;
+const LEAF_SPEED: (f32, f32) = (55.0, 60.0);
+const LEAF_BOB: f32 = 2.5;
+/// The radians along a pixel of grass and the radians a second of the waves
+/// that travel downwind through it, and the height of wave from which a
+/// tuft bends.
+const GRASS_WAVE: (f32, f32) = (0.3, 5.0);
+const BENDS_FROM: f32 = 0.2;
+/// The shares of its height a pine leans downwind at the least and at the
+/// most, and the radians a second it sways between them.
+const LEAN: (f32, f32) = (0.02, 0.2);
+const SWAY_RATE: f32 = 2.3;
+
 /// The steps a share of a glow or a fade rounds to.
 const SHADE_STEPS: f32 = 64.0;
 
@@ -243,6 +284,7 @@ enum Look {
     Rain,
     Snow,
     Storm,
+    Wind,
     Fog,
 }
 
@@ -254,7 +296,8 @@ impl Look {
             Type::Rain => Look::Rain,
             Type::Snow => Look::Snow,
             Type::Storm => Look::Storm,
-            Type::Cloud | Type::Wind => Look::Cloud,
+            Type::Cloud => Look::Cloud,
+            Type::Wind => Look::Wind,
         }
     }
 
@@ -262,7 +305,7 @@ impl Look {
     fn light(self) -> f32 {
         match self {
             Look::Clear => 1.0,
-            Look::Cloud => 0.6,
+            Look::Cloud | Look::Wind => 0.6,
             Look::Snow => 0.5,
             Look::Rain => 0.4,
             Look::Fog => 0.3,
@@ -322,6 +365,8 @@ struct Hours {
     drop: Color,
     splash: Color,
     flake: Color,
+    gust: Color,
+    leaves: [Color; 3],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -515,6 +560,8 @@ impl Shades {
                 drop: mix(palette.foam, bright, 0.3),
                 splash: mix(palette.foam, bright, 0.5),
                 flake: bright,
+                gust: mix(palette.subtle, bright, 0.5),
+                leaves: [palette.gold, palette.rose, palette.love],
             },
             night: Hours {
                 land: night_land,
@@ -571,6 +618,9 @@ impl Shades {
                 drop: palette.subtle,
                 splash: mix(palette.subtle, palette.foam, 0.4),
                 flake: mix(palette.subtle, bright, 0.6),
+                gust: palette.subtle,
+                leaves: [palette.gold, palette.rose, palette.love]
+                    .map(|leaf| mix(dark, leaf, 0.45)),
             },
             sun: mix(palette.gold, bright, 0.35),
             sun_core: mix(mix(palette.gold, bright, 0.35), bright, 0.3),
@@ -753,6 +803,7 @@ pub struct Sky {
     layers: Vec<Layer>,
     banks: [Layer; 2],
     falls: Vec<Fall>,
+    streaks: [Layer; 2],
     fog_phases: [f32; FOG.len()],
     seed: u64,
     ticks: u64,
@@ -798,6 +849,7 @@ impl Sky {
                 sway: rng.random_range(0.6..1.5),
             })
             .collect();
+        let streaks = STREAKS.map(|spread| Layer::new(&mut rng, spread));
         Self {
             shades: Shades::new(palette),
             lines,
@@ -807,6 +859,7 @@ impl Sky {
             layers,
             banks,
             falls,
+            streaks,
             fog_phases,
             seed,
             ticks: 0,
@@ -868,7 +921,7 @@ impl Sky {
         let t = self.seconds();
         let sky = match look {
             Look::Clear => hours.clear,
-            Look::Cloud => hours.cloudy,
+            Look::Cloud | Look::Wind => hours.cloudy,
             Look::Rain => hours.rainy,
             Look::Snow => hours.snowy,
             Look::Storm => hours.stormy,
@@ -889,7 +942,7 @@ impl Sky {
                 self.moon(&mut canvas, moon, disc);
                 self.shooting_star(&mut canvas, t);
             }
-            (Look::Cloud, false) => self.moon(&mut canvas, moon, disc),
+            (Look::Cloud | Look::Wind, false) => self.moon(&mut canvas, moon, disc),
         }
         let [bank, lower] = &self.banks;
         match look {
@@ -907,6 +960,11 @@ impl Sky {
             Look::Storm => {
                 for layer in [lower, bank] {
                     draw_layer(&mut canvas, layer, hours.storm_bank, t, STORM_HASTE, CHURN);
+                }
+            }
+            Look::Wind => {
+                for (layer, colours) in self.streaks.iter().zip(&hours.clouds[1..]) {
+                    draw_layer(&mut canvas, layer, *colours, t, 1.0, 0.0);
                 }
             }
             Look::Clear | Look::Fog => {}
@@ -931,7 +989,8 @@ impl Sky {
         let far_line = |x: f32| far.at(x, w, h);
         fill_below(&mut canvas, far_line, land.far);
         light_crest(&mut canvas, far_line, land.far_lit, light, FAR_RIM);
-        self.far_pines(&mut canvas, land, light);
+        let windy = look == Look::Wind;
+        self.far_pines(&mut canvas, land, light, windy.then_some(t));
         self.fog(&mut canvas, look, hours.fog, 1, t);
         let lying = if look == Look::Snow {
             self.lying(h)
@@ -941,8 +1000,8 @@ impl Sky {
         let near_line = |x: f32| near.at(x, w, h) - lying * drift(x, w);
         fill_below(&mut canvas, near_line, land.near);
         light_crest(&mut canvas, near_line, land.near_lit, light, NEAR_RIM);
-        self.grass(&mut canvas, land);
-        self.near_pines(&mut canvas, land, light);
+        self.grass(&mut canvas, land, windy.then_some(t));
+        self.near_pines(&mut canvas, land, light, windy.then_some(t));
         self.cottage(&mut canvas, land, day, t);
         self.fog(&mut canvas, look, hours.fog, 2, t);
         match look {
@@ -951,6 +1010,10 @@ impl Sky {
             Look::Storm => {
                 self.strike(&mut canvas, t);
                 self.rain(&mut canvas, DOWNPOUR, hours, t);
+            }
+            Look::Wind => {
+                self.gusts(&mut canvas, hours.gust, t);
+                self.leaves(&mut canvas, hours.leaves, t);
             }
             Look::Clear | Look::Cloud | Look::Fog => {}
         }
@@ -1138,34 +1201,103 @@ impl Sky {
         }
     }
 
+    /// The lines a gust draws in the air: each crosses a part of the pane,
+    /// curls up at its head, and fades in and out.
+    fn gusts(&self, canvas: &mut Canvas, colour: Color, t: f32) {
+        let (w, h) = (canvas.width() as f32, canvas.height() as f32);
+        let (top, floor) = (FALL_TOP as f32, h - CELL_HEIGHT as f32 - 1.0);
+        if floor <= top {
+            return;
+        }
+        for gust in 0..GUSTS {
+            let at = t / GUST + gust as f32 / GUSTS as f32;
+            let (round, life) = (at.floor(), at.fract());
+            let mut dice = Dice(splitmix::mix(self.seed ^ gust << 32 ^ round as u64));
+            let y = top + (floor - top) * (0.15 + 0.7 * dice.share());
+            let long = w * (GUST_SPAN.0 + (GUST_SPAN.1 - GUST_SPAN.0) * dice.share());
+            let head = w * dice.share() + life * GUST * GUST_SPEED * w;
+            let shows = GUST_SHARE * (life * PI).sin();
+            for back in 0..long as usize {
+                let along = 1.0 - back as f32 / long;
+                // The last fifth of the line curls up and back, as a gust
+                // does where it turns.
+                let curl = ((along - 0.8) / 0.2).max(0.0);
+                let place = (
+                    head - back as f32 - curl * curl * 3.0,
+                    y - (curl * PI * 0.75).sin() * 3.0 + (along * 5.0).sin(),
+                );
+                if place.1 < top || place.1 > floor {
+                    continue;
+                }
+                let share = octant::stepped(shows * along.sqrt(), SHADE_STEPS);
+                blend_at(canvas, (place.0.rem_euclid(w), place.1), colour, share);
+            }
+        }
+    }
+
+    /// The leaves the wind carries across the land, each on another row
+    /// every time it crosses.
+    fn leaves(&self, canvas: &mut Canvas, colours: [Color; 3], t: f32) {
+        let (w, h) = (canvas.width() as f32, canvas.height() as f32);
+        let (top, floor) = (FALL_TOP as f32, h - CELL_HEIGHT as f32 - 1.0);
+        if floor <= top {
+            return;
+        }
+        let scale = h / CLOUD_PANE.1;
+        for leaf in 0..LEAVES {
+            let mut dice = Dice(splitmix::mix(self.seed ^ leaf << 40));
+            let speed = (LEAF_SPEED.0 + LEAF_SPEED.1 * dice.share()) * scale;
+            let gone = dice.share() + t * speed / (w + 4.0);
+            let x = gone.fract() * (w + 4.0) - 2.0;
+            let mut crossing = Dice(splitmix::mix(self.seed ^ leaf << 40 ^ gone as u64));
+            let row = top + (floor - top) * (0.45 + 0.5 * crossing.share());
+            let turn = t * (5.0 + 4.0 * dice.share()) + leaf as f32;
+            let y = (row + LEAF_BOB * turn.sin()).clamp(top, floor - 1.0);
+            let colour = colours[leaf as usize % colours.len()];
+            // A leaf shows its long side, then its short side, as it turns.
+            let flat = (turn * 0.5).sin() > 0.0;
+            let tail = if flat { (x - 1.0, y) } else { (x, y + 1.0) };
+            set_at(canvas, (x, y), colour);
+            set_at(canvas, tail, colour);
+        }
+    }
+
     fn noise(&self, x: usize, y: usize) -> u64 {
         splitmix::mix(self.seed ^ ((x as u64) << 32) ^ y as u64)
     }
 
-    fn far_pines(&self, canvas: &mut Canvas, land: Land, light: f32) {
+    /// Draws the pines on the far hill, each leaning downwind at `wind`
+    /// seconds of wind, if any.
+    fn far_pines(&self, canvas: &mut Canvas, land: Land, light: f32, wind: Option<f32>) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let count = (canvas.width() / PINE_ROOM).clamp(PINES.0, PINES.1);
         let scale = (h / 136.0).max(0.7);
         for &(across, tall) in self.pines.iter().take(count) {
             let x = (across * w).round();
             let ground = self.lines[1].at(x, w, h);
-            pine(canvas, (x, ground), tall * scale, land, light);
+            let lean = wind.map_or(0.0, |t| lean(x, t));
+            pine(canvas, (x, ground), tall * scale, land, light, lean);
         }
     }
 
-    fn near_pines(&self, canvas: &mut Canvas, land: Land, light: f32) {
+    fn near_pines(&self, canvas: &mut Canvas, land: Land, light: f32, wind: Option<f32>) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let scale = (h / 136.0).max(0.7);
         for (across, tall) in NEAR_PINES.iter().zip(self.near_pines) {
             let x = (across * w).round();
             let ground = self.lines[2].at(x, w, h) + 1.0;
-            pine(canvas, (x, ground), tall * scale, land, light);
+            let lean = wind.map_or(0.0, |t| lean(x, t));
+            pine(canvas, (x, ground), tall * scale, land, light, lean);
         }
     }
 
     /// Tufts of grass along the near hill's line, and flecks in the soil
     /// below it, each in the same place every frame.
-    fn grass(&self, canvas: &mut Canvas, land: Land) {
+    ///
+    /// After `wind` seconds of wind, if any, waves travel downwind through
+    /// the grass: a tuft in a wave stands a pixel taller with its tip bent
+    /// downwind, and the grass shows along the line of the hill.
+    fn grass(&self, canvas: &mut Canvas, land: Land, wind: Option<f32>) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let near = self.lines[2];
         // The bottom row of cells holds the credit, and a fleck under a
@@ -1174,10 +1306,22 @@ impl Sky {
         for x in 0..canvas.width() {
             let line = near.at(x as f32, w, h).floor();
             let noise = self.noise(x, 0);
+            let wave = wind.map(|t| {
+                let (along, rate) = GRASS_WAVE;
+                (x as f32 * along - t * rate).sin()
+            });
+            let bent = wave.is_some_and(|wave| wave > BENDS_FROM);
+            if bent {
+                set_at(canvas, (x as f32, line), land.grass);
+            }
             if noise.is_multiple_of(TUFT_ODDS) {
                 let tall = 1 + (noise >> 8) % 2;
                 for rise in 1..=tall {
                     set_at(canvas, (x as f32, line - rise as f32), land.grass);
+                }
+                if bent {
+                    let tip = (x as f32 + 1.0, line - tall as f32 - 1.0);
+                    set_at(canvas, tip, land.grass);
                 }
             }
             let soil = (line + SOIL).max(0.0) as usize;
@@ -1420,9 +1564,18 @@ impl Sky {
     }
 }
 
+/// The share of its height a pine at pixel column `x` leans downwind after
+/// `t` seconds of wind.
+fn lean(x: f32, t: f32) -> f32 {
+    let (least, most) = LEAN;
+    least + (most - least) * (0.5 + 0.5 * (t * SWAY_RATE - x * 0.05).sin())
+}
+
 /// A pine of three tiers on a trunk, its foot at `foot`, with the side
-/// toward the light lit. A positive `light` comes from the left.
-fn pine(canvas: &mut Canvas, foot: (f32, f32), tall: f32, land: Land, light: f32) {
+/// toward the light lit. A positive `light` comes from the left. Its tip
+/// leans `lean` of its height to the right, and each tier less the lower
+/// it is.
+fn pine(canvas: &mut Canvas, foot: (f32, f32), tall: f32, land: Land, light: f32, lean: f32) {
     let (x, ground) = foot;
     rect(
         canvas,
@@ -1436,14 +1589,18 @@ fn pine(canvas: &mut Canvas, foot: (f32, f32), tall: f32, land: Land, light: f32
         let top = tip + from * tall;
         let bottom = (top + tier).min(ground - 1.0);
         let half = tall * (0.2 + 0.08 * index as f32);
+        let (above, below) = (x + lean * (ground - top), x + lean * (ground - bottom));
         canvas.polygon(
-            &[(x, top), (x + half, bottom), (x - half, bottom)],
+            &[(above, top), (below + half, bottom), (below - half, bottom)],
             land.pine,
         );
         let side = if light >= 0.0 { -half } else { half };
         let lit = land.pine_lit;
         if light.abs() > 0.5 {
-            canvas.polygon(&[(x, top), (x, bottom), (x + side, bottom)], lit);
+            canvas.polygon(
+                &[(above, top), (below, bottom), (below + side, bottom)],
+                lit,
+            );
         }
     }
     if let Some(cap) = land.cap {
