@@ -91,7 +91,7 @@ impl Scene for Weather {
                     .render(report.weather(), report.day(), self.palette, area, buf);
                 let top = area.y + area.height.min(2) / 2;
                 let bottom = area.y + area.height - 1;
-                self.line(&report.status(location), top, self.palette.text, area, buf);
+                self.line(&report.status(location), top, self.sky.status(), area, buf);
                 self.line(CREDIT, bottom, self.palette.subtle, area, buf);
             }
         }

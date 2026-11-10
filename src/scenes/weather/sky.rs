@@ -211,6 +211,8 @@ struct Hours {
 
 #[derive(Debug, Clone, Copy)]
 struct Shades {
+    /// The status line, lighter than any sky behind it.
+    bright: Color,
     day: Hours,
     night: Hours,
     sun: Color,
@@ -230,10 +232,27 @@ struct Shades {
 impl Shades {
     fn new(palette: &Palette) -> Self {
         let mix = |from, to, share| octant::blend(palette, from, to, share);
-        let base = palette.base;
-        let day_haze = mix(base, palette.foam, 0.8);
-        let day_far = mix(mix(day_haze, palette.pine, 0.6), base, 0.2);
-        let day_near = mix(base, palette.pine, 0.42);
+        // A light theme swaps its base and its text, so the sky takes its
+        // dark end and its bright end by their lightness, not their role.
+        let (dark, bright) = if palette.is_light() {
+            (palette.text, palette.surface)
+        } else {
+            (palette.base, palette.text)
+        };
+        // The overlay and the surface of a dark theme lie a little above its
+        // dark end, and a light theme's lie far above, so a light theme
+        // lifts its dark end a little instead.
+        let (overlay, surface) = if palette.is_light() {
+            (
+                octant::mix(dark, bright, 0.15),
+                octant::mix(dark, bright, 0.06),
+            )
+        } else {
+            (palette.overlay, palette.surface)
+        };
+        let day_haze = mix(dark, palette.foam, 0.8);
+        let day_far = mix(mix(day_haze, palette.pine, 0.6), dark, 0.2);
+        let day_near = mix(dark, palette.pine, 0.42);
         let day_land = Land {
             ridge: mix(day_haze, palette.pine, 0.3),
             far: day_far,
@@ -242,36 +261,36 @@ impl Shades {
             near_lit: mix(day_near, palette.foam, 0.3),
             grass: mix(day_near, palette.foam, 0.3),
             fleck: mix(day_near, palette.foam, 0.15),
-            pine: mix(palette.pine, base, 0.62),
-            pine_lit: mix(palette.pine, base, 0.38),
-            trunk: mix(palette.love, base, 0.75),
-            wall: mix(base, palette.rose, 0.38),
-            door: mix(mix(base, palette.rose, 0.38), base, 0.55),
-            roof: mix(base, palette.love, 0.55),
-            eave: mix(base, palette.love, 0.3),
-            chimney: mix(base, palette.overlay, 0.9),
+            pine: mix(palette.pine, dark, 0.62),
+            pine_lit: mix(palette.pine, dark, 0.38),
+            trunk: mix(palette.love, dark, 0.75),
+            wall: mix(dark, palette.rose, 0.38),
+            door: mix(mix(dark, palette.rose, 0.38), dark, 0.55),
+            roof: mix(dark, palette.love, 0.55),
+            eave: mix(dark, palette.love, 0.3),
+            chimney: mix(dark, overlay, 0.9),
             fence: mix(day_near, palette.rose, 0.4),
             smoke: palette.subtle,
         };
-        let night_haze = mix(base, palette.iris, 0.24);
-        let night_far = mix(mix(base, palette.iris, 0.16), palette.overlay, 0.55);
-        let night_near = mix(base, palette.surface, 0.6);
+        let night_haze = mix(dark, palette.iris, 0.24);
+        let night_far = mix(mix(dark, palette.iris, 0.16), overlay, 0.55);
+        let night_near = mix(dark, surface, 0.6);
         let night_land = Land {
-            ridge: mix(night_haze, palette.overlay, 0.4),
+            ridge: mix(night_haze, overlay, 0.4),
             far: night_far,
             far_lit: mix(night_far, palette.subtle, 0.15),
             near: night_near,
             near_lit: mix(night_near, palette.subtle, 0.18),
             grass: mix(night_near, palette.muted, 0.3),
             fleck: mix(night_near, palette.muted, 0.15),
-            pine: mix(night_far, base, 0.5),
+            pine: mix(night_far, dark, 0.5),
             pine_lit: mix(night_far, palette.subtle, 0.12),
-            trunk: mix(base, palette.overlay, 0.5),
-            wall: mix(base, palette.overlay, 0.75),
-            door: mix(base, palette.overlay, 0.3),
-            roof: mix(base, palette.love, 0.3),
-            eave: mix(base, palette.love, 0.15),
-            chimney: mix(base, palette.overlay, 0.9),
+            trunk: mix(dark, overlay, 0.5),
+            wall: mix(dark, overlay, 0.75),
+            door: mix(dark, overlay, 0.3),
+            roof: mix(dark, palette.love, 0.3),
+            eave: mix(dark, palette.love, 0.15),
+            chimney: mix(dark, overlay, 0.9),
             fence: mix(night_near, palette.muted, 0.4),
             smoke: palette.muted,
         };
@@ -279,74 +298,75 @@ impl Shades {
             bodies.map(|body| [mix(body, shade, 0.5), body, mix(body, light, lean)])
         };
         let day_cloudy = [
-            mix(base, palette.pine, 0.6),
-            mix(base, palette.foam, 0.45),
-            mix(mix(base, palette.foam, 0.6), palette.subtle, 0.4),
+            mix(dark, palette.pine, 0.6),
+            mix(dark, palette.foam, 0.45),
+            mix(mix(dark, palette.foam, 0.6), palette.subtle, 0.4),
         ];
         Self {
+            bright,
             day: Hours {
                 land: day_land,
                 clear: [
-                    mix(base, palette.pine, 0.8),
-                    mix(base, palette.foam, 0.55),
+                    mix(dark, palette.pine, 0.8),
+                    mix(dark, palette.foam, 0.55),
                     day_haze,
                 ],
                 cloudy: day_cloudy,
                 foggy: [
-                    mix(base, palette.subtle, 0.4),
-                    mix(base, palette.subtle, 0.55),
-                    mix(base, palette.subtle, 0.68),
+                    mix(dark, palette.subtle, 0.4),
+                    mix(dark, palette.subtle, 0.55),
+                    mix(dark, palette.subtle, 0.68),
                 ],
                 clouds: clouds(
                     [
                         mix(day_cloudy[0], palette.subtle, 0.45),
-                        mix(palette.subtle, palette.text, 0.1),
-                        mix(palette.subtle, palette.text, 0.4),
+                        mix(palette.subtle, bright, 0.1),
+                        mix(palette.subtle, bright, 0.4),
                     ],
                     palette.muted,
-                    palette.text,
+                    bright,
                     0.35,
                 ),
-                fog: mix(palette.subtle, palette.text, 0.3),
-                veiled: mix(mix(base, palette.subtle, 0.4), palette.text, 0.45),
+                fog: mix(palette.subtle, bright, 0.3),
+                veiled: mix(mix(dark, palette.subtle, 0.4), bright, 0.45),
             },
             night: Hours {
                 land: night_land,
-                clear: [base, mix(base, palette.iris, 0.1), night_haze],
+                clear: [dark, mix(dark, palette.iris, 0.1), night_haze],
                 cloudy: [
-                    base,
-                    mix(base, palette.muted, 0.15),
-                    mix(base, palette.muted, 0.28),
+                    dark,
+                    mix(dark, palette.muted, 0.15),
+                    mix(dark, palette.muted, 0.28),
                 ],
                 foggy: [
-                    mix(base, palette.muted, 0.12),
-                    mix(base, palette.muted, 0.22),
-                    mix(base, palette.muted, 0.32),
+                    mix(dark, palette.muted, 0.12),
+                    mix(dark, palette.muted, 0.22),
+                    mix(dark, palette.muted, 0.32),
                 ],
                 clouds: clouds(
                     [
-                        mix(base, palette.overlay, 0.6),
-                        mix(palette.overlay, palette.muted, 0.35),
-                        mix(palette.overlay, palette.muted, 0.6),
+                        mix(dark, overlay, 0.6),
+                        mix(overlay, palette.muted, 0.35),
+                        mix(overlay, palette.muted, 0.6),
                     ],
-                    base,
+                    dark,
                     palette.subtle,
                     0.25,
                 ),
                 fog: mix(palette.muted, palette.subtle, 0.4),
-                veiled: mix(mix(base, palette.muted, 0.12), palette.subtle, 0.4),
+                veiled: mix(mix(dark, palette.muted, 0.12), palette.subtle, 0.4),
             },
-            sun: mix(palette.gold, palette.text, 0.35),
-            sun_core: mix(mix(palette.gold, palette.text, 0.35), palette.text, 0.3),
+            sun: mix(palette.gold, bright, 0.35),
+            sun_core: mix(mix(palette.gold, bright, 0.35), bright, 0.3),
             sun_glow: palette.gold,
-            moon: mix(palette.text, palette.rose, 0.12),
-            crater: mix(mix(palette.text, palette.rose, 0.12), palette.subtle, 0.35),
+            moon: mix(bright, palette.rose, 0.12),
+            crater: mix(mix(bright, palette.rose, 0.12), palette.subtle, 0.35),
             moon_glow: palette.subtle,
-            star: palette.text,
-            bird: mix(base, palette.overlay, 0.8),
-            glass: mix(base, palette.foam, 0.4),
+            star: bright,
+            bird: mix(dark, overlay, 0.8),
+            glass: mix(dark, palette.foam, 0.4),
             lamp: palette.gold,
-            window: [0.7, 0.8, 0.9, 1.0].map(|share| mix(base, palette.gold, share)),
+            window: [0.7, 0.8, 0.9, 1.0].map(|share| mix(dark, palette.gold, share)),
         }
     }
 }
@@ -524,6 +544,10 @@ impl Sky {
             ticks: 0,
             progress: 0.0,
         }
+    }
+
+    pub fn status(&self) -> Color {
+        self.shades.bright
     }
 
     pub fn repaint(&mut self, palette: &Palette) {
