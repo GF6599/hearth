@@ -605,6 +605,198 @@ fn fog_drifts_over_the_land_in_front_of_the_hills() {
     }
 }
 
+/// Rain and a storm fall onto the land.
+/// Given: a rain, a storm and a cloudy sky, all by day.
+/// When: each scene draws, then draws again four seconds later.
+/// Then: the ground at the foot of the frame changes under the rain and
+/// the storm, and stays the same under the clouds.
+///
+/// Why it matters: rain that falls only in the sky reads as a far shower,
+/// and the land of the scene stays dry.
+#[test]
+fn rain_and_storms_fall_onto_the_land() {
+    for (code, falls) in [(63, true), (95, true), (3, false)] {
+        // Given:
+        let mut scene = landed(&current(code, 3.0, 2.0));
+
+        // When:
+        let before = pixels::colours(&render(&scene), AREA);
+        later(&mut scene);
+        let after = pixels::colours(&render(&scene), AREA);
+
+        // Then:
+        let changed = ground_rows(&before)
+            .flat_map(|y| (0..before[y].len()).map(move |x| (x, y)))
+            .filter(|&(x, y)| before[y][x] != after[y][x])
+            .count();
+        assert_eq!(
+            changed >= 20,
+            falls,
+            "code {code}: {changed} pixels of ground changed"
+        );
+    }
+}
+
+/// The pixel rows of the ground at the foot of a frame, above the credit.
+fn ground_rows(grid: &[Vec<Color>]) -> std::ops::Range<usize> {
+    let height = grid.len() as f32;
+    (0.86 * height) as usize..(0.94 * height) as usize
+}
+
+/// The colour most pixels of the ground at the foot of the frame show, and
+/// the pixels of the whole frame that show it.
+fn ground_cover(scene: &Weather) -> (Color, usize) {
+    let grid = pixels::colours(&render(scene), AREA);
+    let mut counts = std::collections::HashMap::new();
+    for colour in ground_rows(&grid).flat_map(|y| grid[y].iter()) {
+        *counts.entry(*colour).or_insert(0_usize) += 1;
+    }
+    let (ground, _) = counts.into_iter().max_by_key(|(_, count)| *count).unwrap();
+    let cover = grid.iter().flatten().filter(|c| **c == ground).count();
+    (ground, cover)
+}
+
+/// How much lighter than the sky behind it a flake is at the least, where
+/// the bands of the sky differ by far less.
+const FLAKE_LIGHT: u32 = 20_000;
+
+/// The ticks in which the snow grows to its full depth, with room to spare.
+const SNOWED_IN: u32 = 1000;
+
+/// Snow falls through the air, lies on the land and grows deeper.
+/// Given: a snow and a rain, both by day.
+/// When: each scene draws, the snow draws again four seconds later, and
+/// again a minute later.
+/// Then: flakes lighter than the sky move in the air under the clouds. The
+/// ground is pale under the snow and not under the rain, and after the
+/// minute the snow in front covers more of the frame.
+///
+/// Why it matters: flakes that fall on green hills read as blossom, and
+/// snow that never collects reads as a loop that started a second ago.
+#[test]
+fn snow_lies_on_the_land_and_grows_deeper() {
+    // Given:
+    let mut snow = landed(&current(73, -2.0, 4.0));
+    let rain = landed(&current(63, 9.0, 10.0));
+
+    // When:
+    let air = (0.3, 0.5);
+    let grid = pixels::colours(&render(&snow), AREA);
+    let sky = grid[(air.1 * grid.len() as f32) as usize - 1]
+        .iter()
+        .map(|colour| theme::luma(*colour))
+        .min()
+        .unwrap();
+    let is_flake = |colour| theme::luma(colour) > sky + FLAKE_LIGHT;
+    let flakes = pixels_in(&snow, air, is_flake);
+    let (white, first) = ground_cover(&snow);
+    let (wet, _) = ground_cover(&rain);
+    later(&mut snow);
+    let moved = pixels_in(&snow, air, is_flake);
+    for _ in 0..SNOWED_IN {
+        snow.tick(AREA);
+    }
+    let (still_white, deep) = ground_cover(&snow);
+
+    // Then:
+    assert!(flakes.len() >= 20, "{} pixels of flake", flakes.len());
+    let fell = flakes.iter().filter(|place| !moved.contains(place)).count();
+    assert!(fell >= 20, "{fell} pixels of flake moved");
+    assert!(is_pale(white), "snow lies in {white:?}");
+    assert!(!is_pale(wet), "rain leaves the land in {wet:?}");
+    assert_eq!(white, still_white);
+    assert!(
+        deep >= first + 200,
+        "the snow covers {deep} pixels after {first}"
+    );
+}
+
+/// The ticks in which a storm strikes at least once: the longest wait
+/// between two strikes is under fourteen seconds.
+const STRIKE_TICKS: u32 = 240;
+
+fn light(colour: Color) -> u32 {
+    let (r, g, b) = channels(colour);
+    u32::from(r) + u32::from(g) + u32::from(b)
+}
+
+/// The light of the upper half of each frame over `STRIKE_TICKS`, with the
+/// brightest frame.
+fn sky_light(scene: &mut Weather) -> (Vec<u32>, Vec<Vec<Color>>) {
+    let mut lights = Vec::new();
+    let mut brightest = Vec::new();
+    for _ in 0..STRIKE_TICKS {
+        scene.tick(AREA);
+        let grid = pixels::colours(&render(scene), AREA);
+        let sum = grid[..grid.len() / 2]
+            .iter()
+            .flatten()
+            .map(|c| light(*c))
+            .sum();
+        if lights.iter().all(|other| sum > *other) {
+            brightest = grid;
+        }
+        lights.push(sum);
+    }
+    (lights, brightest)
+}
+
+/// A storm lights the sky with each strike, and a bolt runs from the
+/// clouds to the hills.
+/// Given: a storm and a rain, both at night.
+/// When: each scene draws for fourteen seconds.
+/// Then: the brightest sky of the storm holds far more light than its
+/// darkest, and the sky of the rain holds steady. In the brightest frame
+/// of the storm, each row between the clouds and the hills holds a pixel
+/// of the bolt, and a few rows hold two that stand apart, as a branch does.
+///
+/// Why it matters: a storm without its strike is a heavy rain, and a
+/// bolt that stops in the air reads as a fault in the drawing.
+#[test]
+fn a_storm_lights_the_sky_with_each_strike() {
+    // Given:
+    let mut storm = landed(&current_at(95, 16.0, 12.0, 0));
+    let mut rain = landed(&current_at(63, 9.0, 10.0, 0));
+
+    // When:
+    let (struck, brightest) = sky_light(&mut storm);
+    let (steady, _) = sky_light(&mut rain);
+
+    // Then:
+    let span = |lights: &[u32]| {
+        let (least, most) = (lights.iter().min().unwrap(), lights.iter().max().unwrap());
+        f64::from(*most) / f64::from(*least)
+    };
+    assert!(
+        span(&struck) >= 1.5,
+        "a strike lights the sky {}",
+        span(&struck)
+    );
+    assert!(span(&steady) <= 1.15, "the rain flickers {}", span(&steady));
+
+    let height = brightest.len() as f32;
+    let air = (0.2 * height) as usize..(0.58 * height) as usize;
+    let bolt = |y: usize| -> Vec<usize> {
+        (0..brightest[y].len())
+            .filter(|&x| light(brightest[y][x]) >= BOLT_LIGHT)
+            .collect()
+    };
+    for y in air.clone() {
+        assert!(!bolt(y).is_empty(), "no bolt in pixel row {y}");
+    }
+    let branches = air
+        .filter(|&y| {
+            let row = bolt(y);
+            row.last().unwrap() - row.first().unwrap() >= 5
+        })
+        .count();
+    assert!(branches >= 3, "{branches} rows hold a branch");
+}
+
+/// The light of a pixel of a bolt at the least: no drop, cloud or sky of a
+/// storm at night is as bright.
+const BOLT_LIGHT: u32 = 450;
+
 /// A new theme repaints the sky and keeps the weather.
 /// Given: a cloudy sky in Rose Pine.
 /// When: the theme changes to Rose Pine Dawn.
@@ -651,7 +843,8 @@ const PAIRS_THAT_MOVE: usize = AREA.area() as usize / 100;
 /// Over the terminal's background, no colour of the sky mixes with it.
 /// Given: Rose Pine over the terminal's background, and the same theme with
 /// another base.
-/// When: a clear day, a clear night, a cloudy sky and a fog draw in each.
+/// When: a clear day, a clear night, a cloudy sky, a fog, a rain, a snow
+/// and a storm draw in each.
 /// Then: the cells that show no base show the same glyph and colours in
 /// both, but for a few cells that keep another pair.
 ///
@@ -664,6 +857,9 @@ fn over_the_terminal_background_nothing_mixes_with_the_base() {
         current_at(0, 4.0, 5.0, 0),
         current(2, 9.0, 10.0),
         current(45, 3.0, 2.0),
+        current(63, 9.0, 10.0),
+        current(73, -2.0, 4.0),
+        current(95, 16.0, 12.0),
     ] {
         // When:
         let one = render(&landed_in(SEE_THROUGH, &body));
@@ -745,8 +941,8 @@ fn every_theme_draws_a_dark_night_and_a_status_that_reads() {
 }
 
 /// A smaller area draws only inside it.
-/// Given: a clear sky that has landed.
-/// When: it renders into areas smaller than the buffer, down to nothing.
+/// Given: a clear sky, a rain, a snow and a storm that have landed.
+/// When: each renders into areas smaller than the buffer, down to nothing.
 /// Then: no cell outside the area changes.
 ///
 /// Why it matters: a pane that draws past its edge paints over the pane
@@ -755,18 +951,24 @@ fn every_theme_draws_a_dark_night_and_a_status_that_reads() {
 fn a_smaller_area_draws_only_inside_it() {
     // Given:
     let canvas = Rect::new(0, 0, 40, 12);
-    let mut scene = landed(&current(0, 18.0, 5.0));
+    for code in [0, 63, 73, 95] {
+        let mut scene = landed(&current(code, 18.0, 5.0));
 
-    // When, then:
-    for area in [
-        Rect::new(3, 2, 20, 6),
-        Rect::new(3, 2, 1, 1),
-        Rect::new(3, 2, 5, 0),
-        Rect::new(3, 2, 0, 0),
-    ] {
-        scene.tick(area);
-        let mut buffer = Buffer::empty(canvas);
-        scene.render(area, &mut buffer);
-        pixels::assert_blank_outside(&buffer, area);
+        // When, then:
+        for area in [
+            Rect::new(3, 2, 20, 6),
+            Rect::new(3, 2, 1, 1),
+            Rect::new(3, 2, 5, 0),
+            Rect::new(3, 2, 0, 0),
+        ] {
+            // A storm strikes within each `STRIKE_TICKS`, so the bolt
+            // draws in each area too.
+            for _ in 0..STRIKE_TICKS {
+                scene.tick(area);
+                let mut buffer = Buffer::empty(canvas);
+                scene.render(area, &mut buffer);
+                pixels::assert_blank_outside(&buffer, area);
+            }
+        }
     }
 }
