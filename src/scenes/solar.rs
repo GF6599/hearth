@@ -224,7 +224,7 @@ fn ellipse(
         let top = (centre.1 - height).floor() as i32 - 1..=(centre.1 - height).ceil() as i32 + 1;
         let bottom = (centre.1 + height).floor() as i32 - 1..=(centre.1 + height).ceil() as i32 + 1;
         let start = *bottom.start().max(&(top.end() + 1));
-        for y in top.clone().chain(start..=*bottom.end()) {
+        for y in top.chain(start..=*bottom.end()) {
             if row_span.contains(&y) {
                 each(x, y, true);
             }
@@ -238,7 +238,7 @@ fn ellipse(
         let left = (centre.0 - half).floor() as i32 - 1..=(centre.0 - half).ceil() as i32 + 1;
         let right = (centre.0 + half).floor() as i32 - 1..=(centre.0 + half).ceil() as i32 + 1;
         let start = *right.start().max(&(left.end() + 1));
-        for x in left.clone().chain(start..=*right.end()) {
+        for x in left.chain(start..=*right.end()) {
             if column_span.contains(&x) {
                 each(x, y, false);
             }

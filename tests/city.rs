@@ -997,7 +997,7 @@ fn the_sky_lightens_toward_the_horizon() {
                 .all(|pair| theme::luma(pair[1]) >= theme::luma(pair[0])),
             "seed {seed}: the sky from the top down is {sky:?}"
         );
-        let mut shades = sky.clone();
+        let mut shades = sky;
         shades.dedup();
         assert!(shades.len() >= 3, "seed {seed}: the sky in {shades:?}");
     }

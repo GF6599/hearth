@@ -791,7 +791,7 @@ fn a_shooting_star_fades_from_its_head_back() {
             let along = |pixel: &(f32, f32)| {
                 (pixel.0 - from.0) * (to.0 - from.0) + (pixel.1 - from.1) * (to.1 - from.1)
             };
-            let mut ordered = lit.clone();
+            let mut ordered = lit;
             ordered.sort_by(|one, other| along(&one.0).total_cmp(&along(&other.0)));
             let half = ordered.len() / 2;
             let mean = |pixels: &[((f32, f32), Color)]| {
