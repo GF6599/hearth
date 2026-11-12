@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use hearth::octant::CELL_HEIGHT;
 use hearth::scene::{Rng, Scene};
-use hearth::scenes::weather::{CREDIT, NO_LOCATION, READING, Weather};
+use hearth::scenes::weather::{CREDIT, NO_LOCATION, READING, View, Weather};
 use hearth::sound::Cue;
 use hearth::theme::{self, Palette};
 use hearth::weather::{Location, Source, Type, parse};
@@ -1220,18 +1220,27 @@ fn a_scene_that_shows_no_sky_sends_no_cue() {
 /// The ticks a strike lights the sky at the most.
 const FLASH_TICKS: usize = 6;
 
-/// A thunder cue comes with each strike.
-/// Given: a storm at night.
+/// A thunder cue comes with each strike, in the sky and in the emblem.
+/// Given: a storm at night, in the sky view and then in the emblem view.
 /// When: the scene draws tick by tick for twenty-eight seconds.
-/// Then: the sky lights up at least twice, and the thunder cue comes on the
-/// first lit tick of each strike and on no other tick.
+/// Then: the upper half lights up at least twice, and the thunder cue
+/// comes on the first lit tick of each strike and on no other tick. A
+/// strike veils the whole sky but lights only the disc and the cloud of
+/// the emblem, so the emblem counts as lit from a smaller rise.
 ///
 /// Why it matters: thunder with no bolt, or a bolt with no thunder, reads
 /// as a sound that plays on its own clock.
 #[test]
 fn a_thunder_cue_comes_with_each_strike() {
+    for view in [View::Sky, View::Emblem] {
+        thunder_comes_with_each_strike_in(view);
+    }
+}
+
+fn thunder_comes_with_each_strike_in(view: View) {
     // Given:
     let mut storm = landed(&current_at(95, 16.0, 12.0, 0));
+    storm.set_view(view);
     storm.drain_cues(&mut Vec::new());
 
     // When:
@@ -1250,14 +1259,21 @@ fn a_thunder_cue_comes_with_each_strike() {
 
     // Then:
     let darkest = f64::from(*lights.iter().min().unwrap());
-    let lit = |tick: usize| f64::from(lights[tick]) >= 1.3 * darkest;
+    let rise = match view {
+        View::Sky => 1.3,
+        View::Emblem => 1.1,
+    };
+    let lit = |tick: usize| f64::from(lights[tick]) >= rise * darkest;
     // A strike under way at the first tick began before the cues were read.
     let strikes: Vec<usize> = (FLASH_TICKS..lights.len())
         .filter(|&tick| lit(tick) && !(tick - FLASH_TICKS..tick).any(lit))
         .collect();
     thunder.retain(|tick| *tick >= FLASH_TICKS);
-    assert!(strikes.len() >= 2, "the sky lit up at ticks {strikes:?}");
-    assert_eq!(thunder, strikes);
+    assert!(
+        strikes.len() >= 2,
+        "{view:?}: the sky lit up at ticks {strikes:?}"
+    );
+    assert_eq!(thunder, strikes, "{view:?}");
 }
 
 /// The gust of the wind cue rises and falls with no jump.
@@ -1423,6 +1439,195 @@ fn a_refresh_that_fails_keeps_the_sky_and_the_last_weather() {
     assert!(shows(&overcast, "overcast · 9 °C · 59.91 N 10.75 E"));
     assert!(!shows(&overcast, "min ago"));
     assert!(!shows(&overcast, "Open-Meteo answered"));
+}
+
+/// A narrow pane, as on a phone or beside another pane.
+const NARROW: Rect = Rect::new(0, 0, 40, 20);
+
+fn render_in(scene: &Weather, area: Rect) -> Buffer {
+    let mut buffer = Buffer::empty(area);
+    scene.render(area, &mut buffer);
+    buffer
+}
+
+/// Each weather by day and at night, all at 9 °C, so only the icon tells
+/// them apart.
+fn emblems() -> Vec<(&'static str, String)> {
+    vec![
+        ("clear by day", current_at(0, 9.0, 5.0, 1)),
+        ("clear at night", current_at(0, 9.0, 5.0, 0)),
+        ("cloud by day", current_at(2, 9.0, 5.0, 1)),
+        ("cloud at night", current_at(3, 9.0, 5.0, 0)),
+        ("rain", current_at(63, 9.0, 10.0, 1)),
+        ("snow", current_at(73, 9.0, 5.0, 1)),
+        ("storm", current_at(95, 9.0, 12.0, 0)),
+        ("fog", current_at(45, 9.0, 3.0, 1)),
+        ("wind", current_at(3, 9.0, 55.0, 1)),
+    ]
+}
+
+fn emblem(body: &str) -> Weather {
+    let mut scene = landed(body);
+    scene.set_view(View::Emblem);
+    scene
+}
+
+/// What the emblem draws: the pixels far lighter than the base, below the
+/// status line and above the credit.
+fn drawn(shown: &Buffer, area: Rect) -> Vec<(usize, usize)> {
+    let grid = pixels::colours(shown, area);
+    let base = light(theme::ROSE_PINE.base);
+    let rows = 2 * CELL_HEIGHT..grid.len() - CELL_HEIGHT;
+    rows.flat_map(|y| (0..grid[y].len()).map(move |x| (x, y)))
+        .filter(|&(x, y)| light(grid[y][x]) >= base + 120)
+        .collect()
+}
+
+/// The emblem draws one large icon and the temperature, centred as one
+/// group on a plain ground.
+/// Given: each weather in the emblem view.
+/// When: each draws in a wide pane and in a narrow one.
+/// Then: the wide frame names the weather and the place, and shows the
+/// credit. In both panes the drawing is centred within a twentieth of the
+/// width, and it is as large as the pane lets it be: at least two fifths
+/// of the height, or four fifths of the width where the width limits it.
+/// In the wide pane the outer tenth on each side is the plain base, where
+/// the sky view draws the land.
+///
+/// Why it matters: the emblem is the view to read from across the room, so
+/// a small or lopsided icon, or one lost in the land, fails its purpose.
+#[test]
+fn the_emblem_draws_one_large_centred_icon_on_a_plain_ground() {
+    for (name, body) in emblems() {
+        // Given:
+        let scene = emblem(&body);
+
+        for area in [AREA, NARROW] {
+            // When:
+            let shown = render_in(&scene, area);
+
+            // Then:
+            let drawn = drawn(&shown, area);
+            let (width, height) = (
+                usize::from(area.width) * 2,
+                usize::from(area.height) * CELL_HEIGHT,
+            );
+            let left = drawn.iter().map(|(x, _)| *x).min().unwrap();
+            let right = drawn.iter().map(|(x, _)| *x).max().unwrap();
+            let top = drawn.iter().map(|(_, y)| *y).min().unwrap();
+            let bottom = drawn.iter().map(|(_, y)| *y).max().unwrap();
+            let off = (left + right) as f32 / 2.0 - width as f32 / 2.0;
+            assert!(
+                off.abs() <= width as f32 / 20.0,
+                "{name} in {area:?}: the drawing is {off} pixels off centre"
+            );
+            assert!(
+                (bottom - top) * 5 >= height * 2 || (right - left) * 5 >= width * 4,
+                "{name} in {area:?}: the drawing is {} of {width} pixels wide and {} of {height} high",
+                right - left,
+                bottom - top
+            );
+        }
+        let shown = render(&scene);
+        assert!(shows(&shown, "· 9 °C · 59.91 N 10.75 E"), "{name}");
+        assert!(shows(&shown, CREDIT), "{name}");
+        let grid = pixels::colours(&shown, AREA);
+        let sides = grid[2 * CELL_HEIGHT..grid.len() - CELL_HEIGHT]
+            .iter()
+            .flat_map(|row| {
+                row[..row.len() / 10]
+                    .iter()
+                    .chain(&row[row.len() * 9 / 10..])
+            });
+        let plain = sides
+            .clone()
+            .filter(|c| **c == theme::ROSE_PINE.base)
+            .count();
+        assert_eq!(plain, sides.count(), "{name}: the sides are not plain");
+    }
+}
+
+/// The emblem shows the temperature in large digits.
+/// Given: rain at 7 °C and rain at 8 °C, in the emblem view.
+/// When: each draws.
+/// Then: the frames differ only in one digit, which is at least a quarter
+/// of the frame high and at most a quarter of it wide.
+///
+/// Why it matters: the temperature is the number to read from across the
+/// room, and a digit drawn the height of a line of text cannot be read
+/// there.
+#[test]
+fn the_emblem_shows_the_temperature_in_large_digits() {
+    // Given:
+    let seven = emblem(&current_at(63, 7.0, 10.0, 1));
+    let eight = emblem(&current_at(63, 8.0, 10.0, 1));
+
+    // When:
+    let (a, b) = (
+        pixels::colours(&render(&seven), AREA),
+        pixels::colours(&render(&eight), AREA),
+    );
+
+    // Then:
+    let rows = 2 * CELL_HEIGHT..a.len() - CELL_HEIGHT;
+    let differ: Vec<(usize, usize)> = rows
+        .flat_map(|y| (0..a[y].len()).map(move |x| (x, y)))
+        .filter(|&(x, y)| a[y][x] != b[y][x])
+        .collect();
+    let span = |along: fn(&(usize, usize)) -> usize| {
+        differ.iter().map(along).max().unwrap() - differ.iter().map(along).min().unwrap()
+    };
+    let (wide, high) = (span(|(x, _)| *x), span(|(_, y)| *y));
+    assert!(
+        high * 4 >= a.len(),
+        "the digit is {high} of {} pixels high",
+        a.len()
+    );
+    assert!(
+        wide * 4 <= a[0].len(),
+        "the digit is {wide} of {} pixels wide",
+        a[0].len()
+    );
+}
+
+/// Each weather has an emblem of its own, and each emblem moves.
+/// Given: each weather in the emblem view, all at 9 °C.
+/// When: each draws, and draws again a second later.
+/// Then: no two emblems draw the same frame, and each frame a second
+/// later differs from the first.
+///
+/// Why it matters: the icon alone tells the weather in this view, and a
+/// still icon reads as a frozen screen.
+#[test]
+fn each_weather_has_its_own_emblem_and_it_moves() {
+    // Given:
+    let mut scenes: Vec<(&str, Weather)> = emblems()
+        .into_iter()
+        .map(|(name, body)| (name, emblem(&body)))
+        .collect();
+
+    // When:
+    let first: Vec<Vec<Vec<Color>>> = scenes
+        .iter()
+        .map(|(_, scene)| pixels::colours(&render(scene), AREA))
+        .collect();
+    let later: Vec<Vec<Vec<Color>>> = scenes
+        .iter_mut()
+        .map(|(_, scene)| {
+            for _ in 0..17 {
+                scene.tick(AREA);
+            }
+            pixels::colours(&render(scene), AREA)
+        })
+        .collect();
+
+    // Then:
+    for (index, (name, _)) in scenes.iter().enumerate() {
+        for (other, (other_name, _)) in scenes.iter().enumerate().skip(index + 1) {
+            assert_ne!(first[index], first[other], "{name} draws as {other_name}");
+        }
+        assert_ne!(first[index], later[index], "{name} stands still");
+    }
 }
 
 /// A new theme repaints the sky and keeps the weather.

@@ -15,6 +15,7 @@ use hearth::config::{Background, Config};
 use hearth::corpus::Corpus;
 use hearth::scene::{ALL, SceneKind};
 use hearth::scenes::typing::Speed;
+use hearth::scenes::weather::View;
 use hearth::sound::Volume;
 use hearth::theme;
 use hearth::weather::Location;
@@ -878,9 +879,65 @@ fn the_weather_table_sets_the_location_and_the_flags_win() {
     assert_eq!(plain.location(&Config::default()), None);
 }
 
+/// `w` switches the weather scene between its sky and its emblem, and
+/// saves the view.
+/// Given: a file with comments whose `[weather]` sets the sky view, read by
+/// a weather scene, and a fire whose file sets only the theme.
+/// When: `w` is pressed in the weather scene twice, and then in the fire.
+/// Then: the notice names the emblem and then the sky. The file holds each
+/// view in turn and keeps its comments. In the fire the file stays as it
+/// was.
+///
+/// Why it matters: the view is a choice a user makes once, so it must hold
+/// the next run, and a key meant for one scene must not save in another.
+#[test]
+fn w_switches_the_weather_view_and_saves_it() {
+    // Given:
+    let path = config_file(
+        "view",
+        Some("# my settings\n[weather]\n# how it looks\nview = \"sky\"\n"),
+    );
+    let config = Config::load(&path).unwrap();
+    assert_eq!(config.view, View::Sky);
+    let mut weather = app(&["hearth", "weather"], &config).saving_to(path.clone());
+
+    // When:
+    weather.switch_view();
+
+    // Then:
+    assert!(header(&weather).contains("emblem"), "{}", header(&weather));
+    assert_eq!(Config::load(&path).unwrap().view, View::Emblem);
+    let saved = fs::read_to_string(&path).unwrap();
+    assert!(
+        saved.contains("# my settings") && saved.contains("# how it looks"),
+        "{saved}"
+    );
+
+    // When:
+    weather.switch_view();
+
+    // Then:
+    assert!(header(&weather).contains("sky"), "{}", header(&weather));
+    assert_eq!(Config::load(&path).unwrap().view, View::Sky);
+
+    // Given:
+    let fire_path = config_file("view-fire", Some("theme = \"rose-pine\"\n"));
+    let mut fire = app(&["hearth", "fire"], &Config::default()).saving_to(fire_path.clone());
+
+    // When:
+    fire.switch_view();
+
+    // Then:
+    assert_eq!(
+        fs::read_to_string(&fire_path).unwrap(),
+        "theme = \"rose-pine\"\n"
+    );
+}
+
 /// A bad weather table stops startup with a message that names the key.
 /// Given: a latitude out of range, a longitude that is a word, a latitude
-/// with no longitude, and a key that is no setting.
+/// with no longitude, a key that is no setting, and a view hearth does not
+/// have.
 /// When: hearth reads each file.
 /// Then: each is refused with a message that names the key and its rule.
 ///
@@ -908,6 +965,11 @@ fn a_bad_weather_table_names_the_key() {
             "other",
             "[weather]\nplace = \"Oslo\"\n",
             "weather.place is not a setting",
+        ),
+        (
+            "view",
+            "[weather]\nview = \"map\"\n",
+            "weather.view must be sky or emblem",
         ),
     ] {
         // When:
