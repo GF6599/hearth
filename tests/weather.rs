@@ -60,6 +60,38 @@ fn serve(status: &str, body: &str) -> Server {
     serve_after(status, body, None)
 }
 
+/// A local server that answers its requests with `replies` in turn, and
+/// then with the last of them. It answers each request only once `gate`
+/// lets it.
+fn serve_in_turn(replies: Vec<(&'static str, String)>, gate: Receiver<()>) -> Server {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (sender, requests) = mpsc::channel();
+    thread::spawn(move || {
+        for (served, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { return };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let mut header = String::new();
+            while reader.read_line(&mut header).unwrap() > 2 {
+                header.clear();
+            }
+            if gate.recv().is_err() {
+                return;
+            }
+            let (status, body) = &replies[served.min(replies.len() - 1)];
+            let reply = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sender.send(line.trim_end().to_string());
+            let _ = stream.write_all(reply.as_bytes());
+        }
+    });
+    Server { base, requests }
+}
+
 /// A base address where nothing listens.
 fn closed() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1308,6 +1340,89 @@ fn a_far_foghorn_sounds_now_and_then_in_the_fog() {
         closest >= Some(HORN_REST),
         "two calls are {closest:?} ticks apart"
     );
+}
+
+/// Ticks `scene` until its frame shows `text`, for ten seconds at the most.
+fn ticked_until(scene: &mut Weather, text: &str) -> Buffer {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        scene.tick(AREA);
+        let shown = render(scene);
+        if shows(&shown, text) || Instant::now() > deadline {
+            return shown;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The colours a frame holds. A notice holds the base and its text, and a
+/// sky holds far more.
+fn colours_in(shown: &Buffer) -> usize {
+    let grid = pixels::colours(shown, AREA);
+    let all: std::collections::HashSet<Color> = grid.into_iter().flatten().collect();
+    all.len()
+}
+
+/// A refresh that fails keeps the sky and the last weather, and says why.
+/// Given: a server that answers with moderate rain, then fails, and then
+/// answers with overcast skies.
+/// When: the scene reads each answer in turn.
+/// Then: after the failure the frame still shows the sky, the rain, the
+/// place and the credit, with the age of the report and the reason, and
+/// the rain still sounds. After the next good read the frame shows the
+/// overcast sky, with no age and no reason.
+///
+/// Why it matters: Open-Meteo is read every 15 minutes, and a short loss of
+/// the network at one read would blank the screensaver for a minute and
+/// stop its sound.
+#[test]
+fn a_refresh_that_fails_keeps_the_sky_and_the_last_weather() {
+    // Given:
+    let (open, gate) = mpsc::channel();
+    let server = serve_in_turn(
+        vec![
+            ("200 OK", current(63, 7.4, 12.0)),
+            ("500 Internal Server Error", "<html>".to_string()),
+            ("200 OK", current(3, 9.0, 10.0)),
+        ],
+        gate,
+    );
+    let wait = Duration::from_millis(50);
+    let source = Source::new(&server.base, oslo()).every(wait, wait);
+    let mut scene = Weather::new(seeded(), &theme::ROSE_PINE, Some(source));
+    open.send(()).unwrap();
+    let rain = "moderate rain · 7 °C · 59.91 N 10.75 E";
+    let first = ticked_until(&mut scene, rain);
+    assert!(shows(&first, rain));
+
+    // When:
+    open.send(()).unwrap();
+    let failed = ticked_until(&mut scene, "Open-Meteo answered 500");
+
+    // Then:
+    assert!(shows(&failed, "Open-Meteo answered 500"));
+    assert!(shows(&failed, &format!("{rain} · 0 min ago")));
+    assert!(shows(&failed, CREDIT));
+    assert!(
+        colours_in(&failed) >= 20,
+        "{} colours: a notice, not the sky",
+        colours_in(&failed)
+    );
+    assert!(
+        cues_of(&mut scene, 17)
+            .iter()
+            .all(|cues| cues == &[Cue::Rain]),
+        "the rain stops sounding"
+    );
+
+    // And when:
+    open.send(()).unwrap();
+    let overcast = ticked_until(&mut scene, "overcast · 9 °C");
+
+    // Then:
+    assert!(shows(&overcast, "overcast · 9 °C · 59.91 N 10.75 E"));
+    assert!(!shows(&overcast, "min ago"));
+    assert!(!shows(&overcast, "Open-Meteo answered"));
 }
 
 /// A new theme repaints the sky and keeps the weather.
