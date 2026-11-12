@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use hearth::octant::CELL_HEIGHT;
 use hearth::scene::{Rng, Scene};
 use hearth::scenes::weather::{CREDIT, NO_LOCATION, READING, Weather};
+use hearth::sound::Cue;
 use hearth::theme::{self, Palette};
 use hearth::weather::{Location, Source, Type, parse};
 use rand::SeedableRng;
@@ -1075,6 +1076,234 @@ fn gust_lines_cross_the_air_over_the_land() {
 
     // Then:
     assert!(longest >= 30, "the longest line is {longest} pixels long");
+}
+
+/// The cues of each of the next `ticks` ticks.
+fn cues_of(scene: &mut Weather, ticks: u32) -> Vec<Vec<Cue>> {
+    scene.drain_cues(&mut Vec::new());
+    (0..ticks)
+        .map(|_| {
+            scene.tick(AREA);
+            let mut cues = Vec::new();
+            scene.drain_cues(&mut cues);
+            cues
+        })
+        .collect()
+}
+
+/// The ticks of a minute.
+const MINUTE: u32 = 1000;
+
+/// Each weather sends the cue of its own sound on every tick.
+/// Given: a scene for each weather: a clear sky by day and at night, an
+/// overcast sky by day and at night, rain, snow, a storm, fog and a strong
+/// wind.
+/// When: each scene ticks for a minute.
+/// Then: every tick sends the cue of that weather, once. The storm also
+/// sends a thunder cue and the fog a foghorn cue on at least one tick, and
+/// no other cue comes.
+///
+/// Why it matters: the mixer keeps a sound up only while its cue comes, so
+/// a tick without it fades the sound, and the cue of another weather plays
+/// rain under a clear sky.
+#[test]
+fn each_weather_sends_the_cue_of_its_own_sound() {
+    let weathers = [
+        (current_at(0, 20.0, 5.0, 1), Cue::ClearDay, None),
+        (current_at(0, 12.0, 5.0, 0), Cue::ClearNight, None),
+        (current_at(3, 12.0, 5.0, 1), Cue::Cloud, None),
+        (current_at(3, 9.0, 5.0, 0), Cue::Cloud, None),
+        (current_at(63, 9.0, 10.0, 1), Cue::Rain, None),
+        (current_at(73, -3.0, 5.0, 1), Cue::Snow, None),
+        (
+            current_at(95, 16.0, 12.0, 0),
+            Cue::Storm,
+            Some(Cue::Thunder),
+        ),
+        (current_at(45, 6.0, 3.0, 1), Cue::Fog, Some(Cue::Foghorn)),
+        (current_at(3, 12.0, 55.0, 1), Cue::Wind { gust: 0.0 }, None),
+    ];
+    for (body, sound, at_times) in weathers {
+        // Given:
+        let mut scene = landed(&body);
+
+        // When:
+        let ticks = cues_of(&mut scene, MINUTE);
+
+        // Then:
+        let mut times = 0;
+        for (tick, cues) in ticks.iter().enumerate() {
+            let cues: Vec<Cue> = cues
+                .iter()
+                .map(|cue| match cue {
+                    Cue::Wind { .. } => Cue::Wind { gust: 0.0 },
+                    other => *other,
+                })
+                .collect();
+            match cues[..] {
+                [only] => assert_eq!(only, sound, "tick {tick}"),
+                [first, second] => {
+                    assert_eq!(first, sound, "tick {tick}");
+                    assert_eq!(Some(second), at_times, "tick {tick} of {sound:?}");
+                    times += 1;
+                }
+                _ => panic!("tick {tick} of {sound:?} sent {cues:?}"),
+            }
+        }
+        assert_eq!(
+            times >= 1,
+            at_times.is_some(),
+            "{sound:?} sent {at_times:?} {times} times"
+        );
+    }
+}
+
+/// A scene that shows no sky sends no cue.
+/// Given: a scene with no location, and a scene whose read fails.
+/// When: each ticks for a second.
+/// Then: neither sends a cue.
+///
+/// Why it matters: a notice with rain under it sounds of a weather the
+/// scene does not know.
+#[test]
+fn a_scene_that_shows_no_sky_sends_no_cue() {
+    // Given:
+    let mut nowhere = Weather::new(seeded(), &theme::ROSE_PINE, None);
+    let mut failed = Weather::new(
+        seeded(),
+        &theme::ROSE_PINE,
+        Some(Source::new(&closed(), oslo())),
+    );
+    settled(&mut failed);
+
+    // When:
+    let cues = [cues_of(&mut nowhere, 17), cues_of(&mut failed, 17)];
+
+    // Then:
+    for ticks in cues {
+        assert!(ticks.iter().all(Vec::is_empty), "{ticks:?}");
+    }
+}
+
+/// The ticks a strike lights the sky at the most.
+const FLASH_TICKS: usize = 6;
+
+/// A thunder cue comes with each strike.
+/// Given: a storm at night.
+/// When: the scene draws tick by tick for twenty-eight seconds.
+/// Then: the sky lights up at least twice, and the thunder cue comes on the
+/// first lit tick of each strike and on no other tick.
+///
+/// Why it matters: thunder with no bolt, or a bolt with no thunder, reads
+/// as a sound that plays on its own clock.
+#[test]
+fn a_thunder_cue_comes_with_each_strike() {
+    // Given:
+    let mut storm = landed(&current_at(95, 16.0, 12.0, 0));
+    storm.drain_cues(&mut Vec::new());
+
+    // When:
+    let (mut lights, mut thunder) = (Vec::new(), Vec::new());
+    for tick in 0..2 * STRIKE_TICKS as usize {
+        storm.tick(AREA);
+        let mut cues = Vec::new();
+        storm.drain_cues(&mut cues);
+        if cues.contains(&Cue::Thunder) {
+            thunder.push(tick);
+        }
+        let grid = pixels::colours(&render(&storm), AREA);
+        let upper = grid[..grid.len() / 2].iter().flatten();
+        lights.push(upper.map(|colour| light(*colour)).sum::<u32>());
+    }
+
+    // Then:
+    let darkest = f64::from(*lights.iter().min().unwrap());
+    let lit = |tick: usize| f64::from(lights[tick]) >= 1.3 * darkest;
+    // A strike under way at the first tick began before the cues were read.
+    let strikes: Vec<usize> = (FLASH_TICKS..lights.len())
+        .filter(|&tick| lit(tick) && !(tick - FLASH_TICKS..tick).any(lit))
+        .collect();
+    thunder.retain(|tick| *tick >= FLASH_TICKS);
+    assert!(strikes.len() >= 2, "the sky lit up at ticks {strikes:?}");
+    assert_eq!(thunder, strikes);
+}
+
+/// The gust of the wind cue rises and falls with no jump.
+/// Given: a strong wind.
+/// When: the scene ticks for a minute.
+/// Then: every tick sends one wind cue with a gust from 0 to 1. The gusts
+/// span at least 0.4 and cross their mean at least ten times, and no gust
+/// differs from the one before it by more than 0.05.
+///
+/// Why it matters: the level of the wind's sound follows this number as
+/// the gust lines come and go. A number that held still would play a flat
+/// hiss, and one that jumped would lurch.
+#[test]
+fn the_gust_of_the_wind_cue_rises_and_falls_with_no_jump() {
+    // Given:
+    let mut wind = landed(&current(3, 12.0, 55.0));
+
+    // When:
+    let gusts: Vec<f32> = cues_of(&mut wind, MINUTE)
+        .iter()
+        .map(|cues| match cues[..] {
+            [Cue::Wind { gust }] => gust,
+            _ => panic!("the wind sent {cues:?}"),
+        })
+        .collect();
+
+    // Then:
+    let least = gusts.iter().copied().fold(f32::INFINITY, f32::min);
+    let most = gusts.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(least >= 0.0 && most <= 1.0, "gusts from {least} to {most}");
+    assert!(most - least >= 0.4, "gusts from {least} to {most}");
+    let mean = gusts.iter().sum::<f32>() / gusts.len() as f32;
+    let crossings = gusts
+        .windows(2)
+        .filter(|pair| (pair[0] < mean) != (pair[1] < mean))
+        .count();
+    assert!(
+        crossings >= 10,
+        "the gust crosses its mean {crossings} times"
+    );
+    let jump = gusts
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .fold(0.0, f32::max);
+    assert!(jump <= 0.05, "the gust jumps by {jump}");
+}
+
+/// The ticks of five minutes.
+const FIVE_MINUTES: u32 = 5000;
+/// The ticks of twenty seconds, longer than a call of the foghorn lasts.
+const HORN_REST: usize = 333;
+
+/// A far foghorn sounds now and then in the fog.
+/// Given: a foggy scene.
+/// When: it ticks for five minutes.
+/// Then: the foghorn cue comes from three to ten times, and no two of them
+/// within twenty seconds.
+///
+/// Why it matters: a horn on every tick starts its recording again and
+/// again, and two calls close together play over each other.
+#[test]
+fn a_far_foghorn_sounds_now_and_then_in_the_fog() {
+    // Given:
+    let mut fog = landed(&current_at(45, 6.0, 3.0, 1));
+
+    // When:
+    let calls: Vec<usize> = cues_of(&mut fog, FIVE_MINUTES)
+        .iter()
+        .enumerate()
+        .filter(|(_, cues)| cues.contains(&Cue::Foghorn))
+        .map(|(tick, _)| tick)
+        .collect();
+
+    // Then:
+    assert!((3..=10).contains(&calls.len()), "calls at ticks {calls:?}");
+    for pair in calls.windows(2) {
+        assert!(pair[1] - pair[0] >= HORN_REST, "calls at ticks {calls:?}");
+    }
 }
 
 /// A new theme repaints the sky and keeps the weather.

@@ -18,6 +18,29 @@ const AREA: Rect = Rect::new(0, 0, 80, 20);
 /// The recordings that loop while their scene runs, as the typing stops and
 /// starts with its keys.
 const SCENE_RECORDINGS: [Cue; 3] = [Cue::Fire, Cue::River, Cue::Tide { swell: 1.0 }];
+/// The recordings of the weather, one for each sky, with the wind at the
+/// strength of a mean gust.
+const WEATHER_RECORDINGS: [Cue; 8] = [
+    Cue::ClearDay,
+    Cue::ClearNight,
+    Cue::Cloud,
+    Cue::Rain,
+    Cue::Snow,
+    Cue::Storm,
+    Cue::Fog,
+    Cue::Wind { gust: 0.5 },
+];
+/// The seconds the recordings of the thunder and of the foghorn last.
+const THUNDER_SECONDS: f64 = 18.5;
+const FOGHORN_SECONDS: f64 = 14.0;
+
+/// Every recording that loops while its cue comes.
+fn looping() -> Vec<Cue> {
+    SCENE_RECORDINGS
+        .into_iter()
+        .chain(WEATHER_RECORDINGS)
+        .collect()
+}
 
 /// Samples per channel in one tick.
 fn tick_samples() -> usize {
@@ -221,19 +244,21 @@ fn each_scene_recording_plays_in_stereo() {
     }
 }
 
-/// Each scene recording loops near the level of the others with no drop.
-/// Given: a mixer for each recording that plays while its scene runs.
+/// Each looping recording plays near the level of the others with no drop.
+/// Given: a mixer for each recording that loops: the fire, the river, the
+/// tide and each sky of the weather.
 /// When: its cue comes on every tick for a minute, which plays the recording
 /// through more than once.
-/// Then: after the fade in, the minute plays from -37 to -29 dB, and no two
-/// milliseconds are quieter than -70 dB.
+/// Then: after the fade in, the minute plays from -37 to -29 dB, no sample
+/// goes past full scale, and no two milliseconds are quieter than -70 dB.
 ///
-/// Why it matters: a focus move fades one recording into the next, and a
-/// jump in level startles. A fire and the water go on with no break, and an
-/// MP3 starts and ends with padding that a loop must not keep.
+/// Why it matters: a focus move or a change of weather fades one recording
+/// into the next, and a jump in level startles. The sources differ by more
+/// than 30 dB. A fire, the water and the weather go on with no break, and
+/// an MP3 starts and ends with padding that a loop must not keep.
 #[test]
-fn each_scene_recording_loops_near_one_level_with_no_drop() {
-    for cue in SCENE_RECORDINGS {
+fn each_looping_recording_plays_near_one_level_with_no_drop() {
+    for cue in looping() {
         // Given:
         let mut mixer = Mixer::new(RATE);
 
@@ -241,8 +266,14 @@ fn each_scene_recording_loops_near_one_level_with_no_drop() {
         let frames = played(&mut mixer, ticks(60.0), cue, |_| true);
 
         // Then:
-        let level = decibels(frames[seconds(0.5)..].as_flattened());
+        let heard = frames[seconds(0.5)..].as_flattened();
+        let level = decibels(heard);
         assert!((-37.0..=-29.0).contains(&level), "{cue:?}: {level} dB");
+        assert!(
+            loudest(heard) <= 1.0,
+            "{cue:?}: {} is past full scale",
+            loudest(heard)
+        );
         let left: Vec<f32> = frames[seconds(0.5)..]
             .iter()
             .map(|[left, _]| *left)
@@ -255,20 +286,24 @@ fn each_scene_recording_loops_near_one_level_with_no_drop() {
     }
 }
 
-/// Each scene cue plays its own recording.
-/// Given: a mixer for each recording that plays while its scene runs.
+/// Each looping cue plays its own recording.
+/// Given: a mixer for each recording that loops: the fire, the river, the
+/// tide and each sky of the weather.
 /// When: its cue comes on every tick for three seconds.
 /// Then: the frames of each cue differ from the frames of every other cue.
 ///
 /// Why it matters: a cue wired to the wrong recording passes every level
-/// check, and the river would crackle.
+/// check, and the river would crackle, or the snow would sound of rain.
 #[test]
-fn each_scene_cue_plays_its_own_recording() {
+fn each_looping_cue_plays_its_own_recording() {
     // When:
-    let sounds = SCENE_RECORDINGS.map(|cue| {
-        let frames = played(&mut Mixer::new(RATE), ticks(3.0), cue, |_| true);
-        (cue, frames)
-    });
+    let sounds: Vec<(Cue, Vec<[f32; 2]>)> = looping()
+        .into_iter()
+        .map(|cue| {
+            let frames = played(&mut Mixer::new(RATE), ticks(3.0), cue, |_| true);
+            (cue, frames)
+        })
+        .collect();
 
     // Then:
     for (index, (cue, frames)) in sounds.iter().enumerate() {
@@ -308,13 +343,16 @@ fn the_fire_plays_on_at_its_slowest_speed() {
     assert_eq!(differ, 0, "{differ} frames differ");
 }
 
-/// Renders `ticks` ticks of the tide, with the swell of each tick from
-/// `swell`.
-fn tide_played(mixer: &mut Mixer, ticks: usize, swell: impl Fn(usize) -> f32) -> Vec<f32> {
+/// The cues whose recording follows a value from its scene: the tide its
+/// swell, and the wind its gust.
+const FOLLOWING: [fn(f32) -> Cue; 2] = [|swell| Cue::Tide { swell }, |gust| Cue::Wind { gust }];
+
+/// Renders `ticks` ticks, with the cue that `cue` makes on each tick.
+fn followed(mixer: &mut Mixer, ticks: usize, cue: impl Fn(usize) -> Cue) -> Vec<f32> {
     let mut played = Vec::with_capacity(ticks * tick_samples() * 2);
     let mut frames = vec![0.0; tick_samples() * 2];
     for tick in 0..ticks {
-        mixer.play(Cue::Tide { swell: swell(tick) });
+        mixer.play(cue(tick));
         mixer.render(&mut frames);
         played.extend_from_slice(&frames);
     }
@@ -322,54 +360,255 @@ fn tide_played(mixer: &mut Mixer, ticks: usize, swell: impl Fn(usize) -> f32) ->
 }
 
 /// The tide is louder at the top of a run up than at the bottom of a draw
-/// back.
-/// Given: two mixers.
-/// When: one plays the tide at the swell of the top of a run up and the other
-/// at the swell of the bottom of a draw back, for three seconds.
+/// back, and the wind is louder in its strongest gust than in its weakest.
+/// Given: two mixers, for the tide and then for the wind.
+/// When: one plays at the most its scene sends and the other at the least,
+/// for three seconds.
 /// Then: after the fade in, the first plays at least 3 dB louder.
 ///
-/// Why it matters: the sound must rise and fall with the water on the
-/// screen, and a smaller change is lost under the waves in the recording.
+/// Why it matters: the sound must rise and fall with the water or the gust
+/// lines on the screen, and a smaller change is lost under the waves and
+/// the gusts in the recording.
 #[test]
-fn the_tide_swell_changes_how_loud_it_plays() {
-    // When:
-    let top = tide_played(&mut Mixer::new(RATE), ticks(3.0), |_| 1.0);
-    let bottom = tide_played(&mut Mixer::new(RATE), ticks(3.0), |_| 0.0);
+fn the_swell_and_the_gust_change_how_loud_they_play() {
+    for cue in FOLLOWING {
+        // When:
+        let most = followed(&mut Mixer::new(RATE), ticks(3.0), |_| cue(1.0));
+        let least = followed(&mut Mixer::new(RATE), ticks(3.0), |_| cue(0.0));
 
-    // Then:
-    let heard = seconds(1.0) * 2;
-    let rise = decibels(&top[heard..]) - decibels(&bottom[heard..]);
-    assert!(rise >= 3.0, "{rise} dB");
+        // Then:
+        let heard = seconds(1.0) * 2;
+        let rise = decibels(&most[heard..]) - decibels(&least[heard..]);
+        assert!(rise >= 3.0, "{:?}: {rise} dB", cue(1.0));
+    }
 }
 
-/// A jump in the swell reaches the tide's level as a glide.
-/// Given: two mixers that play the tide at the bottom of a draw back.
-/// When: one stays there, and the other jumps to the top of a run up after
-/// one second.
+/// A jump in the swell or in the gust reaches the level as a glide.
+/// Given: two mixers that play at the least their scene sends, for the tide
+/// and then for the wind.
+/// When: one stays there, and the other jumps to the most after one second.
 /// Then: over the next 5 ms the two stay within 1 dB, and from half a second
 /// after the jump the second is at least 3 dB louder.
 ///
-/// Why it matters: the swell changes only on a tick, and a gain that jumps
-/// on each tick is heard as a click many times a second.
+/// Why it matters: the swell and the gust change only on a tick, and a gain
+/// that jumps on each tick is heard as a click many times a second.
 #[test]
-fn the_tide_swell_glides_between_ticks() {
+fn a_jump_in_the_swell_or_the_gust_glides_between_ticks() {
+    for cue in FOLLOWING {
+        // Given:
+        let jump = ticks(1.0);
+        let steady = followed(&mut Mixer::new(RATE), ticks(2.0), |_| cue(0.0));
+
+        // When:
+        let jumped = followed(&mut Mixer::new(RATE), ticks(2.0), |tick| {
+            cue(if tick < jump { 0.0 } else { 1.0 })
+        });
+
+        // Then:
+        let at_jump = jump * tick_samples() * 2;
+        let glide = at_jump..at_jump + seconds(0.005) * 2;
+        let start = decibels(&jumped[glide.clone()]) - decibels(&steady[glide]);
+        assert!(
+            start.abs() <= 1.0,
+            "{:?}: {start} dB over the first 5 ms",
+            cue(1.0)
+        );
+        let settled = at_jump + seconds(0.5) * 2;
+        let rise = decibels(&jumped[settled..]) - decibels(&steady[settled..]);
+        assert!(rise >= 3.0, "{:?}: {rise} dB after the glide", cue(1.0));
+    }
+}
+
+/// Renders `ticks` ticks with `weather` on each tick below `until`, and
+/// `sound` also on each tick in `at`.
+fn sounded(ticks: usize, weather: Cue, until: usize, sound: Cue, at: &[usize]) -> Vec<f32> {
+    let mut mixer = Mixer::new(RATE);
+    let mut played = Vec::with_capacity(ticks * tick_samples() * 2);
+    let mut frames = vec![0.0; tick_samples() * 2];
+    for tick in 0..ticks {
+        if tick < until {
+            mixer.play(weather);
+        }
+        if at.contains(&tick) {
+            mixer.play(sound);
+        }
+        mixer.render(&mut frames);
+        played.extend_from_slice(&frames);
+    }
+    played
+}
+
+/// What `with` plays over `without`, sample by sample.
+fn added(with: &[f32], without: &[f32]) -> Vec<f32> {
+    with.iter().zip(without).map(|(a, b)| a - b).collect()
+}
+
+/// The sample at which tick `tick` starts.
+fn sample_of(tick: usize) -> usize {
+    tick * tick_samples() * 2
+}
+
+/// The thunder of a bolt and the horn in the fog each sound once over
+/// their weather.
+/// Given: two mixers that play the storm on every tick, and then two that
+/// play the fog.
+/// When: one of the two also gets the thunder cue, or the foghorn cue,
+/// once, after a second.
+/// Then: the two play the same up to that cue. Over the next five seconds
+/// the one with the cue adds at least -45 dB. It still adds sound a second
+/// before the recording ends, and it adds nothing from a second after.
+///
+/// Why it matters: a thunder that looped would roll with no bolt, and one
+/// cut short, or wired to the recording of the horn, passes a check of its
+/// start alone.
+#[test]
+fn the_thunder_and_the_foghorn_each_sound_once_over_their_weather() {
+    for (weather, sound, length) in [
+        (Cue::Storm, Cue::Thunder, THUNDER_SECONDS),
+        (Cue::Fog, Cue::Foghorn, FOGHORN_SECONDS),
+    ] {
+        // Given:
+        let (once, total) = (ticks(1.0), ticks(1.0 + length + 3.0));
+        let without = sounded(total, weather, total, sound, &[]);
+
+        // When:
+        let with = sounded(total, weather, total, sound, &[once]);
+
+        // Then:
+        let added = added(&with, &without);
+        let after = |seconds_after: f64| sample_of(once) + seconds(seconds_after) * 2;
+        assert_eq!(
+            loudest(&added[..after(0.0)]),
+            0.0,
+            "{sound:?} before its cue"
+        );
+        let start = decibels(&added[after(0.0)..after(5.0)]);
+        assert!(start >= -45.0, "{sound:?} starts at {start} dB");
+        assert!(
+            loudest(&added[after(length - 1.5)..after(length - 0.5)]) > 0.0,
+            "{sound:?} stops before its recording ends"
+        );
+        assert_eq!(
+            loudest(&added[after(length + 1.0)..]),
+            0.0,
+            "{sound:?} after its recording ends"
+        );
+    }
+}
+
+/// A second bolt leaves the roll of the first to go on.
+/// Given: two mixers that play the storm on every tick and get a thunder
+/// cue after four seconds.
+/// When: one of the two also got a thunder cue after one second.
+/// Then: from half a second to five seconds after the second cue, that one
+/// adds at least -60 dB: the first roll under the second.
+///
+/// Why it matters: bolts come seconds apart and a roll lasts far longer, so
+/// a roll that started again on each bolt would cut the one before it.
+#[test]
+fn a_second_bolt_leaves_the_first_roll_to_go_on() {
     // Given:
-    let jump = ticks(1.0);
-    let steady = tide_played(&mut Mixer::new(RATE), ticks(2.0), |_| 0.0);
+    let (first, second, total) = (ticks(1.0), ticks(4.0), ticks(10.0));
+    let one = sounded(total, Cue::Storm, total, Cue::Thunder, &[second]);
 
     // When:
-    let jumped = tide_played(&mut Mixer::new(RATE), ticks(2.0), |tick| {
-        if tick < jump { 0.0 } else { 1.0 }
-    });
+    let two = sounded(total, Cue::Storm, total, Cue::Thunder, &[first, second]);
 
     // Then:
-    let at_jump = jump * tick_samples() * 2;
-    let glide = at_jump..at_jump + seconds(0.005) * 2;
-    let start = decibels(&jumped[glide.clone()]) - decibels(&steady[glide]);
-    assert!(start.abs() <= 1.0, "{start} dB over the first 5 ms");
-    let settled = at_jump + seconds(0.5) * 2;
-    let rise = decibels(&jumped[settled..]) - decibels(&steady[settled..]);
-    assert!(rise >= 3.0, "{rise} dB after the glide");
+    let under = sample_of(second) + seconds(0.5) * 2..sample_of(second) + seconds(5.0) * 2;
+    let first_roll = decibels(&added(&two, &one)[under]);
+    assert!(
+        first_roll >= -60.0,
+        "the first roll plays at {first_roll} dB"
+    );
+}
+
+/// Many bolts at once stay under full scale.
+/// Given: a mixer that plays the storm on every tick.
+/// When: a thunder cue comes on each of twenty ticks in a row, as a storm
+/// at its fastest speed can send them, and the mixer plays for ten seconds.
+/// Then: no sample goes past full scale.
+///
+/// Why it matters: every roll that starts adds to the ones that sound, and
+/// a sum past full scale clips in the speaker.
+#[test]
+fn many_bolts_at_once_stay_under_full_scale() {
+    // Given:
+    let (first, total) = (ticks(1.0), ticks(10.0));
+    let bolts: Vec<usize> = (first..first + 20).collect();
+
+    // When:
+    let played = sounded(total, Cue::Storm, total, Cue::Thunder, &bolts);
+
+    // Then:
+    assert!(
+        loudest(&played) <= 1.0,
+        "{} is past full scale",
+        loudest(&played)
+    );
+}
+
+/// A roll of thunder stops with its storm.
+/// Given: a mixer that plays the storm on every tick for two seconds, with
+/// a thunder cue after one second.
+/// When: the storm cues stop.
+/// Then: the roll is heard while the storm plays, and from one second after
+/// the last storm cue the next three seconds are silent, though the roll
+/// has more than ten seconds left.
+///
+/// Why it matters: a focus move or a change of weather fades the storm
+/// out, and thunder over another scene is a sound with no picture.
+#[test]
+fn a_roll_of_thunder_stops_with_its_storm() {
+    // Given:
+    let (bolt, last, total) = (ticks(1.0), ticks(2.0), ticks(6.0));
+
+    // When:
+    let played = sounded(total, Cue::Storm, last, Cue::Thunder, &[bolt]);
+    let storm = sounded(total, Cue::Storm, last, Cue::Thunder, &[]);
+
+    // Then:
+    let roll = decibels(&added(&played, &storm)[sample_of(bolt)..sample_of(last)]);
+    assert!(roll >= -45.0, "the roll plays at {roll} dB in the storm");
+    let after = sample_of(last) + seconds(1.0) * 2;
+    assert_eq!(loudest(&played[after..]), 0.0);
+}
+
+/// A change of weather fades one sound into the next.
+/// Given: a mixer that plays the rain on every tick for two seconds.
+/// When: the cue changes to the snow.
+/// Then: over the next 0.3 seconds the mixer adds at least -50 dB to the
+/// snow alone, which is the rain on its way out. From one second after
+/// the change it plays the same as a mixer that got only the snow, from
+/// the tick of the change.
+///
+/// Why it matters: a refresh can change the weather, and a sound that cut
+/// off, or one that played on under the next, would not follow the sky.
+#[test]
+fn a_change_of_weather_fades_one_sound_into_the_next() {
+    // Given:
+    let (change, total) = (ticks(2.0), ticks(4.0));
+    let weather = |tick: usize| if tick < change { Cue::Rain } else { Cue::Snow };
+
+    // When:
+    let changed = followed(&mut Mixer::new(RATE), total, weather);
+    let mut alone = Mixer::new(RATE);
+    let mut silent = vec![0.0; sample_of(change)];
+    alone.render(&mut silent);
+    let snow = followed(&mut alone, total - change, |_| Cue::Snow);
+
+    // Then:
+    let after = &changed[sample_of(change)..];
+    let out = seconds(0.3) * 2;
+    let rain = decibels(&added(&after[..out], &snow[..out]));
+    assert!(rain >= -50.0, "the rain plays out at {rain} dB");
+    let settled = seconds(1.0) * 2;
+    let differ = after[settled..]
+        .iter()
+        .zip(&snow[settled..])
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(differ, 0, "{differ} samples differ");
 }
 
 /// A scene recording stops at once when the mixer is turned off.
