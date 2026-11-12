@@ -456,11 +456,14 @@ fn sample_of(tick: usize) -> usize {
 /// once, after a second.
 /// Then: the two play the same up to that cue. Over the next five seconds
 /// the one with the cue adds at least -45 dB. It still adds sound a second
-/// before the recording ends, and it adds nothing from a second after.
+/// before the recording ends, and it adds nothing from a second after. Its
+/// first millisecond and its last each add at least 20 dB less than a
+/// tenth of a second well inside it.
 ///
 /// Why it matters: a thunder that looped would roll with no bolt, and one
 /// cut short, or wired to the recording of the horn, passes a check of its
-/// start alone.
+/// start alone. The horn is cut from the middle of a recording of the sea,
+/// so without a fade it starts and stops with a step, which clicks.
 #[test]
 fn the_thunder_and_the_foghorn_each_sound_once_over_their_weather() {
     for (weather, sound, length) in [
@@ -493,6 +496,14 @@ fn the_thunder_and_the_foghorn_each_sound_once_over_their_weather() {
             0.0,
             "{sound:?} after its recording ends"
         );
+        let end = added.len() - added.iter().rev().position(|s| *s != 0.0).unwrap();
+        let before = |seconds_before: f64| end - seconds(seconds_before) * 2;
+        let fade_in =
+            decibels(&added[after(0.1)..after(0.2)]) - decibels(&added[after(0.0)..after(0.001)]);
+        assert!(fade_in >= 20.0, "{sound:?} fades in by {fade_in} dB");
+        let fade_out =
+            decibels(&added[before(2.2)..before(2.1)]) - decibels(&added[before(0.001)..end]);
+        assert!(fade_out >= 20.0, "{sound:?} fades out by {fade_out} dB");
     }
 }
 
@@ -546,6 +557,33 @@ fn many_bolts_at_once_stay_under_full_scale() {
         "{} is past full scale",
         loudest(&played)
     );
+}
+
+/// A bolt with no free voice leaves the rolls that sound as they are.
+/// Given: two mixers that play the storm on every tick, with a thunder cue
+/// on each of twenty ticks in a row, more than the rolls that can sound at
+/// once.
+/// When: one of the two gets twenty more thunder cues a second later, while
+/// the first rolls still sound.
+/// Then: both play the same.
+///
+/// Why it matters: a storm at a fast speed strikes more often than its
+/// rolls end. A new roll that took the place of one that sounds would cut
+/// it with a click.
+#[test]
+fn a_bolt_with_no_free_voice_leaves_the_rolls_as_they_are() {
+    // Given:
+    let (first, later, total) = (ticks(1.0), ticks(2.0), ticks(6.0));
+    let bolts: Vec<usize> = (first..first + 20).collect();
+    let full = sounded(total, Cue::Storm, total, Cue::Thunder, &bolts);
+
+    // When:
+    let more: Vec<usize> = bolts.iter().copied().chain(later..later + 20).collect();
+    let fuller = sounded(total, Cue::Storm, total, Cue::Thunder, &more);
+
+    // Then:
+    let differ = full.iter().zip(&fuller).filter(|(a, b)| a != b).count();
+    assert_eq!(differ, 0, "{differ} samples differ");
 }
 
 /// A roll of thunder stops with its storm.

@@ -1273,26 +1273,28 @@ fn the_gust_of_the_wind_cue_rises_and_falls_with_no_jump() {
     assert!(jump <= 0.05, "the gust jumps by {jump}");
 }
 
-/// The ticks of five minutes.
-const FIVE_MINUTES: u32 = 5000;
+/// The ticks of half an hour.
+const HALF_HOUR: u32 = 30_000;
 /// The ticks of twenty seconds, longer than a call of the foghorn lasts.
 const HORN_REST: usize = 333;
 
 /// A far foghorn sounds now and then in the fog.
 /// Given: a foggy scene.
-/// When: it ticks for five minutes.
-/// Then: the foghorn cue comes from three to ten times, and no two of them
-/// within twenty seconds.
+/// When: it ticks for half an hour.
+/// Then: the foghorn cue comes from twenty to sixty times, and no two of
+/// them within twenty seconds.
 ///
 /// Why it matters: a horn on every tick starts its recording again and
-/// again, and two calls close together play over each other.
+/// again, and two calls close together play over each other. Calls at
+/// times of their own come close together only now and then, so a short
+/// run does not show it.
 #[test]
 fn a_far_foghorn_sounds_now_and_then_in_the_fog() {
     // Given:
     let mut fog = landed(&current_at(45, 6.0, 3.0, 1));
 
     // When:
-    let calls: Vec<usize> = cues_of(&mut fog, FIVE_MINUTES)
+    let calls: Vec<usize> = cues_of(&mut fog, HALF_HOUR)
         .iter()
         .enumerate()
         .filter(|(_, cues)| cues.contains(&Cue::Foghorn))
@@ -1300,10 +1302,12 @@ fn a_far_foghorn_sounds_now_and_then_in_the_fog() {
         .collect();
 
     // Then:
-    assert!((3..=10).contains(&calls.len()), "calls at ticks {calls:?}");
-    for pair in calls.windows(2) {
-        assert!(pair[1] - pair[0] >= HORN_REST, "calls at ticks {calls:?}");
-    }
+    assert!((20..=60).contains(&calls.len()), "calls at ticks {calls:?}");
+    let closest = calls.windows(2).map(|pair| pair[1] - pair[0]).min();
+    assert!(
+        closest >= Some(HORN_REST),
+        "two calls are {closest:?} ticks apart"
+    );
 }
 
 /// A new theme repaints the sky and keeps the weather.
