@@ -284,8 +284,6 @@ const SWAY_RATE: f32 = 2.3;
 /// The steps a share of a glow or a fade rounds to.
 const SHADE_STEPS: f32 = 64.0;
 
-/// What the sky shows. The wind draws a cloudy sky until it has a sky of
-/// its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Look {
     Clear,
