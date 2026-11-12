@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::scene::{self, Rng, Scene};
+use crate::sound::Cue;
 use crate::theme::Palette;
 use crate::weather::{Location, Report, Source, Watch};
 
@@ -28,6 +29,7 @@ pub struct Weather {
     reading: Option<Watch>,
     shown: Option<Read>,
     sky: Sky,
+    cues: Vec<Cue>,
 }
 
 impl Weather {
@@ -41,6 +43,7 @@ impl Weather {
             reading,
             shown,
             sky: Sky::new(rng, palette),
+            cues: Vec::new(),
         }
     }
 
@@ -68,7 +71,13 @@ impl Scene for Weather {
         }
         if let Some(Ok(report)) = &self.shown {
             self.sky.tick(report.weather());
+            self.sky
+                .cues(report.weather(), report.day(), &mut self.cues);
         }
+    }
+
+    fn drain_cues(&mut self, out: &mut Vec<Cue>) {
+        out.append(&mut self.cues);
     }
 
     fn set_progress(&mut self, progress: f64) -> bool {

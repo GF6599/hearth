@@ -9,6 +9,7 @@ use ratatui::style::Color;
 
 use crate::octant::{self, CELL_HEIGHT, COVERAGE_STEPS, Canvas};
 use crate::scene::{Rng, TICK_RATE};
+use crate::sound::Cue;
 use crate::splitmix;
 use crate::theme::Palette;
 use crate::weather::Type;
@@ -230,6 +231,14 @@ const BRANCH_ODDS: u64 = 11;
 const BRANCH_STEPS: (u64, u64) = (4, 10);
 /// How strongly a flash at its brightest veils the frame.
 const FLASH_VEIL: f32 = 0.3;
+const STRIKE_SALT: u64 = 0x57_0a_4d;
+
+/// The seconds of each round of a fog, which holds one call of a far
+/// foghorn at a time of its own, and the seconds at the end of a round that
+/// hold no call, so two calls stay apart.
+const HORN_GAP: f32 = 45.0;
+const HORN_REST: f32 = 20.0;
+const HORN_SALT: u64 = 0x40_52_4e;
 
 /// The streaks the wind draws the clouds out to, from the furthest.
 const STREAKS: [Spread; 2] = [
@@ -777,6 +786,15 @@ struct Fall {
     sway: f32,
 }
 
+/// A gust line at one moment: how far through its life it is, and the
+/// shares that give its row, its length and where it starts.
+struct GustLine {
+    life: f32,
+    row: f32,
+    long: f32,
+    start: f32,
+}
+
 /// Numbers that depend only on a seed, so a bolt draws the same shape in
 /// every frame of its strike.
 struct Dice(u64);
@@ -1134,13 +1152,59 @@ impl Sky {
         }
     }
 
+    /// The second of `round` at which its one event begins, out of the
+    /// first `span` seconds. Each `salt` gives times of its own.
+    fn wait(&self, round: f32, span: f32, salt: u64) -> f32 {
+        let mixed = splitmix::mix(self.seed ^ salt ^ round as u64);
+        (mixed % 1000) as f32 / 1000.0 * span
+    }
+
+    /// How many events have begun by `t` seconds, when each round of `gap`
+    /// seconds holds one and the last `rest` seconds of a round hold none.
+    fn begun(&self, t: f32, gap: f32, rest: f32, salt: u64) -> u64 {
+        let round = (t / gap).floor();
+        round as u64 + u64::from(t - round * gap >= self.wait(round, gap - rest, salt))
+    }
+
+    /// The cues of the last tick: the sound of `weather`, with the thunder
+    /// of a strike or the call of a foghorn that began in that tick.
+    pub fn cues(&self, weather: Type, day: bool, out: &mut Vec<Cue>) {
+        let tick = TICK_RATE.as_secs_f32();
+        let before = self.ticks.saturating_sub(1) as f32 * tick;
+        let now = self.ticks as f32 * tick;
+        let began = |gap: f32, rest: f32, salt: u64| {
+            self.begun(now, gap, rest, salt) > self.begun(before, gap, rest, salt)
+        };
+        match weather {
+            Type::Clear if day => out.push(Cue::ClearDay),
+            Type::Clear => out.push(Cue::ClearNight),
+            Type::Cloud => out.push(Cue::Cloud),
+            Type::Rain => out.push(Cue::Rain),
+            Type::Snow => out.push(Cue::Snow),
+            Type::Storm => {
+                out.push(Cue::Storm);
+                if began(STRIKE_GAP, FLASH, STRIKE_SALT) {
+                    out.push(Cue::Thunder);
+                }
+            }
+            Type::Fog => {
+                out.push(Cue::Fog);
+                if began(HORN_GAP, HORN_REST, HORN_SALT) {
+                    out.push(Cue::Foghorn);
+                }
+            }
+            Type::Wind => out.push(Cue::Wind {
+                gust: self.gust(now),
+            }),
+        }
+    }
+
     /// How bright the strike of the round at `t` seconds is, from 0 to 1,
     /// with the round, or none between two strikes. A strike lights the sky
     /// twice.
     fn flash(&self, t: f32) -> Option<(u64, f32)> {
         let round = (t / STRIKE_GAP).floor();
-        let mixed = splitmix::mix(self.seed ^ 0x57_0a_4d ^ round as u64);
-        let wait = (mixed % 1000) as f32 / 1000.0 * (STRIKE_GAP - FLASH);
+        let wait = self.wait(round, STRIKE_GAP - FLASH, STRIKE_SALT);
         let since = t - round * STRIKE_GAP - wait;
         let bright = match since / FLASH {
             lit if !(0.0..1.0).contains(&lit) => return None,
@@ -1201,6 +1265,31 @@ impl Sky {
         }
     }
 
+    fn gust_line(&self, gust: u64, t: f32) -> GustLine {
+        let at = t / GUST + gust as f32 / GUSTS as f32;
+        let mut dice = Dice(splitmix::mix(self.seed ^ gust << 32 ^ at.floor() as u64));
+        GustLine {
+            life: at.fract(),
+            row: dice.share(),
+            long: dice.share(),
+            start: dice.share(),
+        }
+    }
+
+    /// How strongly the gust lines show at `t` seconds, from 0 with the
+    /// shortest lines to 1 with the longest: the mean of their lengths,
+    /// each weighed by how strongly its line shows.
+    fn gust(&self, t: f32) -> f32 {
+        let (mut long, mut shown) = (0.0, 0.0);
+        for gust in 0..GUSTS {
+            let line = self.gust_line(gust, t);
+            let shows = (line.life * PI).sin();
+            long += line.long * shows;
+            shown += shows;
+        }
+        long / shown
+    }
+
     /// The lines a gust draws in the air: each crosses a part of the pane,
     /// curls up at its head, and fades in and out.
     fn gusts(&self, canvas: &mut Canvas, colour: Color, t: f32) {
@@ -1210,13 +1299,11 @@ impl Sky {
             return;
         }
         for gust in 0..GUSTS {
-            let at = t / GUST + gust as f32 / GUSTS as f32;
-            let (round, life) = (at.floor(), at.fract());
-            let mut dice = Dice(splitmix::mix(self.seed ^ gust << 32 ^ round as u64));
-            let y = top + (floor - top) * (0.15 + 0.7 * dice.share());
-            let long = w * (GUST_SPAN.0 + (GUST_SPAN.1 - GUST_SPAN.0) * dice.share());
-            let head = w * dice.share() + life * GUST * GUST_SPEED * w;
-            let shows = GUST_SHARE * (life * PI).sin();
+            let line = self.gust_line(gust, t);
+            let y = top + (floor - top) * (0.15 + 0.7 * line.row);
+            let long = w * (GUST_SPAN.0 + (GUST_SPAN.1 - GUST_SPAN.0) * line.long);
+            let head = w * line.start + line.life * GUST * GUST_SPEED * w;
+            let shows = GUST_SHARE * (line.life * PI).sin();
             for back in 0..long as usize {
                 let along = 1.0 - back as f32 / long;
                 // The last fifth of the line curls up and back, as a gust

@@ -17,6 +17,23 @@ pub enum Cue {
         /// bottom of a draw back to 1 at the top of the strongest run up.
         swell: f32,
     },
+    /// The weather scene shows a clear sky by day. Each sky of the weather
+    /// has a cue of its own.
+    ClearDay,
+    ClearNight,
+    Cloud,
+    Rain,
+    Snow,
+    Storm,
+    /// A bolt struck in the storm.
+    Thunder,
+    Fog,
+    /// A horn sounded far off in the fog.
+    Foghorn,
+    Wind {
+        /// How strongly the gust lines on screen show, from 0 to 1.
+        gust: f32,
+    },
 }
 
 /// Seconds the sound keeps playing after its last cue, longer than the
@@ -32,9 +49,23 @@ const FADE_OUT: f32 = 0.4;
 /// of the fire. A wave's mean swell is about one half.
 const SWELL_QUIET: f32 = 0.1;
 const SWELL_LOUD: f32 = 0.25;
-/// Seconds over which the gain follows the swell, so its step on each tick
-/// is not heard.
+/// The gains of the wind in its weakest gust and in its strongest. A mean
+/// gust is about one half, which plays at the level of the fire.
+const GUST_QUIET: f32 = 0.5;
+const GUST_LOUD: f32 = 2.3;
+/// Seconds over which the gain follows the swell or the gust, so its step
+/// on each tick is not heard.
 const SWELL_GLIDE: f32 = 0.1;
+
+/// The times a shot can sound at once. A storm at its own speed strikes
+/// often enough for four rolls of thunder to overlap, and no more.
+const VOICES: usize = 4;
+/// Seconds over which a shot fades in at the start of its recording and
+/// out at its end. The thunder starts on its clap. The foghorn is cut from
+/// the middle of a recording of the sea, which would start and stop with a
+/// step.
+const THUNDER_EDGES: (f32, f32) = (0.02, 1.0);
+const FOGHORN_EDGES: (f32, f32) = (1.5, 2.0);
 
 /// How loud hearth plays, on top of the system volume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,14 +146,18 @@ impl Recording {
 #[derive(Debug)]
 struct Track {
     mp3: &'static [u8],
+    /// What brings the recording to the loudness of the fire. The tide and
+    /// the wind take their gains from their scenes.
+    gain: f32,
     recording: OnceLock<Recording>,
     preparing: AtomicBool,
 }
 
 impl Track {
-    const fn new(mp3: &'static [u8]) -> Self {
+    const fn new(mp3: &'static [u8], gain: f32) -> Self {
         Self {
             mp3,
+            gain,
             recording: OnceLock::new(),
             preparing: AtomicBool::new(false),
         }
@@ -131,37 +166,72 @@ impl Track {
     fn recording(&self) -> &Recording {
         self.recording.get_or_init(|| Recording::decode(self.mp3))
     }
-}
 
-static TYPING: Track = Track::new(include_bytes!("../sounds/typing.mp3"));
-static FIRE: Track = Track::new(include_bytes!("../sounds/fire.mp3"));
-static RIVER: Track = Track::new(include_bytes!("../sounds/river.mp3"));
-static TIDE: Track = Track::new(include_bytes!("../sounds/tide.mp3"));
-
-fn track(cue: Cue) -> &'static Track {
-    match cue {
-        Cue::Typing => &TYPING,
-        Cue::Fire => &FIRE,
-        Cue::River => &RIVER,
-        Cue::Tide { .. } => &TIDE,
+    fn decoded(&self) -> bool {
+        self.recording.get().is_some()
     }
 }
 
-/// Says if the recording of `cue` is decoded, so the cue plays with no wait.
-pub fn decoded(cue: Cue) -> bool {
-    track(cue).recording.get().is_some()
+static TYPING: Track = Track::new(include_bytes!("../sounds/typing.mp3"), 1.0);
+static FIRE: Track = Track::new(include_bytes!("../sounds/fire.mp3"), 1.0);
+static RIVER: Track = Track::new(include_bytes!("../sounds/river.mp3"), 1.0);
+static TIDE: Track = Track::new(include_bytes!("../sounds/tide.mp3"), 1.0);
+// The meadow and the cave of the fog were recorded more than 30 dB under
+// the storm and the wind of the snow.
+static CLEAR_DAY: Track = Track::new(include_bytes!("../sounds/clear_day.mp3"), 8.8);
+static CLEAR_NIGHT: Track = Track::new(include_bytes!("../sounds/clear_night.mp3"), 2.0);
+static CLOUD: Track = Track::new(include_bytes!("../sounds/cloud.mp3"), 4.6);
+static RAIN: Track = Track::new(include_bytes!("../sounds/rain.mp3"), 0.56);
+static SNOW: Track = Track::new(include_bytes!("../sounds/snow.mp3"), 0.2);
+static STORM: Track = Track::new(include_bytes!("../sounds/storm.mp3"), 0.2);
+static THUNDER: Track = Track::new(include_bytes!("../sounds/thunder.mp3"), 0.5);
+static FOG: Track = Track::new(include_bytes!("../sounds/fog.mp3"), 5.4);
+// The horn is far off, so it plays under the level of the others.
+static FOGHORN: Track = Track::new(include_bytes!("../sounds/foghorn.mp3"), 0.15);
+static WIND: Track = Track::new(include_bytes!("../sounds/wind.mp3"), 1.0);
+
+/// The recording of `cue`, and the recording of the shot that sounds over
+/// it. The two decode together, so the first roll of thunder in a storm is
+/// not lost to its decode.
+fn tracks(cue: Cue) -> (&'static Track, Option<&'static Track>) {
+    match cue {
+        Cue::Typing => (&TYPING, None),
+        Cue::Fire => (&FIRE, None),
+        Cue::River => (&RIVER, None),
+        Cue::Tide { .. } => (&TIDE, None),
+        Cue::ClearDay => (&CLEAR_DAY, None),
+        Cue::ClearNight => (&CLEAR_NIGHT, None),
+        Cue::Cloud => (&CLOUD, None),
+        Cue::Rain => (&RAIN, None),
+        Cue::Snow => (&SNOW, None),
+        Cue::Storm => (&STORM, Some(&THUNDER)),
+        Cue::Thunder => (&THUNDER, None),
+        Cue::Fog => (&FOG, Some(&FOGHORN)),
+        Cue::Foghorn => (&FOGHORN, None),
+        Cue::Wind { .. } => (&WIND, None),
+    }
 }
 
-/// Starts the decode of the recording of `cue` on a thread of its own, once,
-/// and returns at once. A thread that does not start leaves the next call
-/// to try again.
+/// Says if the recordings of `cue` are decoded, so the cue plays with no
+/// wait.
+pub fn decoded(cue: Cue) -> bool {
+    let (track, over) = tracks(cue);
+    track.decoded() && over.is_none_or(Track::decoded)
+}
+
+/// Starts the decode of the recordings of `cue` on a thread of its own,
+/// once, and returns at once. A thread that does not start leaves the next
+/// call to try again.
 pub fn prepare(cue: Cue) {
-    let track = track(cue);
+    let (track, over) = tracks(cue);
     if decoded(cue) || track.preparing.swap(true, Ordering::AcqRel) {
         return;
     }
     let started = thread::Builder::new().name("sound".into()).spawn(move || {
         track.recording();
+        if let Some(over) = over {
+            over.recording();
+        }
     });
     if started.is_err() {
         track.preparing.store(false, Ordering::Release);
@@ -230,7 +300,74 @@ impl Bed {
         let share = (self.place - index as f64) as f32;
         let (now, next) = (frames[index], frames[(index + 1) % frames.len()]);
         self.place = (self.place + step) % frames.len() as f64;
-        [0, 1].map(|c| (now[c] + (next[c] - now[c]) * share) * self.level)
+        let gain = self.level * self.track.gain;
+        [0, 1].map(|c| (now[c] + (next[c] - now[c]) * share) * gain)
+    }
+}
+
+/// A recording that plays through once on each cue, such as the thunder of
+/// a bolt. Cues close together overlap, each in a voice of its own. A cue
+/// that finds every voice in use is dropped, so no roll that sounds is cut.
+/// Like a bed, it is silent until its recording is decoded.
+#[derive(Debug)]
+struct Shot {
+    track: &'static Track,
+    /// The place of each voice that sounds, in the recording's frames.
+    voices: [Option<f64>; VOICES],
+    /// Output frames a second.
+    rate: f64,
+    /// Seconds of the fade in and of the fade out.
+    edges: (f64, f64),
+}
+
+impl Shot {
+    fn new(track: &'static Track, rate: f32, edges: (f32, f32)) -> Self {
+        Self {
+            track,
+            voices: [None; VOICES],
+            rate: f64::from(rate),
+            edges: (f64::from(edges.0), f64::from(edges.1)),
+        }
+    }
+
+    fn cue(&mut self) {
+        self.track.recording();
+        if let Some(free) = self.voices.iter_mut().find(|voice| voice.is_none()) {
+            *free = Some(0.0);
+        }
+    }
+
+    fn silence(&mut self) {
+        self.voices = [None; VOICES];
+    }
+
+    fn frame(&mut self) -> [f32; 2] {
+        let mut sum = [0.0; 2];
+        let Some(recording) = self.track.recording.get() else {
+            return sum;
+        };
+        let frames = &recording.frames;
+        let rate = f64::from(recording.rate);
+        for voice in &mut self.voices {
+            let Some(place) = *voice else {
+                continue;
+            };
+            let index = place as usize;
+            if index + 1 >= frames.len() {
+                *voice = None;
+                continue;
+            }
+            let left = (frames.len() - 1) as f64 - place;
+            let edge = (place / (self.edges.0 * rate))
+                .min(left / (self.edges.1 * rate))
+                .min(1.0);
+            let share = (place - index as f64) as f32;
+            let (now, next) = (frames[index], frames[index + 1]);
+            let gain = edge as f32 * self.track.gain;
+            sum = [0, 1].map(|c| sum[c] + (now[c] + (next[c] - now[c]) * share) * gain);
+            *voice = Some(place + rate / self.rate);
+        }
+        sum
     }
 }
 
@@ -241,20 +378,23 @@ struct Swell {
     now: f32,
     target: f32,
     glide: f32,
+    /// The gains at a value of 0 and at a value of 1.
+    gains: (f32, f32),
 }
 
 impl Swell {
-    fn new(rate: f32) -> Self {
+    fn new(rate: f32, gains: (f32, f32)) -> Self {
         Self {
             now: 0.0,
             target: 0.0,
             glide: 1.0 / (SWELL_GLIDE * rate),
+            gains,
         }
     }
 
     fn gain(&mut self) -> f32 {
         self.now += (self.target - self.now) * self.glide;
-        SWELL_QUIET + (SWELL_LOUD - SWELL_QUIET) * self.now
+        self.gains.0 + (self.gains.1 - self.gains.0) * self.now
     }
 }
 
@@ -267,18 +407,41 @@ pub struct Mixer {
     river: Bed,
     tide: Bed,
     swell: Swell,
+    clear_day: Bed,
+    clear_night: Bed,
+    cloud: Bed,
+    rain: Bed,
+    snow: Bed,
+    storm: Bed,
+    thunder: Shot,
+    fog: Bed,
+    foghorn: Shot,
+    wind: Bed,
+    gust: Swell,
     on: bool,
     gain: f32,
 }
 
 impl Mixer {
     pub fn new(rate: u32) -> Self {
+        let rate = rate as f32;
         Self {
-            typing: Bed::new(&TYPING, rate as f32),
-            fire: Bed::new(&FIRE, rate as f32),
-            river: Bed::new(&RIVER, rate as f32),
-            tide: Bed::new(&TIDE, rate as f32),
-            swell: Swell::new(rate as f32),
+            typing: Bed::new(&TYPING, rate),
+            fire: Bed::new(&FIRE, rate),
+            river: Bed::new(&RIVER, rate),
+            tide: Bed::new(&TIDE, rate),
+            swell: Swell::new(rate, (SWELL_QUIET, SWELL_LOUD)),
+            clear_day: Bed::new(&CLEAR_DAY, rate),
+            clear_night: Bed::new(&CLEAR_NIGHT, rate),
+            cloud: Bed::new(&CLOUD, rate),
+            rain: Bed::new(&RAIN, rate),
+            snow: Bed::new(&SNOW, rate),
+            storm: Bed::new(&STORM, rate),
+            thunder: Shot::new(&THUNDER, rate, THUNDER_EDGES),
+            fog: Bed::new(&FOG, rate),
+            foghorn: Shot::new(&FOGHORN, rate, FOGHORN_EDGES),
+            wind: Bed::new(&WIND, rate),
+            gust: Swell::new(rate, (GUST_QUIET, GUST_LOUD)),
             on: true,
             gain: Volume::FULL.gain(),
         }
@@ -299,16 +462,43 @@ impl Mixer {
                 self.tide.cue();
                 self.swell.target = swell;
             }
+            Cue::ClearDay => self.clear_day.cue(),
+            Cue::ClearNight => self.clear_night.cue(),
+            Cue::Cloud => self.cloud.cue(),
+            Cue::Rain => self.rain.cue(),
+            Cue::Snow => self.snow.cue(),
+            Cue::Storm => self.storm.cue(),
+            Cue::Thunder => self.thunder.cue(),
+            Cue::Fog => self.fog.cue(),
+            Cue::Foghorn => self.foghorn.cue(),
+            Cue::Wind { gust } => {
+                self.wind.cue();
+                self.gust.target = gust;
+            }
         }
     }
 
     pub fn set_on(&mut self, on: bool) {
         self.on = on;
         if !on {
-            self.typing.silence();
-            self.fire.silence();
-            self.river.silence();
-            self.tide.silence();
+            for bed in [
+                &mut self.typing,
+                &mut self.fire,
+                &mut self.river,
+                &mut self.tide,
+                &mut self.clear_day,
+                &mut self.clear_night,
+                &mut self.cloud,
+                &mut self.rain,
+                &mut self.snow,
+                &mut self.storm,
+                &mut self.fog,
+                &mut self.wind,
+            ] {
+                bed.silence();
+            }
+            self.thunder.silence();
+            self.foghorn.silence();
         }
     }
 
@@ -323,15 +513,29 @@ impl Mixer {
         }
     }
 
+    /// A shot plays only as loud as the bed of its weather, so the thunder
+    /// fades out with its storm and the foghorn with its fog.
     pub fn frame(&mut self) -> [f32; 2] {
-        let swell = self.swell.gain();
-        let beds = [
+        let (swell, gust) = (self.swell.gain(), self.gust.gain());
+        let (storm, fog) = (self.storm.frame(), self.fog.frame());
+        let (stormy, foggy) = (self.storm.level, self.fog.level);
+        let parts = [
             self.typing.frame(),
             self.fire.frame(),
             self.river.frame(),
             self.tide.frame().map(|sample| sample * swell),
+            self.clear_day.frame(),
+            self.clear_night.frame(),
+            self.cloud.frame(),
+            self.rain.frame(),
+            self.snow.frame(),
+            storm,
+            self.thunder.frame().map(|sample| sample * stormy),
+            fog,
+            self.foghorn.frame().map(|sample| sample * foggy),
+            self.wind.frame().map(|sample| sample * gust),
         ];
-        [0, 1].map(|channel| beds.iter().map(|bed| bed[channel]).sum::<f32>() * self.gain)
+        [0, 1].map(|channel| parts.iter().map(|part| part[channel]).sum::<f32>() * self.gain)
     }
 }
 
