@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -18,8 +20,6 @@ pub const NO_LOCATION: &str = "set latitude and longitude in [weather] to see th
 pub const CREDIT: &str = "weather data by Open-Meteo.com";
 const NO_THREAD: &str = "cannot start a thread to read the weather";
 
-type Read = Result<Report, String>;
-
 #[derive(Debug)]
 pub struct Weather {
     palette: &'static Palette,
@@ -27,7 +27,11 @@ pub struct Weather {
     /// The reads on their way from a thread that fetches, so the app never
     /// waits on the network.
     reading: Option<Watch>,
-    shown: Option<Read>,
+    /// The last good read and when it landed. A failed read after it keeps
+    /// it on screen, so a short loss of the network does not blank the sky.
+    report: Option<(Report, Instant)>,
+    /// Why the reads since the last good one failed.
+    failure: Option<String>,
     sky: Sky,
     cues: Vec<Cue>,
 }
@@ -36,19 +40,20 @@ impl Weather {
     pub fn new(rng: Rng, palette: &'static Palette, source: Option<Source>) -> Self {
         let location = source.as_ref().map(Source::location);
         let reading = source.and_then(Source::watch);
-        let shown = (location.is_some() && reading.is_none()).then(|| Err(NO_THREAD.to_string()));
+        let failure = (location.is_some() && reading.is_none()).then(|| NO_THREAD.to_string());
         Self {
             palette,
             location,
             reading,
-            shown,
+            report: None,
+            failure,
             sky: Sky::new(rng, palette),
             cues: Vec::new(),
         }
     }
 
     fn shows_sky(&self) -> bool {
-        matches!(self.shown, Some(Ok(_)))
+        self.report.is_some()
     }
 
     fn line(&self, text: &str, row: u16, colour: Color, area: Rect, buf: &mut Buffer) {
@@ -66,10 +71,15 @@ impl Weather {
 
 impl Scene for Weather {
     fn tick(&mut self, _area: Rect) {
-        if let Some(read) = self.reading.as_ref().and_then(Watch::latest) {
-            self.shown = Some(read);
+        match self.reading.as_ref().and_then(Watch::latest) {
+            Some(Ok(report)) => {
+                self.report = Some((report, Instant::now()));
+                self.failure = None;
+            }
+            Some(Err(reason)) => self.failure = Some(reason),
+            None => {}
         }
-        if let Some(Ok(report)) = &self.shown {
+        if let Some((report, _)) = &self.report {
             self.sky.tick(report.weather());
             self.sky
                 .cues(report.weather(), report.day(), &mut self.cues);
@@ -92,18 +102,25 @@ impl Scene for Weather {
             scene::draw_notice(NO_LOCATION, area, self.palette, buf);
             return;
         };
-        match &self.shown {
-            None => scene::draw_notice(READING, area, self.palette, buf),
-            Some(Err(reason)) => scene::draw_notice(reason, area, self.palette, buf),
-            Some(Ok(report)) => {
-                self.sky
-                    .render(report.weather(), report.day(), self.palette, area, buf);
-                let top = area.y + area.height.min(2) / 2;
-                let bottom = area.y + area.height - 1;
-                self.line(&report.status(location), top, self.sky.status(), area, buf);
-                self.line(CREDIT, bottom, self.palette.subtle, area, buf);
+        let Some((report, landed)) = &self.report else {
+            let notice = self.failure.as_deref().unwrap_or(READING);
+            scene::draw_notice(notice, area, self.palette, buf);
+            return;
+        };
+        self.sky
+            .render(report.weather(), report.day(), self.palette, area, buf);
+        let top = area.y + area.height.min(2) / 2;
+        let bottom = area.y + area.height - 1;
+        let mut status = report.status(location);
+        if let Some(reason) = &self.failure {
+            let minutes = landed.elapsed().as_secs() / 60;
+            status = format!("{status} · {minutes} min ago");
+            if top + 1 < bottom {
+                self.line(reason, top + 1, self.sky.status(), area, buf);
             }
         }
+        self.line(&status, top, self.sky.status(), area, buf);
+        self.line(CREDIT, bottom, self.palette.subtle, area, buf);
     }
 
     fn repaint(&mut self, palette: &'static Palette) -> bool {
