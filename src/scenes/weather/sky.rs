@@ -1,5 +1,7 @@
 //! The landscape the weather scene draws, and the sky over it.
 
+mod emblem;
+
 use std::f32::consts::{PI, TAU};
 
 use rand::RngExt;

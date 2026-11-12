@@ -125,6 +125,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(' ') => app.pause(),
             KeyCode::Char('n') => app.next_phase(),
             KeyCode::Char('e') => app.edit_lengths(),
+            KeyCode::Char('w') => app.switch_view(),
             _ => {}
         }
     }

@@ -11,6 +11,7 @@ use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 use crate::scene::{ALL, Rate, SceneKind};
 use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::{Shortest, Speed};
+use crate::scenes::weather::View;
 use crate::sound::Volume;
 use crate::theme;
 use crate::weather::Location;
@@ -41,6 +42,7 @@ pub struct Config {
     /// One for each scene in `ALL`, and `None` where the file sets none.
     pub rates: [Option<Rate>; ALL.len()],
     pub location: Option<Location>,
+    pub view: View,
 }
 
 /// `None` with no home folder, because any user can put a file in the
@@ -213,9 +215,16 @@ impl Config {
     fn read_weather(&mut self, item: &Item) -> Result<(), String> {
         let table = item
             .as_table_like()
-            .ok_or_else(|| "weather must be a table of latitude and longitude".to_string())?;
+            .ok_or_else(|| "weather must be a table of latitude, longitude and view".to_string())?;
         let (mut latitude, mut longitude) = (None, None);
         for (name, value) in table.iter() {
+            if name == "view" {
+                self.view = value
+                    .as_str()
+                    .and_then(View::from_name)
+                    .ok_or_else(|| format!("weather.view must be {}", View::NAMES))?;
+                continue;
+            }
             let degrees = value
                 .as_float()
                 .or_else(|| value.as_integer().map(|whole| whole as f64))
@@ -225,7 +234,7 @@ impl Config {
                 "longitude" => longitude = Some(degrees?),
                 other => {
                     return Err(format!(
-                        "weather.{other} is not a setting. The settings are latitude and longitude"
+                        "weather.{other} is not a setting. The settings are latitude, longitude and view"
                     ));
                 }
             }
@@ -276,6 +285,18 @@ pub fn save_volume(path: &Path, volume: Volume) -> io::Result<()> {
         "volume",
         Value::from(i64::from(volume.percent())),
     );
+    replace(path, &document.to_string())
+}
+
+/// Sets the view of the weather scene, the same way.
+pub fn save_view(path: &Path, view: View) -> io::Result<()> {
+    let mut document = read_document(path)?;
+    let table = document
+        .entry("weather")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "weather is not a table"))?;
+    set_in_place(table, "view", Value::from(view.name()));
     replace(path, &document.to_string())
 }
 

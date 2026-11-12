@@ -117,6 +117,7 @@ impl App {
             lengths: config.hourglass,
             shortest: config.shortest,
             location: config.location,
+            view: config.view,
         };
         let mut app = Self {
             theme,
@@ -459,6 +460,26 @@ impl App {
 
     pub fn next_phase(&mut self) {
         self.panes.focused_mut().control(Control::Next);
+    }
+
+    /// Switches every weather pane to the other view, when the focused pane
+    /// shows the weather. Other scenes have no views.
+    pub fn switch_view(&mut self) {
+        if self.panes.focused().kind != SceneKind::Weather {
+            return;
+        }
+        let view = self.settings.view.other();
+        self.settings.view = view;
+        for pane in self.panes.iter_mut() {
+            pane.set_view(view);
+        }
+        let saved = match &self.saving {
+            Some(path) => config::save_view(path, view),
+            None => Ok(()),
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = view.name().to_string();
+        self.notice = NOTICE_FRAMES;
     }
 
     /// Opens the lengths box on the hourglass. Other scenes have no

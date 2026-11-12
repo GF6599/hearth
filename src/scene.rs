@@ -30,7 +30,7 @@ use crate::scenes::solar::Solar;
 use crate::scenes::study::Study;
 use crate::scenes::tide::Tide;
 use crate::scenes::typing::{Shortest, Speed, Typing};
-use crate::scenes::weather::Weather;
+use crate::scenes::weather::{View, Weather};
 use crate::sound::Cue;
 use crate::theme::Palette;
 use crate::weather::{Location, Source};
@@ -88,6 +88,7 @@ pub struct Settings {
     pub lengths: Lengths,
     pub shortest: Shortest,
     pub location: Option<Location>,
+    pub view: View,
 }
 
 impl Settings {
@@ -95,6 +96,7 @@ impl Settings {
         lengths: Lengths::DEFAULT,
         shortest: Shortest::DEFAULT,
         location: None,
+        view: View::Sky,
     };
 }
 
@@ -195,6 +197,9 @@ pub trait Scene {
     /// Only the hourglass has lengths. It runs the phase it is in to its
     /// end, and each phase after that at its new length.
     fn set_lengths(&mut self, _lengths: Lengths) {}
+
+    /// Only the weather scene has views.
+    fn set_view(&mut self, _view: View) {}
 
     /// Takes a timer control, and returns whether the scene has a timer
     /// that took it. The others ignore it.
@@ -413,11 +418,12 @@ impl SceneKind {
             SceneKind::Drive => Box::new(Drive::new(rng, palette)),
             SceneKind::City => Box::new(City::new(rng, palette)),
             SceneKind::River => Box::new(River::new(rng, palette, Arc::clone(corpus))),
-            SceneKind::Weather => Box::new(Weather::new(
-                rng,
-                palette,
-                settings.location.map(Source::open_meteo),
-            )),
+            SceneKind::Weather => {
+                let mut weather =
+                    Weather::new(rng, palette, settings.location.map(Source::open_meteo));
+                weather.set_view(settings.view);
+                Box::new(weather)
+            }
             SceneKind::Hourglass => Box::new(Hourglass::new(
                 rng,
                 palette,

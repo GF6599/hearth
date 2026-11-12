@@ -20,6 +20,39 @@ pub const NO_LOCATION: &str = "set latitude and longitude in [weather] to see th
 pub const CREDIT: &str = "weather data by Open-Meteo.com";
 const NO_THREAD: &str = "cannot start a thread to read the weather";
 
+/// How the scene draws the weather: as a landscape with the weather in it,
+/// or as one large icon with the temperature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum View {
+    #[default]
+    Sky,
+    Emblem,
+}
+
+impl View {
+    pub const NAMES: &str = "sky or emblem";
+
+    pub fn name(self) -> &'static str {
+        match self {
+            View::Sky => "sky",
+            View::Emblem => "emblem",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<View> {
+        [View::Sky, View::Emblem]
+            .into_iter()
+            .find(|view| view.name() == name)
+    }
+
+    pub fn other(self) -> View {
+        match self {
+            View::Sky => View::Emblem,
+            View::Emblem => View::Sky,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Weather {
     palette: &'static Palette,
@@ -32,6 +65,7 @@ pub struct Weather {
     report: Option<(Report, Instant)>,
     /// Why the reads since the last good one failed.
     failure: Option<String>,
+    view: View,
     sky: Sky,
     cues: Vec<Cue>,
 }
@@ -47,6 +81,7 @@ impl Weather {
             reading,
             report: None,
             failure,
+            view: View::default(),
             sky: Sky::new(rng, palette),
             cues: Vec::new(),
         }
@@ -107,8 +142,19 @@ impl Scene for Weather {
             scene::draw_notice(notice, area, self.palette, buf);
             return;
         };
-        self.sky
-            .render(report.weather(), report.day(), self.palette, area, buf);
+        match self.view {
+            View::Sky => self
+                .sky
+                .render(report.weather(), report.day(), self.palette, area, buf),
+            View::Emblem => self.sky.emblem(
+                report.weather(),
+                report.day(),
+                report.temperature(),
+                self.palette,
+                area,
+                buf,
+            ),
+        }
         let top = area.y + area.height.min(2) / 2;
         let bottom = area.y + area.height - 1;
         let mut status = report.status(location);
@@ -121,6 +167,10 @@ impl Scene for Weather {
         }
         self.line(&status, top, self.sky.status(), area, buf);
         self.line(CREDIT, bottom, self.palette.subtle, area, buf);
+    }
+
+    fn set_view(&mut self, view: View) {
+        self.view = view;
     }
 
     fn repaint(&mut self, palette: &'static Palette) -> bool {

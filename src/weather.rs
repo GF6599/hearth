@@ -115,6 +115,11 @@ impl Report {
     pub fn day(&self) -> bool {
         self.day
     }
+
+    /// The temperature in °C.
+    pub fn temperature(&self) -> f64 {
+        self.temperature
+    }
 }
 
 /// The WMO weather codes that Open-Meteo sends, in its own words.

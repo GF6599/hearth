@@ -9,6 +9,7 @@ use crate::corpus::Corpus;
 use crate::scene::{Control, FRAMES_PER_TICK, QUARTERS_PER_TICK, Rate, Scene, SceneKind, Settings};
 use crate::scenes::hourglass::Lengths;
 use crate::scenes::typing::Speed;
+use crate::scenes::weather::View;
 use crate::sound::Cue;
 use crate::theme::{self, Palette};
 
@@ -383,6 +384,10 @@ impl Pane {
 
     pub fn set_lengths(&mut self, lengths: Lengths) {
         self.scene.set_lengths(lengths);
+    }
+
+    pub fn set_view(&mut self, view: View) {
+        self.scene.set_view(view);
     }
 
     pub fn set_speed(&mut self, speed: Speed) {
