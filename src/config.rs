@@ -254,11 +254,7 @@ impl Config {
 /// and key order included. A missing file or folder is created.
 pub fn save_speed(path: &Path, scene: SceneKind, speed: Value) -> io::Result<()> {
     let mut document = read_document(path)?;
-    let table = document
-        .entry("speed")
-        .or_insert_with(|| Item::Table(Table::new()))
-        .as_table_like_mut()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "speed is not a table"))?;
+    let table = table(&mut document, "speed")?;
     set_in_place(table, scene.name(), speed);
     replace(path, &document.to_string())
 }
@@ -291,11 +287,7 @@ pub fn save_volume(path: &Path, volume: Volume) -> io::Result<()> {
 /// Sets the view of the weather scene, the same way.
 pub fn save_view(path: &Path, view: View) -> io::Result<()> {
     let mut document = read_document(path)?;
-    let table = document
-        .entry("weather")
-        .or_insert_with(|| Item::Table(Table::new()))
-        .as_table_like_mut()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "weather is not a table"))?;
+    let table = table(&mut document, "weather")?;
     set_in_place(table, "view", Value::from(view.name()));
     replace(path, &document.to_string())
 }
@@ -303,11 +295,7 @@ pub fn save_view(path: &Path, view: View) -> io::Result<()> {
 /// Sets the three hourglass lengths in whole minutes, the same way.
 pub fn save_lengths(path: &Path, lengths: Lengths) -> io::Result<()> {
     let mut document = read_document(path)?;
-    let table = document
-        .entry("hourglass")
-        .or_insert_with(|| Item::Table(Table::new()))
-        .as_table_like_mut()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "hourglass is not a table"))?;
+    let table = table(&mut document, "hourglass")?;
     for (key, length) in [
         ("work", lengths.work),
         ("break", lengths.r#break),
@@ -317,6 +305,14 @@ pub fn save_lengths(path: &Path, lengths: Lengths) -> io::Result<()> {
         set_in_place(table, key, Value::from(minutes));
     }
     replace(path, &document.to_string())
+}
+
+fn table<'a>(document: &'a mut DocumentMut, name: &str) -> io::Result<&'a mut dyn TableLike> {
+    document
+        .entry(name)
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("{name} is not a table")))
 }
 
 fn read_document(path: &Path) -> io::Result<DocumentMut> {
