@@ -3,12 +3,14 @@
 mod events;
 mod frames;
 
+use std::net::TcpListener;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use hearth::app::App;
 use hearth::corpus::Corpus;
 use hearth::scene::{ALL, SceneKind};
+use hearth::scenes::weather::NO_LOCATION;
 use ratatui::layout::Rect;
 
 use frames::{alone, app_frame, mark, marked, pane_inner};
@@ -653,4 +655,119 @@ fn e_opens_the_lengths_editor_on_the_hourglass_only() {
 
     // Then:
     assert!(!shows_words(&hourglass, "› "));
+}
+
+/// A base address where nothing listens, in place of Open-Meteo.
+fn nowhere() -> &'static str {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    Box::leak(format!("http://{}", listener.local_addr().unwrap()).into_boxed_str())
+}
+
+fn weather_with_no_place() -> App {
+    let mut app = App::new(SceneKind::Weather, 7, corpus()).reading_weather_from(nowhere());
+    app.tick(HOURGLASS);
+    app
+}
+
+/// In the location box, Tab and Shift-Tab move between the rows, only a
+/// number types, and Enter keeps a place out of range in the box with its
+/// reason.
+/// Given: hearth on the weather with no place set.
+/// When: "9x1" is typed, Tab moves to the longitude and "-10" is typed, and
+/// Enter is pressed. Then Shift-Tab moves back, Backspace takes the 1, and
+/// Enter is pressed again.
+/// Then: the latitude reads 91 and the longitude -10. The first Enter keeps
+/// the box open with the reason, and the second closes it.
+///
+/// Why it matters: a letter or a place out of range that reaches the file
+/// stops the next start, and `-` that slows the scene cannot type a place
+/// south or west.
+#[test]
+fn the_location_box_takes_numbers_and_keeps_a_place_out_of_range() {
+    // Given:
+    let mut app = weather_with_no_place();
+
+    // When:
+    send(&mut app, typed("9x1"));
+    send(&mut app, vec![tab()]);
+    send(&mut app, typed("-10"));
+
+    // Then:
+    assert!(shows_words(&app, "latitude 91"));
+    assert!(shows_words(&app, "› longitude -10"));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Enter)]);
+
+    // Then:
+    assert!(shows_words(&app, "latitude must be from -90 to 90"));
+    assert!(shows_words(&app, "› longitude -10"));
+
+    // When:
+    send(&mut app, vec![back_tab(), key(KeyCode::Backspace)]);
+
+    // Then:
+    assert!(shows_words(&app, "› latitude 9"));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Enter)]);
+
+    // Then:
+    assert!(!shows_words(&app, "› "));
+}
+
+/// Esc leaves the location box for the notice, and `e` opens it again.
+/// Given: hearth on the weather with no place set.
+/// When: Esc is pressed, then `e`.
+/// Then: after Esc the box is gone, the pane says how to give a place, and
+/// the picker stays shut. After `e` the box asks for the latitude again.
+///
+/// Why it matters: a box that Esc cannot close traps the keys, and one that
+/// cannot open again leaves the file as the only way to give a place.
+#[test]
+fn esc_leaves_the_location_box_and_e_opens_it_again() {
+    // Given:
+    let mut app = weather_with_no_place();
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Esc)]);
+
+    // Then:
+    assert!(!shows_words(&app, "› "));
+    assert!(shows_words(&app, NO_LOCATION));
+    assert!(!app.is_picking());
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Char('e'))]);
+
+    // Then:
+    assert!(shows_words(&app, "› latitude"));
+}
+
+/// The weather in the picker asks for no place, and the weather it starts
+/// does.
+/// Given: the picker with no place set.
+/// When: the mark moves to the weather, then Enter starts it.
+/// Then: the preview shows no box, and the started scene does.
+///
+/// Why it matters: a box over the preview would hide the list while the
+/// user only looks through the scenes.
+#[test]
+fn only_a_started_weather_asks_for_a_place() {
+    // Given:
+    let mut app = App::picker(7, corpus()).reading_weather_from(nowhere());
+    app.tick(HOURGLASS);
+
+    // When:
+    mark(&mut app, SceneKind::Weather, HOURGLASS);
+    app.tick(HOURGLASS);
+
+    // Then:
+    assert!(!shows_words(&app, "› latitude"));
+
+    // When:
+    send(&mut app, vec![key(KeyCode::Enter)]);
+
+    // Then:
+    assert!(shows_words(&app, "› latitude"));
 }

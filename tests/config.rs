@@ -4,9 +4,13 @@ mod frames;
 mod palette;
 
 use std::fs;
+use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::thread;
+use std::time::Duration;
 
 use clap::Parser;
 use hearth::app::App;
@@ -979,4 +983,99 @@ fn a_bad_weather_table_names_the_key() {
         // Then:
         assert!(refused.contains(expected), "{name}: {refused}");
     }
+}
+
+/// A listener in place of Open-Meteo that answers nothing, and the first
+/// request line it reads.
+fn listen() -> (&'static str, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (sender, requests) = mpsc::channel();
+    thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut line = String::new();
+        let _ = BufReader::new(stream).read_line(&mut line);
+        let _ = sender.send(line.trim_end().to_string());
+    });
+    (Box::leak(base.into_boxed_str()), requests)
+}
+
+fn type_in_location(app: &mut App, text: &str) {
+    for letter in text.chars() {
+        app.type_in_location(letter);
+    }
+}
+
+/// A weather with no place asks for one, and Enter saves it to the file and
+/// reads the weather there.
+/// Given: a file with comments whose `[weather]` sets only the emblem view,
+/// and a listener in place of Open-Meteo.
+/// When: hearth starts the weather, the latitude 59.91 and the longitude
+/// 10.75 are typed, and Enter saves them. Then `e` opens the box again.
+/// Then: the box asks for the latitude first and says where the place goes.
+/// After Enter the box is gone, the file keeps its comments and its view and
+/// reads back Oslo, and the listener gets a request for Oslo. The box opens
+/// again on the saved latitude.
+///
+/// Why it matters: a place that the file loses is asked for on every run,
+/// and a place that does not reach the request shows no weather at all.
+#[test]
+fn a_weather_with_no_place_asks_for_one_and_saves_it() {
+    // Given:
+    let text = "# my settings\n[weather]\n# how it looks\nview = \"emblem\"\n";
+    let path = config_file("location", Some(text));
+    let config = Config::load(&path).unwrap();
+    let (base, requests) = listen();
+    let area = Rect::new(0, 0, 100, 30);
+
+    // When:
+    let mut app = app(&["hearth", "weather"], &config)
+        .saving_to(path.clone())
+        .reading_weather_from(base);
+    app.tick(area);
+
+    // Then:
+    assert!(
+        shows(&app, area, "› latitude"),
+        "{:#?}",
+        rows_of(&app, area)
+    );
+    assert!(shows(&app, area, "sent to Open-Meteo to read the"));
+
+    // When:
+    type_in_location(&mut app, "59.91");
+    app.next_location_field();
+    type_in_location(&mut app, "10.75");
+    app.save_location();
+    app.tick(area);
+
+    // Then:
+    assert!(!shows(&app, area, "› "), "{:#?}", rows_of(&app, area));
+    let saved = fs::read_to_string(&path).unwrap();
+    for kept in ["# my settings", "# how it looks", "view = \"emblem\""] {
+        assert!(saved.contains(kept), "no {kept:?} in {saved:?}");
+    }
+    let reloaded = Config::load(&path).unwrap();
+    assert_eq!(
+        reloaded.location,
+        Some(Location::new(59.91, 10.75).unwrap())
+    );
+    assert_eq!(reloaded.view, View::Emblem);
+    let request = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        request.contains("latitude=59.91&longitude=10.75"),
+        "{request}"
+    );
+
+    // When:
+    app.edit_location();
+
+    // Then:
+    assert!(
+        shows(&app, area, "› latitude 59.91"),
+        "{:#?}",
+        rows_of(&app, area)
+    );
 }
