@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::dialog::Dialog;
+use crate::scenes::weather::NO_LOCATION;
 use crate::theme::Palette;
 use crate::weather::Location;
 
@@ -18,9 +19,9 @@ const NOTE: [&str; 2] = [
 /// The longest number a row takes: a sign, three whole degrees, a point and
 /// six places, which is about ten centimetres on the ground.
 const DIGITS: usize = 11;
-/// The box is as wide as its longest line, the reason
-/// "longitude must be from -180 to 180".
-const ROW: usize = 34;
+/// The box hides the notice of the scene under it, which is wider than the
+/// longest reason, "longitude must be from -180 to 180".
+const ROW: usize = NO_LOCATION.len();
 
 /// The place of the weather while the user types it, before a save.
 #[derive(Debug, Clone)]
