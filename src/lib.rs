@@ -12,6 +12,7 @@
 //!              ├── app       The panes, the picker, and the keys
 //!              ├── events    Terminal events → App mutations
 //!              ├── lengths   The box that sets the hourglass lengths
+//!              ├── location  The box that sets the place of the weather
 //!              ├── mark      The {hearth} lockup above the picker
 //!              ├── pane      One scene, its seed, and the ticks it owes
 //!              ├── picker    The scene list, the only chrome
@@ -40,6 +41,7 @@ pub mod events;
 pub mod highlight;
 pub mod history;
 pub mod lengths;
+pub mod location;
 pub mod mark;
 pub mod minimap;
 pub mod octant;

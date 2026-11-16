@@ -91,6 +91,19 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('/') => app.start_search(),
             _ => {}
         }
+    } else if app.is_setting_location() {
+        match key.code {
+            KeyCode::Char('q') => app.quit(),
+            KeyCode::Char(letter) if key.modifiers.difference(KeyModifiers::SHIFT).is_empty() => {
+                app.type_in_location(letter);
+            }
+            KeyCode::Backspace => app.erase_in_location(),
+            KeyCode::Tab | KeyCode::Down => app.next_location_field(),
+            KeyCode::BackTab | KeyCode::Up => app.previous_location_field(),
+            KeyCode::Enter => app.save_location(),
+            KeyCode::Esc => app.cancel_location(),
+            _ => {}
+        }
     } else if app.is_setting_lengths() {
         match key.code {
             KeyCode::Char('q') => app.quit(),
@@ -124,7 +137,7 @@ fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(']') => app.louder(),
             KeyCode::Char(' ') => app.pause(),
             KeyCode::Char('n') => app.next_phase(),
-            KeyCode::Char('e') => app.edit_lengths(),
+            KeyCode::Char('e') => app.edit(),
             KeyCode::Char('w') => app.switch_view(),
             _ => {}
         }

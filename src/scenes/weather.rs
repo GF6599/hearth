@@ -14,7 +14,7 @@ mod sky;
 use sky::Sky;
 
 pub const READING: &str = "reading the weather";
-pub const NO_LOCATION: &str = "set latitude and longitude in [weather] to see the weather";
+pub const NO_LOCATION: &str = "press e to give the place of the weather";
 /// The licence of Open-Meteo's data, CC BY 4.0, asks for this credit next
 /// to every place the data shows.
 pub const CREDIT: &str = "weather data by Open-Meteo.com";

@@ -9,6 +9,7 @@ use ratatui::widgets::Widget;
 use crate::config::{self, Background, Config};
 use crate::corpus::Corpus;
 use crate::lengths::LengthsEditor;
+use crate::location::LocationEditor;
 use crate::octant;
 use crate::pane::{self, Direction, Pane, Panes, Split, advance};
 use crate::picker::{Entry, Picker};
@@ -16,6 +17,7 @@ use crate::scene::{ALL, Control, FRAMES_PER_TICK, Rate, Scene, SceneKind, Settin
 use crate::scenes::typing::Speed;
 use crate::sound::{Cue, Volume};
 use crate::theme::{self, Palette};
+use crate::weather::OPEN_METEO;
 use toml_edit::Value;
 
 /// Frames a changed speed stays on screen: 16 ticks, about one second.
@@ -61,6 +63,8 @@ pub struct App {
     frames: u32,
     /// The hourglass lengths the user sets, while the box is open.
     lengths: Option<LengthsEditor>,
+    /// The place of the weather the user types, while the box is open.
+    location: Option<LocationEditor>,
     /// The focused pane came from a split and its picker has not started
     /// a scene yet, so Esc closes it.
     fresh: bool,
@@ -117,6 +121,7 @@ impl App {
             lengths: config.hourglass,
             shortest: config.shortest,
             location: config.location,
+            forecast: OPEN_METEO,
             view: config.view,
         };
         let mut app = Self {
@@ -147,6 +152,7 @@ impl App {
             query: None,
             frames: 0,
             lengths: None,
+            location: None,
             fresh: false,
             redraw: true,
             area: Rect::default(),
@@ -157,7 +163,9 @@ impl App {
             unheard: Vec::new(),
             should_quit: false,
         };
-        if scene.is_none() {
+        if scene.is_some() {
+            app.ask_for_location();
+        } else {
             app.open_picker();
         }
         app
@@ -258,6 +266,13 @@ impl App {
 
     pub fn saving_to(mut self, path: PathBuf) -> Self {
         self.saving = Some(path);
+        self
+    }
+
+    /// Each weather scene built after this reads from `base`. One built
+    /// before reads from where it did.
+    pub fn reading_weather_from(mut self, base: &'static str) -> Self {
+        self.settings.forecast = base;
         self
     }
 
@@ -400,6 +415,9 @@ impl App {
         if let Some(editor) = &self.lengths {
             editor.render(focused, self.palette(), buf);
         }
+        if let Some(editor) = &self.location {
+            editor.render(focused, self.palette(), buf);
+        }
         if self.background == Background::Terminal {
             self.clear_background(area, buf);
         }
@@ -482,6 +500,13 @@ impl App {
         self.notice = NOTICE_FRAMES;
     }
 
+    /// Opens the box of the focused scene: the lengths of the hourglass,
+    /// or the place of the weather.
+    pub fn edit(&mut self) {
+        self.edit_lengths();
+        self.edit_location();
+    }
+
     /// Opens the lengths box on the hourglass. Other scenes have no
     /// lengths.
     pub fn edit_lengths(&mut self) {
@@ -531,6 +556,72 @@ impl App {
         };
         self.unsaved = saved.err().map(|e| e.to_string());
         self.notice_text = format!("lengths {lengths}");
+        self.notice = NOTICE_FRAMES;
+    }
+
+    /// Opens the place box on the weather, on the place there is. Other
+    /// scenes have no place.
+    pub fn edit_location(&mut self) {
+        if self.panes.focused().kind == SceneKind::Weather {
+            self.location = Some(LocationEditor::new(self.settings.location));
+        }
+    }
+
+    /// A weather the user chooses with no place set asks for one: at the
+    /// start, or from the picker. The preview in the picker does not ask,
+    /// because the box would hide the list, and Tab does not, because the
+    /// box would take the Tab that moves on.
+    fn ask_for_location(&mut self) {
+        if self.settings.location.is_none() {
+            self.edit_location();
+        }
+    }
+
+    pub fn is_setting_location(&self) -> bool {
+        self.location.is_some()
+    }
+
+    pub fn type_in_location(&mut self, letter: char) {
+        if let Some(editor) = &mut self.location {
+            editor.type_in(letter);
+        }
+    }
+
+    pub fn erase_in_location(&mut self) {
+        self.location.as_mut().map(LocationEditor::erase);
+    }
+
+    pub fn next_location_field(&mut self) {
+        self.location.as_mut().map(LocationEditor::next);
+    }
+
+    pub fn previous_location_field(&mut self) {
+        self.location.as_mut().map(LocationEditor::previous);
+    }
+
+    pub fn cancel_location(&mut self) {
+        self.location = None;
+    }
+
+    /// Every weather reads the new place at once, and so does each one
+    /// built later. A place the box refuses keeps the box open.
+    pub fn save_location(&mut self) {
+        let Some(location) = self.location.as_mut().and_then(LocationEditor::location) else {
+            return;
+        };
+        self.location = None;
+        self.settings.location = Some(location);
+        for pane in self.panes.iter_mut() {
+            if pane.kind == SceneKind::Weather {
+                pane.rebuild(&self.corpus, self.speed, self.settings);
+            }
+        }
+        let saved = match &self.saving {
+            Some(path) => config::save_location(path, location),
+            None => Ok(()),
+        };
+        self.unsaved = saved.err().map(|e| e.to_string());
+        self.notice_text = location.to_string();
         self.notice = NOTICE_FRAMES;
     }
 
@@ -735,6 +826,7 @@ impl App {
         }
         self.query = None;
         self.switch_to(ALL[self.selected]);
+        self.ask_for_location();
     }
 
     fn switch_to(&mut self, kind: SceneKind) {

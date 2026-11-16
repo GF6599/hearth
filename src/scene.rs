@@ -33,7 +33,7 @@ use crate::scenes::typing::{Shortest, Speed, Typing};
 use crate::scenes::weather::{View, Weather};
 use crate::sound::Cue;
 use crate::theme::Palette;
-use crate::weather::{Location, Source};
+use crate::weather::{Location, OPEN_METEO, Source};
 
 /// The one random source every scene draws from. A seed fixes every frame.
 pub type Rng = ChaCha8Rng;
@@ -88,6 +88,9 @@ pub struct Settings {
     pub lengths: Lengths,
     pub shortest: Shortest,
     pub location: Option<Location>,
+    /// The address the weather is read from: Open-Meteo, or a local server
+    /// in a test, so no test sends a place out.
+    pub forecast: &'static str,
     pub view: View,
 }
 
@@ -96,6 +99,7 @@ impl Settings {
         lengths: Lengths::DEFAULT,
         shortest: Shortest::DEFAULT,
         location: None,
+        forecast: OPEN_METEO,
         view: View::Sky,
     };
 }
@@ -419,8 +423,13 @@ impl SceneKind {
             SceneKind::City => Box::new(City::new(rng, palette)),
             SceneKind::River => Box::new(River::new(rng, palette, Arc::clone(corpus))),
             SceneKind::Weather => {
-                let mut weather =
-                    Weather::new(rng, palette, settings.location.map(Source::open_meteo));
+                let mut weather = Weather::new(
+                    rng,
+                    palette,
+                    settings
+                        .location
+                        .map(|location| Source::new(settings.forecast, location)),
+                );
                 weather.set_view(settings.view);
                 Box::new(weather)
             }

@@ -292,6 +292,15 @@ pub fn save_view(path: &Path, view: View) -> io::Result<()> {
     replace(path, &document.to_string())
 }
 
+/// Sets the place of the weather, the same way.
+pub fn save_location(path: &Path, location: Location) -> io::Result<()> {
+    let mut document = read_document(path)?;
+    let table = table(&mut document, "weather")?;
+    set_in_place(table, "latitude", Value::from(location.latitude()));
+    set_in_place(table, "longitude", Value::from(location.longitude()));
+    replace(path, &document.to_string())
+}
+
 /// Sets the three hourglass lengths in whole minutes, the same way.
 pub fn save_lengths(path: &Path, lengths: Lengths) -> io::Result<()> {
     let mut document = read_document(path)?;

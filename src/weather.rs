@@ -57,6 +57,14 @@ impl Location {
             longitude: degrees(longitude, LONGITUDE).map_err(|e| format!("longitude {e}"))?,
         })
     }
+
+    pub fn latitude(&self) -> f64 {
+        self.latitude
+    }
+
+    pub fn longitude(&self) -> f64 {
+        self.longitude
+    }
 }
 
 impl fmt::Display for Location {
@@ -211,10 +219,6 @@ impl Source {
             retry,
             ..self
         }
-    }
-
-    pub fn open_meteo(location: Location) -> Self {
-        Self::new(OPEN_METEO, location)
     }
 
     pub fn location(&self) -> Location {
