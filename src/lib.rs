@@ -6,6 +6,7 @@
 //!              ├── cli       Command-line arguments
 //!              ├── clock     The time since a scene began
 //!              ├── config    The preferences kept between runs
+//!              ├── dialog    A box over a pane, with its keys under it
 //!              ├── dither    The ordered dither the scenes share
 //!              ├── splitmix  The hash the scenes share for fixed noise
 //!              ├── app       The panes, the picker, and the keys
@@ -33,6 +34,7 @@ pub mod cli;
 pub mod clock;
 pub mod config;
 pub mod corpus;
+pub mod dialog;
 pub mod dither;
 pub mod events;
 pub mod highlight;
