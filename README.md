@@ -87,7 +87,7 @@ The weather scene shows the weather at a place given in degrees north and east, 
 hearth weather --latitude 59.91 --longitude 10.75
 ```
 
-The flags come before the `[weather]` table of the config file, and each needs the other. Without a place, the scene says how to give one.
+The flags come before the `[weather]` table of the config file, and each needs the other. When you choose the weather with no place, on the command line or in the picker, a box over the scene asks for one: type the latitude, Tab to the longitude, and Enter saves both to `[weather]` and keeps the file's comments. A place out of range stays in the box with the reason. Esc leaves the box, and `e` opens it again, also to change a place that is set. Tab from another scene passes the weather without the box. The place goes to Open-Meteo with each read, and the box says so.
 
 A GitHub repository or a clone address is cloned once, with its last 500 commits, into `~/.cache/hearth` (or `$XDG_CACHE_HOME/hearth`), with one line on stderr before the terminal opens. Every later run reads the cache, so the scene starts without a network. Only tracked text files under 64 KiB are read, so an ignored or untracked file never shows. A repository with no function in any of them is refused at startup.
 
@@ -114,7 +114,7 @@ work = 50       # minutes, from 1 to 180. Also break and long_break. Absent: 25,
 shortest = 0.25 # the share of the frame a function must fill, from 0 to 1. 0 types every function. Absent: 0.5
 
 [weather]
-latitude = 59.91   # degrees north, from -90 to 90. Give both or neither. Absent: no place
+latitude = 59.91   # degrees north, from -90 to 90. Give both or neither. Absent: the weather asks for a place
 longitude = 10.75  # degrees east, from -180 to 180
 view = "emblem"    # sky or emblem. Absent: sky
 ```
@@ -151,7 +151,7 @@ The picker lists each scene with a one-line summary and the speed it starts at, 
 | `[` / `]` | Make the sound quieter or louder by 10% |
 | `Space` | Pause or resume the hourglass timer |
 | `n` | Go to the next phase of the hourglass |
-| `e` | Set the hourglass lengths in a box: `j` / `k` pick, `+` / `-` change, `Enter` saves, `Esc` leaves |
+| `e` | Set the hourglass lengths in a box: `j` / `k` pick, `+` / `-` change, `Enter` saves, `Esc` leaves. On the weather, set its place in a box: `Tab` moves between latitude and longitude, `Enter` saves, `Esc` leaves |
 | `w` | Switch the weather scene between its sky and its emblem, and save the view to the config file |
 | `q` / `Ctrl-c` | Quit |
 
