@@ -771,3 +771,35 @@ fn only_a_started_weather_asks_for_a_place() {
     // Then:
     assert!(shows_words(&app, "› latitude"));
 }
+
+/// The location box hides the notice of the scene under it.
+/// Given: hearth on the weather with no place set, so the box is open over
+/// the notice.
+/// When: the frame is drawn.
+/// Then: no row shows a letter outside the box.
+///
+/// Why it matters: the ends of the notice beside the box read as stray
+/// letters on the frame.
+#[test]
+fn the_location_box_hides_the_notice_under_it() {
+    // Given:
+    let app = weather_with_no_place();
+
+    // When:
+    let shown = app_frame(&app, HOURGLASS);
+
+    // Then:
+    for y in 0..HOURGLASS.height {
+        let row: String = (0..HOURGLASS.width)
+            .map(|x| shown[(x, y)].symbol())
+            .collect();
+        let outside = match (row.find(['│', '┌', '└']), row.rfind(['│', '┐', '┘'])) {
+            (Some(left), Some(right)) => format!("{}{}", &row[..left], &row[right..]),
+            _ => continue,
+        };
+        assert!(
+            !outside.chars().any(char::is_alphabetic),
+            "row {y}: {row:?}"
+        );
+    }
+}
