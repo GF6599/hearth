@@ -856,3 +856,29 @@ fn the_swell_follows_the_water_on_the_sand() {
         }
     }
 }
+
+/// The ticks of about two years.
+const LONG_RUN: u64 = 1 << 30;
+
+/// The sea still moves after a long run.
+/// Given: the scene with its clock two years on.
+/// When: it ticks for two seconds.
+/// Then: the waterline has moved in some column.
+///
+/// Why it matters: a clock that loses its small steps as it grows leaves
+/// the waves to stand still for seconds and then jump.
+#[test]
+fn the_sea_still_moves_after_a_long_run() {
+    // Given:
+    let mut scene = Tide::new(Rng::seed_from_u64(7), PALETTE).after(LONG_RUN);
+    let lines = |scene: &Tide| waterlines(&pixels(&render(scene, AREA, AREA), AREA));
+    let before = lines(&scene);
+
+    // When:
+    for _ in 0..30 {
+        scene.tick(AREA);
+    }
+
+    // Then:
+    assert_ne!(lines(&scene), before);
+}

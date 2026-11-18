@@ -461,7 +461,7 @@ fn a_smaller_area_drops_the_old_ink() {
 }
 
 /// The velocity of `currents` at a point of a hundred by sixty pixel pane.
-fn flow(currents: &Currents, x: f32, y: f32, time: f32) -> (f32, f32) {
+fn flow(currents: &Currents, x: f32, y: f32, time: f64) -> (f32, f32) {
     currents.velocity(x, y, time, PANE)
 }
 
@@ -715,5 +715,33 @@ fn over_the_terminal_background_no_ink_mixes_with_the_water() {
                 );
             }
         }
+    }
+}
+
+/// Given: the currents of three seeds, two years of ticks on.
+/// When: the velocity at points over the pane is read then and two seconds
+/// later.
+/// Then: on the mean it has changed by at least a thousandth of a pixel a
+/// tick.
+///
+/// Why it matters: a clock that loses its small steps as it grows holds
+/// the currents still for seconds and then turns them all at once.
+#[test]
+fn the_currents_still_shift_after_a_long_run() {
+    let long_run = f64::from(1_u32 << 30);
+    for seed in [1, 7, 42] {
+        // When:
+        let currents = currents(seed);
+        let change: f32 = samples()
+            .map(|(x, y)| {
+                let before = flow(&currents, x, y, long_run);
+                let after = flow(&currents, x, y, long_run + 30.0);
+                (before.0 - after.0).hypot(before.1 - after.1)
+            })
+            .sum::<f32>()
+            / samples().count() as f32;
+
+        // Then:
+        assert!(change >= 0.001, "seed {seed}: {change}");
     }
 }

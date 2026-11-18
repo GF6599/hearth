@@ -1807,3 +1807,58 @@ fn a_smaller_area_draws_only_inside_it() {
         }
     }
 }
+
+/// The ticks of about two years.
+const LONG_RUN: u64 = 1 << 30;
+
+/// The sky still moves after a long run.
+/// Given: rain, with the clock of the sky two years on.
+/// When: the scene draws, then draws again half a second later.
+/// Then: the two frames differ.
+///
+/// Why it matters: a clock that loses its small steps as it grows holds
+/// the rain in the air for seconds and then jumps it on.
+#[test]
+fn the_sky_still_moves_after_a_long_run() {
+    // Given:
+    let mut scene = landed(&current(63, 9.0, 10.0)).after(LONG_RUN);
+
+    // When:
+    let before = render(&scene);
+    for _ in 0..8 {
+        scene.tick(AREA);
+    }
+    let after = render(&scene);
+
+    // Then:
+    assert_ne!(before, after);
+}
+
+/// The sound of the wind still follows the gusts after a long run.
+/// Given: a strong wind, with the clock of the sky two years on.
+/// When: the scene ticks for two seconds.
+/// Then: the wind cue carries more than one strength of gust.
+///
+/// Why it matters: the cues read the same clock as the picture, and a gust
+/// that holds one strength for seconds sounds as a steady hiss.
+#[test]
+fn the_gusts_still_change_after_a_long_run() {
+    // Given:
+    let mut scene = landed(&current_at(3, 12.0, 55.0, 1)).after(LONG_RUN);
+
+    // When:
+    let ticks = cues_of(&mut scene, 30);
+
+    // Then:
+    let mut gusts: Vec<f32> = ticks
+        .iter()
+        .flatten()
+        .filter_map(|cue| match cue {
+            Cue::Wind { gust } => Some(*gust),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gusts.len(), 30);
+    gusts.dedup();
+    assert!(gusts.len() > 1, "one strength of gust: {gusts:?}");
+}
