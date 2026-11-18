@@ -89,10 +89,10 @@ pub struct Tide {
     rng: Rng,
     palette: &'static Palette,
     /// Ticks since the start.
-    time: u32,
+    time: u64,
     /// How far the scene has run towards its next tick, so the sea draws
     /// where it is between two ticks.
-    progress: f32,
+    progress: f64,
     /// Where in the tide the scene starts, as a share of one tide.
     tide_phase: f32,
     wave_ticks: f32,
@@ -244,31 +244,40 @@ impl Tide {
         }
     }
 
+    /// The scene with its clock `ticks` on and nothing else moved, for a
+    /// test of a run too long to tick through.
+    pub fn after(mut self, ticks: u64) -> Self {
+        self.time = ticks;
+        self
+    }
+
     /// The still water at `time` ticks, as a share of the height.
-    fn level(&self, time: f32) -> f32 {
-        let turn = time / TIDE_TICKS as f32 + self.tide_phase;
+    fn level(&self, time: f64) -> f32 {
+        let turn = (time / f64::from(TIDE_TICKS)).fract() as f32 + self.tide_phase;
         LOW_TIDE + (HIGH_TIDE - LOW_TIDE) * (1.0 - (TAU * turn).cos()) / 2.0
     }
 
-    fn strength(&self, waves: f32) -> f32 {
-        self.strengths[(waves.floor() as i64).rem_euclid(SET as i64) as usize]
+    /// The wave at `time` ticks that runs `lag` waves late: its strength,
+    /// and how far up the sand it is.
+    fn wave(&self, time: f64, lag: f32) -> (f32, f32) {
+        let waves = time / f64::from(self.wave_ticks) - f64::from(lag);
+        let strength = self.strengths[(waves.floor() as i64).rem_euclid(SET as i64) as usize];
+        (strength, run(waves.rem_euclid(1.0) as f32))
     }
 
     /// How far the wave at the mean lag of the beach has run up the sand, as
     /// a share of the strongest run up. One sound stands for the whole shore.
-    fn swell(&self, time: f32) -> f32 {
-        let waves = time / self.wave_ticks - LAG / 2.0;
-        run(waves) * self.strength(waves)
+    fn swell(&self, time: f64) -> f32 {
+        let (strength, run) = self.wave(time, LAG / 2.0);
+        run * strength
     }
 
     /// How far the water reaches up pixel column `x` at `time` ticks, as a
     /// share of the height.
-    fn reach(&self, x: f32, time: f32) -> f32 {
+    fn reach(&self, x: f32, time: f64) -> f32 {
         let lag = LAG * (1.0 + (TAU * (x / self.lag_length + self.lag_phase)).sin()) / 2.0;
-        let waves = time / self.wave_ticks - lag;
-        let run = run(waves);
-        let strength = self.strength(waves);
-        let drift = time * RIPPLE_DRIFT;
+        let (strength, run) = self.wave(time, lag);
+        let drift = (time * f64::from(RIPPLE_DRIFT)).fract() as f32;
         let ripple =
             (1.0 + (TAU * (x / self.ripple_length + self.ripple_phase + drift)).sin()) / 2.0;
         self.level(time) + SWASH * ((1.0 - RAGGED) * strength * run + RAGGED * ripple * run)
@@ -276,7 +285,7 @@ impl Tide {
 
     /// How many pixels of each column, from the bottom, are sea at `time`
     /// ticks.
-    fn waterlines(&self, columns: usize, rows: usize, time: f32) -> Vec<usize> {
+    fn waterlines(&self, columns: usize, rows: usize, time: f64) -> Vec<usize> {
         (0..columns)
             .map(|x| ((self.reach(x as f32, time) * rows as f32).round() as usize).clamp(1, rows))
             .collect()
@@ -406,7 +415,7 @@ impl Tide {
     /// shades side by side at the most, the lower rows the darker, so a
     /// cell keeps to two colours and the water darkens a pixel row at a
     /// time.
-    fn sea_shades(&self, rows: usize, time: f32) -> Vec<usize> {
+    fn sea_shades(&self, rows: usize, time: f64) -> Vec<usize> {
         let still = rows as f32 * (1.0 - self.level(time));
         let depth = (rows as f32 - still).max(1.0);
         (0..rows)
@@ -434,7 +443,7 @@ fn dune_shade(column: usize, line: usize) -> usize {
 
 impl Scene for Tide {
     fn tick(&mut self, area: Rect) {
-        self.time = self.time.wrapping_add(1);
+        self.time += 1;
         let (columns, rows) = (
             usize::from(area.width) * CELL_WIDTH,
             usize::from(area.height) * CELL_HEIGHT,
@@ -449,9 +458,9 @@ impl Scene for Tide {
             return;
         }
         self.cues.push(Cue::Tide {
-            swell: self.swell(self.time as f32),
+            swell: self.swell(self.time as f64),
         });
-        let waterlines = self.waterlines(columns, rows, self.time as f32);
+        let waterlines = self.waterlines(columns, rows, self.time as f64);
         for (index, wetness) in self.wetness.iter_mut().enumerate() {
             let (x, row) = (index % columns, index / columns);
             *wetness = if rows - row <= waterlines[x] {
@@ -467,7 +476,6 @@ impl Scene for Tide {
     }
 
     fn set_progress(&mut self, progress: f64) -> bool {
-        let progress = progress as f32;
         std::mem::replace(&mut self.progress, progress) != progress
     }
 
@@ -477,7 +485,7 @@ impl Scene for Tide {
         if columns == 0 || rows == 0 {
             return;
         }
-        let time = self.time as f32 + self.progress;
+        let time = self.time as f64 + self.progress;
         let waterlines = self.waterlines(columns, rows, time);
         let shades = self.sea_shades(rows, time);
         for top in (0..rows).step_by(CELL_HEIGHT) {
