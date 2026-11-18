@@ -1837,7 +1837,8 @@ fn the_sky_still_moves_after_a_long_run() {
 /// The sound of the wind still follows the gusts after a long run.
 /// Given: a strong wind, with the clock of the sky two years on.
 /// When: the scene ticks for two seconds.
-/// Then: the wind cue carries more than one strength of gust.
+/// Then: each wind cue carries a strength of gust from 0 to 1, and more
+/// than one strength comes.
 ///
 /// Why it matters: the cues read the same clock as the picture, and a gust
 /// that holds one strength for seconds sounds as a steady hiss.
@@ -1859,6 +1860,33 @@ fn the_gusts_still_change_after_a_long_run() {
         })
         .collect();
     assert_eq!(gusts.len(), 30);
+    assert!(
+        gusts.iter().all(|gust| (0.0..=1.0).contains(gust)),
+        "a gust out of range: {gusts:?}"
+    );
     gusts.dedup();
     assert!(gusts.len() > 1, "one strength of gust: {gusts:?}");
+}
+
+/// The emblem still moves after a long run.
+/// Given: rain in the emblem view, with the clock of the sky two years on.
+/// When: the scene draws, then draws again half a second later.
+/// Then: the two frames differ.
+///
+/// Why it matters: the emblem reads the same clock as the sky, and its
+/// drops stand still when that clock loses its small steps.
+#[test]
+fn the_emblem_still_moves_after_a_long_run() {
+    // Given:
+    let mut scene = emblem(&current(63, 9.0, 10.0)).after(LONG_RUN);
+
+    // When:
+    let before = render(&scene);
+    for _ in 0..8 {
+        scene.tick(AREA);
+    }
+    let after = render(&scene);
+
+    // Then:
+    assert_ne!(before, after);
 }
