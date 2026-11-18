@@ -189,10 +189,11 @@ impl Currents {
 
     /// The velocity at a point of a pane `width` by `rows` pixels, in
     /// pixels a tick, `time` ticks after the start.
-    pub fn velocity(&self, x: f32, y: f32, time: f32, (width, rows): (f32, f32)) -> (f32, f32) {
+    pub fn velocity(&self, x: f32, y: f32, time: f64, (width, rows): (f32, f32)) -> (f32, f32) {
         let (mut stream, mut slope_x, mut slope_y) = (0.0, 0.0, 0.0);
         for wave in &self.waves {
-            let angle = wave.across * x + wave.down * y + wave.drift * time + wave.phase;
+            let drifted = (f64::from(wave.drift) * time).rem_euclid(f64::from(TAU)) as f32;
+            let angle = wave.across * x + wave.down * y + drifted + wave.phase;
             let (sin, cos) = angle.sin_cos();
             stream += wave.height * sin;
             slope_x += wave.height * wave.across * cos;
@@ -286,7 +287,7 @@ pub struct Ink {
     drops: Vec<Drop>,
     currents: Currents,
     /// Ticks since the start, the time the currents read.
-    time: u32,
+    time: u64,
     /// How far the scene has run towards its next tick.
     progress: f32,
     next_serial: u64,
@@ -421,7 +422,7 @@ impl Scene for Ink {
         }
 
         let pane = (width as f32, rows as f32);
-        let time = self.time as f32;
+        let time = self.time as f64;
         let mut drops = std::mem::take(&mut self.drops);
         for drop in &mut drops {
             if drop.emitting > 0 {
@@ -458,7 +459,7 @@ impl Scene for Ink {
         }
         drops.retain(|drop| drop.emitting > 0 || !drop.particles.is_empty());
         self.drops = drops;
-        self.time = self.time.wrapping_add(1);
+        self.time += 1;
     }
 
     fn set_progress(&mut self, progress: f64) -> bool {
