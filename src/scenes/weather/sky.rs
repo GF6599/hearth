@@ -825,7 +825,7 @@ pub struct Sky {
     fog_phases: [f32; FOG.len()],
     seed: u64,
     ticks: u64,
-    progress: f32,
+    progress: f64,
     /// The ticks it has snowed without a break.
     snowed: u64,
 }
@@ -894,6 +894,10 @@ impl Sky {
         self.shades = Shades::new(palette);
     }
 
+    pub fn set_clock(&mut self, ticks: u64) {
+        self.ticks = ticks;
+    }
+
     /// Moves the sky on by a tick of `weather`. Snow lies deeper with each
     /// tick it falls, and is gone once it stops.
     pub fn tick(&mut self, weather: Type) {
@@ -909,12 +913,15 @@ impl Sky {
     /// Returns whether the progress moves the sky, which it does at every
     /// new progress, as the stars twinkle and the clouds drift.
     pub fn set_progress(&mut self, progress: f64) -> bool {
-        let progress = progress as f32;
         std::mem::replace(&mut self.progress, progress) != progress
     }
 
-    fn seconds(&self) -> f32 {
-        (self.ticks as f32 + self.progress) * TICK_RATE.as_secs_f32()
+    /// The seconds the sky has run, in `f64`. An `f32` holds the ticks of
+    /// twelve days at the most before it drops the time between two ticks,
+    /// so each motion takes its own turn or round from this before it draws
+    /// in `f32`.
+    fn seconds(&self) -> f64 {
+        (self.ticks as f64 + self.progress) * TICK_RATE.as_secs_f64()
     }
 
     pub fn render(
@@ -1058,20 +1065,19 @@ impl Sky {
     /// share of the width it started this way down at, its pixel row, and
     /// the seconds since it left the clouds. Each way down starts at
     /// another place across.
-    fn falling(fall: &Fall, speed: f32, h: f32, t: f32) -> (f32, f32, f32) {
-        const GOLDEN: f32 = 0.618_034;
+    fn falling(fall: &Fall, speed: f32, h: f32, t: f64) -> (f32, f32, f32) {
+        const GOLDEN: f64 = 0.618_034;
         let top = FALL_TOP as f32;
         // The way runs on below the pane for as long as a splash lasts, so
         // a drop that lands on the lowest row still splashes in full.
         let way = (h - top).max(1.0) + speed * SPLASH;
-        let at = t * speed / way + fall.phase;
-        let round = at.floor();
-        let across = (fall.across + round * GOLDEN).fract();
-        let gone = at - round;
-        (across, top + gone * way, gone * way / speed)
+        let lasts = way / speed;
+        let (round, fallen) = round_at(t + f64::from(fall.phase * lasts), lasts);
+        let across = (f64::from(fall.across) + round as f64 * GOLDEN).fract() as f32;
+        (across, top + fallen * speed, fallen)
     }
 
-    fn rain(&self, canvas: &mut Canvas, shower: Shower, hours: Hours, t: f32) {
+    fn rain(&self, canvas: &mut Canvas, shower: Shower, hours: Hours, t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let scale = h / CLOUD_PANE.1;
         let count = ((w * h / shower.room) as usize).min(self.falls.len());
@@ -1117,14 +1123,14 @@ impl Sky {
         }
     }
 
-    fn snow(&self, canvas: &mut Canvas, flake: Color, lying: f32, t: f32) {
+    fn snow(&self, canvas: &mut Canvas, flake: Color, lying: f32, t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let scale = h / CLOUD_PANE.1;
         let count = ((w * h / SNOW_ROOM) as usize).min(self.falls.len());
         for fall in self.falls.iter().take(count) {
             let speed = (SNOW_SPEED.0 + SNOW_SPEED.1 * fall.depth) * scale;
             let (across, y, fallen) = Self::falling(fall, speed, h, t);
-            let sway = (SWAY.0 + SWAY.1 * fall.depth) * (t * fall.sway + fall.phase * TAU).sin();
+            let sway = (SWAY.0 + SWAY.1 * fall.depth) * sine(t, fall.sway, fall.phase * TAU);
             let x = (across * w + SNOW_DRIFT * fallen).rem_euclid(w) + sway;
             let ground = self.landing(x, fall.depth, w, h) - lying * drift(x, w);
             if y >= ground {
@@ -1154,24 +1160,24 @@ impl Sky {
 
     /// The second of `round` at which its one event begins, out of the
     /// first `span` seconds. Each `salt` gives times of its own.
-    fn wait(&self, round: f32, span: f32, salt: u64) -> f32 {
-        let mixed = splitmix::mix(self.seed ^ salt ^ round as u64);
+    fn wait(&self, round: u64, span: f32, salt: u64) -> f32 {
+        let mixed = splitmix::mix(self.seed ^ salt ^ round);
         (mixed % 1000) as f32 / 1000.0 * span
     }
 
     /// How many events have begun by `t` seconds, when each round of `gap`
     /// seconds holds one and the last `rest` seconds of a round hold none.
-    fn begun(&self, t: f32, gap: f32, rest: f32, salt: u64) -> u64 {
-        let round = (t / gap).floor();
-        round as u64 + u64::from(t - round * gap >= self.wait(round, gap - rest, salt))
+    fn begun(&self, t: f64, gap: f32, rest: f32, salt: u64) -> u64 {
+        let (round, since) = round_at(t, gap);
+        round + u64::from(since >= self.wait(round, gap - rest, salt))
     }
 
     /// The cues of the last tick: the sound of `weather`, with the thunder
     /// of a strike or the call of a foghorn that began in that tick.
     pub fn cues(&self, weather: Type, day: bool, out: &mut Vec<Cue>) {
-        let tick = TICK_RATE.as_secs_f32();
-        let before = self.ticks.saturating_sub(1) as f32 * tick;
-        let now = self.ticks as f32 * tick;
+        let tick = TICK_RATE.as_secs_f64();
+        let before = self.ticks.saturating_sub(1) as f64 * tick;
+        let now = self.ticks as f64 * tick;
         let began = |gap: f32, rest: f32, salt: u64| {
             self.begun(now, gap, rest, salt) > self.begun(before, gap, rest, salt)
         };
@@ -1202,10 +1208,9 @@ impl Sky {
     /// How bright the strike of the round at `t` seconds is, from 0 to 1,
     /// with the round, or none between two strikes. A strike lights the sky
     /// twice.
-    fn flash(&self, t: f32) -> Option<(u64, f32)> {
-        let round = (t / STRIKE_GAP).floor();
-        let wait = self.wait(round, STRIKE_GAP - FLASH, STRIKE_SALT);
-        let since = t - round * STRIKE_GAP - wait;
+    fn flash(&self, t: f64) -> Option<(u64, f32)> {
+        let (round, since) = round_at(t, STRIKE_GAP);
+        let since = since - self.wait(round, STRIKE_GAP - FLASH, STRIKE_SALT);
         let bright = match since / FLASH {
             lit if !(0.0..1.0).contains(&lit) => return None,
             lit if lit < 0.25 => 1.0,
@@ -1213,11 +1218,11 @@ impl Sky {
             lit if lit < 0.6 => 0.85,
             lit => 0.85 * (1.0 - lit) / 0.4,
         };
-        Some((round as u64, bright))
+        Some((round, bright))
     }
 
     /// The bolt of a strike and its flash over the whole frame.
-    fn strike(&self, canvas: &mut Canvas, t: f32) {
+    fn strike(&self, canvas: &mut Canvas, t: f64) {
         let Some((round, bright)) = self.flash(t) else {
             return;
         };
@@ -1265,11 +1270,12 @@ impl Sky {
         }
     }
 
-    fn gust_line(&self, gust: u64, t: f32) -> GustLine {
-        let at = t / GUST + gust as f32 / GUSTS as f32;
-        let mut dice = Dice(splitmix::mix(self.seed ^ gust << 32 ^ at.floor() as u64));
+    fn gust_line(&self, gust: u64, t: f64) -> GustLine {
+        let ahead = gust as f32 / GUSTS as f32 * GUST;
+        let (round, since) = round_at(t + f64::from(ahead), GUST);
+        let mut dice = Dice(splitmix::mix(self.seed ^ gust << 32 ^ round));
         GustLine {
-            life: at.fract(),
+            life: since / GUST,
             row: dice.share(),
             long: dice.share(),
             start: dice.share(),
@@ -1279,7 +1285,7 @@ impl Sky {
     /// How strongly the gust lines show at `t` seconds, from 0 with the
     /// shortest lines to 1 with the longest: the mean of their lengths,
     /// each weighed by how strongly its line shows.
-    fn gust(&self, t: f32) -> f32 {
+    fn gust(&self, t: f64) -> f32 {
         let (mut long, mut shown) = (0.0, 0.0);
         for gust in 0..GUSTS {
             let line = self.gust_line(gust, t);
@@ -1292,7 +1298,7 @@ impl Sky {
 
     /// The lines a gust draws in the air: each crosses a part of the pane,
     /// curls up at its head, and fades in and out.
-    fn gusts(&self, canvas: &mut Canvas, colour: Color, t: f32) {
+    fn gusts(&self, canvas: &mut Canvas, colour: Color, t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let (top, floor) = (FALL_TOP as f32, h - CELL_HEIGHT as f32 - 1.0);
         if floor <= top {
@@ -1324,7 +1330,7 @@ impl Sky {
 
     /// The leaves the wind carries across the land, each on another row
     /// every time it crosses.
-    fn leaves(&self, canvas: &mut Canvas, colours: [Color; 3], t: f32) {
+    fn leaves(&self, canvas: &mut Canvas, colours: [Color; 3], t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let (top, floor) = (FALL_TOP as f32, h - CELL_HEIGHT as f32 - 1.0);
         if floor <= top {
@@ -1334,15 +1340,16 @@ impl Sky {
         for leaf in 0..LEAVES {
             let mut dice = Dice(splitmix::mix(self.seed ^ leaf << 40));
             let speed = (LEAF_SPEED.0 + LEAF_SPEED.1 * dice.share()) * scale;
-            let gone = dice.share() + t * speed / (w + 4.0);
-            let x = gone.fract() * (w + 4.0) - 2.0;
-            let mut crossing = Dice(splitmix::mix(self.seed ^ leaf << 40 ^ gone as u64));
+            let lasts = (w + 4.0) / speed;
+            let (round, since) = round_at(t + f64::from(dice.share() * lasts), lasts);
+            let x = since * speed - 2.0;
+            let mut crossing = Dice(splitmix::mix(self.seed ^ leaf << 40 ^ round));
             let row = top + (floor - top) * (0.45 + 0.5 * crossing.share());
-            let turn = t * (5.0 + 4.0 * dice.share()) + leaf as f32;
-            let y = (row + LEAF_BOB * turn.sin()).clamp(top, floor - 1.0);
+            let (rate, phase) = (5.0 + 4.0 * dice.share(), leaf as f32);
+            let y = (row + LEAF_BOB * sine(t, rate, phase)).clamp(top, floor - 1.0);
             let colour = colours[leaf as usize % colours.len()];
             // A leaf shows its long side, then its short side, as it turns.
-            let flat = (turn * 0.5).sin() > 0.0;
+            let flat = sine(t, rate * 0.5, phase * 0.5) > 0.0;
             let tail = if flat { (x - 1.0, y) } else { (x, y + 1.0) };
             set_at(canvas, (x, y), colour);
             set_at(canvas, tail, colour);
@@ -1355,7 +1362,7 @@ impl Sky {
 
     /// Draws the pines on the far hill, each leaning downwind at `wind`
     /// seconds of wind, if any.
-    fn far_pines(&self, canvas: &mut Canvas, land: Land, light: f32, wind: Option<f32>) {
+    fn far_pines(&self, canvas: &mut Canvas, land: Land, light: f32, wind: Option<f64>) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let count = (canvas.width() / PINE_ROOM).clamp(PINES.0, PINES.1);
         let scale = (h / 136.0).max(0.7);
@@ -1367,7 +1374,7 @@ impl Sky {
         }
     }
 
-    fn near_pines(&self, canvas: &mut Canvas, land: Land, light: f32, wind: Option<f32>) {
+    fn near_pines(&self, canvas: &mut Canvas, land: Land, light: f32, wind: Option<f64>) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let scale = (h / 136.0).max(0.7);
         for (across, tall) in NEAR_PINES.iter().zip(self.near_pines) {
@@ -1384,7 +1391,7 @@ impl Sky {
     /// After `wind` seconds of wind, if any, waves travel downwind through
     /// the grass: a tuft in a wave stands a pixel taller with its tip bent
     /// downwind, and the grass shows along the line of the hill.
-    fn grass(&self, canvas: &mut Canvas, land: Land, wind: Option<f32>) {
+    fn grass(&self, canvas: &mut Canvas, land: Land, wind: Option<f64>) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let near = self.lines[2];
         // The bottom row of cells holds the credit, and a fleck under a
@@ -1395,7 +1402,7 @@ impl Sky {
             let noise = self.noise(x, 0);
             let wave = wind.map(|t| {
                 let (along, rate) = GRASS_WAVE;
-                (x as f32 * along - t * rate).sin()
+                sine(t, -rate, x as f32 * along)
             });
             let bent = wave.is_some_and(|wave| wave > BENDS_FROM);
             if bent {
@@ -1420,7 +1427,7 @@ impl Sky {
         }
     }
 
-    fn cottage(&self, canvas: &mut Canvas, land: Land, day: bool, t: f32) {
+    fn cottage(&self, canvas: &mut Canvas, land: Land, day: bool, t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let near = self.lines[2];
         let left = (COTTAGE * w).round();
@@ -1475,7 +1482,7 @@ impl Sky {
         if day {
             canvas.disc(window, 1.4, self.shades.glass);
         } else {
-            let flicker = 0.5 + 0.5 * (t * 9.0).sin() * (t * 3.3).sin();
+            let flicker = 0.5 + 0.5 * sine(t, 9.0, 0.0) * sine(t, 3.3, 0.0);
             let step = ((flicker * 3.0).round() as usize).min(3);
             glow(canvas, window, 1.0, 7.0, self.shades.lamp, 0.25);
             canvas.disc(window, 1.4, self.shades.window[step]);
@@ -1493,14 +1500,14 @@ impl Sky {
         }
         for puff in 0..10 {
             let rise = puff as f32;
-            let x = chimney + 1.0 + rise * 0.6 + (t * 1.5 - rise * 0.6).sin() * 1.2;
+            let x = chimney + 1.0 + rise * 0.6 + sine(t, 1.5, -rise * 0.6) * 1.2;
             let y = top - 7.0 - rise * 1.4;
             let share = octant::stepped(0.45 * (1.0 - rise / 10.0), SHADE_STEPS);
             blend_at(canvas, (x, y), land.smoke, share);
         }
     }
 
-    fn sun(&self, canvas: &mut Canvas, centre: (f32, f32), radius: f32, t: f32) {
+    fn sun(&self, canvas: &mut Canvas, centre: (f32, f32), radius: f32, t: f64) {
         let (reach, edge) = SUN_GLOW;
         glow(
             canvas,
@@ -1512,8 +1519,9 @@ impl Sky {
         );
         let (from, to) = (radius * RAY_SPAN.0, radius * RAY_SPAN.1);
         let dots = (to - from).ceil() as usize;
+        let turned = cycle(t, RAY_TURN / TAU, 0.0) * TAU;
         for ray in 0..RAYS {
-            let angle = ray as f32 / RAYS as f32 * TAU + t * RAY_TURN;
+            let angle = ray as f32 / RAYS as f32 * TAU + turned;
             for dot in 0..dots {
                 let along = dot as f32 / dots as f32;
                 let out = from + (to - from) * along;
@@ -1550,12 +1558,12 @@ impl Sky {
         }
     }
 
-    fn stars(&self, canvas: &mut Canvas, t: f32) {
+    fn stars(&self, canvas: &mut Canvas, t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         let count = ((w * h * STAR_FLOOR / STAR_ROOM) as usize).clamp(4, STARS);
         for star in self.stars.iter().take(count) {
             let place = (star.place.0 * w, star.place.1 * h);
-            let twinkle = star.brightness * (0.6 + 0.4 * (t * star.rate + star.phase).sin());
+            let twinkle = star.brightness * (0.6 + 0.4 * sine(t, star.rate, star.phase));
             blend_at(
                 canvas,
                 place,
@@ -1576,14 +1584,14 @@ impl Sky {
         }
     }
 
-    fn shooting_star(&self, canvas: &mut Canvas, t: f32) {
-        let round = (t / SHOOTING_GAP).floor();
-        let along = (t - round * SHOOTING_GAP) / SHOOTING;
+    fn shooting_star(&self, canvas: &mut Canvas, t: f64) {
+        let (round, since) = round_at(t, SHOOTING_GAP);
+        let along = since / SHOOTING;
         if along > 1.0 {
             return;
         }
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
-        let mixed = splitmix::mix(self.seed ^ round as u64);
+        let mixed = splitmix::mix(self.seed ^ round);
         let start = (
             (mixed % 1000) as f32 / 1000.0 * 0.4 + 0.05,
             (mixed / 1000 % 1000) as f32 / 1000.0 * 0.1 + 0.05,
@@ -1609,20 +1617,20 @@ impl Sky {
         }
     }
 
-    fn birds(&self, canvas: &mut Canvas, t: f32) {
+    fn birds(&self, canvas: &mut Canvas, t: f64) {
         let (w, h) = (canvas.width() as f32, canvas.height() as f32);
         for (index, &(across, down)) in BIRDS.iter().enumerate() {
             let phase = index as f32 * 1.3;
-            let x = wrap(across * w + t * GLIDE, w, 4.0);
-            let y = (down * h + (t * 0.8 + phase).sin() * 1.5).round();
-            let flap = (t * 6.0 + phase).sin().round();
+            let x = wrap(across * w, t * f64::from(GLIDE), w, 4.0);
+            let y = (down * h + sine(t, 0.8, phase) * 1.5).round();
+            let flap = sine(t, 6.0, phase).round();
             for (dx, lift) in [(-2.0, 0.5), (-1.0, 0.3), (0.0, 0.0), (1.0, 0.3), (2.0, 0.5)] {
                 set_at(canvas, (x + dx, y - flap * lift), self.shades.bird);
             }
         }
     }
 
-    fn fog(&self, canvas: &mut Canvas, look: Look, colour: Color, depth: u8, t: f32) {
+    fn fog(&self, canvas: &mut Canvas, look: Look, colour: Color, depth: u8, t: f64) {
         if look != Look::Fog {
             return;
         }
@@ -1633,13 +1641,14 @@ impl Sky {
                 continue;
             }
             let (middle, half) = (middle * hf, half * hf);
+            let drifted = cycle(t, speed / CLOUD_PANE.0, 0.0);
             let top = (middle - half).floor().max(0.0) as usize;
             let bottom = ((middle + half).ceil() as usize).min(h);
             for y in top..bottom {
                 let off = (y as f32 - middle) / half;
                 let thick = thickest * (1.0 - off * off).max(0.0);
                 for x in 0..w {
-                    let along = (x as f32 - speed * t * wf / CLOUD_PANE.0) / wf * TAU;
+                    let along = (x as f32 / wf - drifted) * TAU;
                     let wave = 0.55
                         + 0.3 * (along * 2.0 + phase).sin()
                         + 0.15 * (along * 5.0 - phase).sin();
@@ -1653,9 +1662,9 @@ impl Sky {
 
 /// The share of its height a pine at pixel column `x` leans downwind after
 /// `t` seconds of wind.
-fn lean(x: f32, t: f32) -> f32 {
+fn lean(x: f32, t: f64) -> f32 {
     let (least, most) = LEAN;
-    least + (most - least) * (0.5 + 0.5 * (t * SWAY_RATE - x * 0.05).sin())
+    least + (most - least) * (0.5 + 0.5 * sine(t, SWAY_RATE, -x * 0.05))
 }
 
 /// A pine of three tiers on a trunk, its foot at `foot`, with the side
@@ -1728,7 +1737,7 @@ fn draw_layer(
     canvas: &mut Canvas,
     layer: &Layer,
     colours: [Color; 3],
-    t: f32,
+    t: f64,
     haste: f32,
     churn: f32,
 ) {
@@ -1736,14 +1745,11 @@ fn draw_layer(
     let tall = layer.height * h;
     let [shade, body, light] = colours;
     for cloud in &layer.clouds {
-        let x = wrap(
-            cloud.across * w + layer.speed * haste * t * w / CLOUD_PANE.0,
-            w,
-            cloud.reach * tall,
-        );
+        let drift = t * f64::from(layer.speed * haste * w / CLOUD_PANE.0);
+        let x = wrap(cloud.across * w, drift, w, cloud.reach * tall);
         let y = cloud.down * h;
         let at = |puff: &Puff, down: f32| (x + puff.across * tall, y + (puff.down + down) * tall);
-        let swell = |index: usize| 1.0 + churn * (t * 1.7 + index as f32 * 2.4).sin();
+        let swell = |index: usize| 1.0 + churn * sine(t, 1.7, index as f32 * 2.4);
         for (index, puff) in cloud.puffs.iter().enumerate() {
             let radius = puff.radius * swell(index) * tall;
             canvas.disc(at(puff, puff.radius * 0.25), radius, shade);
@@ -1799,10 +1805,32 @@ fn stroke(
     }
 }
 
-/// `x` moved into the span from `-margin` to `span + margin`, so a shape
-/// leaves one edge whole before it comes in at the other.
-fn wrap(x: f32, span: f32, margin: f32) -> f32 {
-    (x + margin).rem_euclid(span + 2.0 * margin) - margin
+/// `start` moved on by `moved` pixels, into the span from `-margin` to
+/// `span + margin`, so a shape leaves one edge whole before it comes in at
+/// the other.
+fn wrap(start: f32, moved: f64, span: f32, margin: f32) -> f32 {
+    let lap = f64::from(span + 2.0 * margin);
+    (f64::from(start + margin) + moved).rem_euclid(lap) as f32 - margin
+}
+
+/// The sine, at `t` seconds, of the angle that starts at `phase` and turns
+/// `rate` radians a second.
+fn sine(t: f64, rate: f32, phase: f32) -> f32 {
+    (t * f64::from(rate) + f64::from(phase)).sin() as f32
+}
+
+/// How far through its cycle, from 0 to 1, a motion is at `t` seconds, when
+/// it starts `phase` of a cycle in and makes `rate` cycles a second.
+fn cycle(t: f64, rate: f32, phase: f32) -> f32 {
+    (t * f64::from(rate) + f64::from(phase)).fract() as f32
+}
+
+/// The whole rounds of `gap` seconds that have gone by `t` seconds, and the
+/// seconds into the round after them.
+fn round_at(t: f64, gap: f32) -> (u64, f32) {
+    let gap = f64::from(gap);
+    let round = (t / gap).floor();
+    (round as u64, (t - round * gap) as f32)
 }
 
 /// Fills each column below the line `top` gives at its middle, with the

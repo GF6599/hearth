@@ -87,6 +87,13 @@ impl Weather {
         }
     }
 
+    /// The scene with the clock of its sky `ticks` on and nothing else
+    /// moved, for a test of a run too long to tick through.
+    pub fn after(mut self, ticks: u64) -> Self {
+        self.sky.set_clock(ticks);
+        self
+    }
+
     fn shows_sky(&self) -> bool {
         self.report.is_some()
     }
